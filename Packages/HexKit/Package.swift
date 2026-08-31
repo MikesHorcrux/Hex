@@ -12,10 +12,21 @@ let package = Package(
     .library(name: "HexRuntime", targets: ["HexRuntime"]),
     .library(name: "HexPersistence", targets: ["HexPersistence"]),
     .library(name: "HexProviders", targets: ["HexProviders"]),
+    .library(name: "HexMLXProvider", targets: ["HexMLXProvider"]),
     .library(name: "HexCapabilities", targets: ["HexCapabilities"]),
     .library(name: "HexPersonality", targets: ["HexPersonality"]),
     .library(name: "HexIPC", targets: ["HexIPC"]),
     .executable(name: "HexGateway", targets: ["HexGateway"]),
+  ],
+  dependencies: [
+    .package(
+      url: "https://github.com/ml-explore/mlx-swift-lm.git",
+      exact: "3.31.4"
+    ),
+    .package(
+      url: "https://github.com/huggingface/swift-transformers.git",
+      exact: "1.3.3"
+    ),
   ],
   targets: [
     .target(name: "HexCore"),
@@ -26,6 +37,16 @@ let package = Package(
     .target(
       name: "HexProviders",
       dependencies: ["HexCore"]
+    ),
+    .target(
+      name: "HexMLXProvider",
+      dependencies: [
+        "HexCore",
+        "HexProviders",
+        .product(name: "MLXLLM", package: "mlx-swift-lm"),
+        .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+        .product(name: "Tokenizers", package: "swift-transformers"),
+      ]
     ),
     .target(
       name: "HexCapabilities",
@@ -70,6 +91,14 @@ let package = Package(
     .testTarget(
       name: "HexProvidersTests",
       dependencies: ["HexProviders"]
+    ),
+    .testTarget(
+      name: "HexMLXProviderTests",
+      dependencies: [
+        "HexCore",
+        "HexMLXProvider",
+        .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+      ]
     ),
     .testTarget(
       name: "HexCapabilitiesTests",

@@ -29,46 +29,50 @@ public final class URLSessionOpenAIResponsesTransport: OpenAIResponsesTransport,
         throw URLError(.badServerResponse)
       }
 
-      let body = AsyncThrowingStream<Data, any Error>(bufferingPolicy: .bufferingOldest(16)) {
-        continuation in
-        let producer = Task {
-          do {
-            var chunk = Data()
-            chunk.reserveCapacity(8 * 1_024)
+      let (body, continuation) = AsyncThrowingStream.makeStream(
+        of: Data.self,
+        throwing: (any Error).self,
+        bufferingPolicy: .bufferingOldest(16)
+      )
+      let producer = Task {
+        do {
+          var chunk = Data()
+          chunk.reserveCapacity(8 * 1_024)
 
-            for try await byte in bytes {
-              try Task.checkCancellation()
-              chunk.append(byte)
-              if chunk.count == 8 * 1_024 {
-                try Self.yield(chunk, to: continuation)
-                chunk.removeAll(keepingCapacity: true)
-              }
-            }
-
-            if !chunk.isEmpty {
+          for try await byte in bytes {
+            try Task.checkCancellation()
+            chunk.append(byte)
+            if chunk.count == 8 * 1_024 {
               try Self.yield(chunk, to: continuation)
-            }
-            continuation.finish()
-          } catch is CancellationError {
-            continuation.finish(throwing: CancellationError())
-          } catch {
-            if Task.isCancelled {
-              continuation.finish(throwing: CancellationError())
-            } else {
-              continuation.finish(throwing: error)
+              chunk.removeAll(keepingCapacity: true)
             }
           }
-        }
 
-        continuation.onTermination = { @Sendable _ in
-          producer.cancel()
+          if !chunk.isEmpty {
+            try Self.yield(chunk, to: continuation)
+          }
+          continuation.finish()
+        } catch is CancellationError {
+          continuation.finish(throwing: CancellationError())
+        } catch {
+          if Task.isCancelled {
+            continuation.finish(throwing: CancellationError())
+          } else {
+            continuation.finish(throwing: error)
+          }
         }
       }
 
       return OpenAIResponsesTransportResponse(
         statusCode: httpResponse.statusCode,
         contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
-        body: body
+        body: body,
+        cancel: {
+          producer.cancel()
+        },
+        waitForTermination: {
+          await producer.value
+        }
       )
     } catch is CancellationError {
       throw CancellationError()

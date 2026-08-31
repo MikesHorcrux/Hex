@@ -28,9 +28,12 @@ struct ProtocolSurfaceTests {
     #expect(try await executor.availableTools().count == 1)
 
     let stream = try await provider.stream(inferenceRequest)
-    var events: [InferenceStreamEvent] = []
-    for try await event in stream {
-      events.append(event)
+    let events = try await stream.consume { cursor in
+      var collected: [InferenceStreamEvent] = []
+      while let event = try await cursor.next() {
+        collected.append(event)
+      }
+      return collected
     }
     #expect(events == [.started(providerResponseID: nil), .completed(.stop)])
 
@@ -52,6 +55,7 @@ struct ProtocolSurfaceTests {
     requireSendable(ModelDescriptor.self)
     requireSendable(InferenceRequest.self)
     requireSendable(InferenceStreamEvent.self)
+    requireSendable(InferenceStream.self)
     requireSendable(ToolDefinition.self)
     requireSendable(ToolCall.self)
     requireSendable(ToolResult.self)
@@ -89,12 +93,17 @@ struct ProtocolSurfaceTests {
 
     func stream(
       _ request: InferenceRequest
-    ) async throws -> AsyncThrowingStream<InferenceStreamEvent, any Error> {
-      AsyncThrowingStream { continuation in
+    ) async throws -> InferenceStream {
+      let events = AsyncThrowingStream<InferenceStreamEvent, any Error> { continuation in
         continuation.yield(.started(providerResponseID: nil))
         continuation.yield(.completed(.stop))
         continuation.finish()
       }
+      return InferenceStream(
+        events: events,
+        onCancellation: {},
+        waitForTermination: {}
+      )
     }
   }
 

@@ -402,21 +402,23 @@ struct OpenAIResponsesLifecycleValidationTests {
         responses: [OpenAIResponsesTestFixture.response(data: streamData)]
       )
     )
-    var events: [InferenceStreamEvent] = []
+    let recorder = OpenAIInferenceEventRecorder()
     do {
       let stream = try await provider.stream(OpenAIResponsesTestFixture.request(tools: tools))
-      for try await event in stream {
-        events.append(event)
+      try await stream.consume { cursor in
+        while let event = try await cursor.next() {
+          await recorder.record(event)
+        }
       }
-      return (provider, ProbeResult(events: events, error: nil))
+      return (provider, ProbeResult(events: await recorder.events(), error: nil))
     } catch let error as OpenAIResponsesProviderError {
-      return (provider, ProbeResult(events: events, error: error))
+      return (provider, ProbeResult(events: await recorder.events(), error: error))
     } catch is CancellationError {
       Issue.record("Unexpected cancellation for \(responseID).")
-      return (provider, ProbeResult(events: events, error: nil))
+      return (provider, ProbeResult(events: await recorder.events(), error: nil))
     } catch {
       Issue.record("Unexpected error type for \(responseID).")
-      return (provider, ProbeResult(events: events, error: nil))
+      return (provider, ProbeResult(events: await recorder.events(), error: nil))
     }
   }
 

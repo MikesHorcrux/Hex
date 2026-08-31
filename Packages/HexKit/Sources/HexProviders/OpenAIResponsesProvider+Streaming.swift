@@ -4,7 +4,7 @@ import HexCore
 extension OpenAIResponsesProvider {
   public func stream(
     _ request: InferenceRequest
-  ) async throws -> AsyncThrowingStream<InferenceStreamEvent, any Error> {
+  ) async throws -> InferenceStream {
     try Task.checkCancellation()
     try ensureResponseIdentifierTrackingAvailable()
 
@@ -104,7 +104,6 @@ extension OpenAIResponsesProvider {
     let response: OpenAIResponsesTransportResponse
     do {
       response = try await transport.send(urlRequest)
-      try Task.checkCancellation()
     } catch is CancellationError {
       throw CancellationError()
     } catch {
@@ -113,8 +112,13 @@ extension OpenAIResponsesProvider {
       }
       throw OpenAIResponsesProviderError.transportFailed
     }
+    if Task.isCancelled {
+      await response.cancelAndWait()
+      throw CancellationError()
+    }
 
     guard (200...299).contains(response.statusCode) else {
+      await response.cancelAndWait()
       throw OpenAIResponsesProviderError.httpFailure(statusCode: response.statusCode)
     }
     let mediaType = response.contentType?
@@ -123,29 +127,40 @@ extension OpenAIResponsesProvider {
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
     guard mediaType == "text/event-stream" else {
+      await response.cancelAndWait()
       throw OpenAIResponsesProviderError.invalidContentType
     }
 
     let (bufferingLimit, bufferingOverflow) = configuration.maximumStreamEvents
       .addingReportingOverflow(configuration.maximumOutputItems + 4)
     guard !bufferingOverflow else {
+      await response.cancelAndWait()
       throw OpenAIResponsesProviderError.invalidConfiguration
     }
-    return AsyncThrowingStream<InferenceStreamEvent, any Error>(
+    let (events, continuation) = AsyncThrowingStream.makeStream(
+      of: InferenceStreamEvent.self,
+      throwing: (any Error).self,
       bufferingPolicy: .bufferingOldest(bufferingLimit)
-    ) { continuation in
-      let producer = Task {
-        await self.consume(
-          response.body,
-          request: request,
-          plan: plan,
-          continuation: continuation
-        )
-      }
-      continuation.onTermination = { @Sendable _ in
-        producer.cancel()
-      }
+    )
+    let producer = Task {
+      await self.consume(
+        response.body,
+        request: request,
+        plan: plan,
+        continuation: continuation
+      )
     }
+    return InferenceStream(
+      events: events,
+      onCancellation: {
+        producer.cancel()
+        response.cancel()
+      },
+      waitForTermination: {
+        await producer.value
+        await response.cancelAndWait()
+      }
+    )
   }
 
   func consume(

@@ -23,31 +23,51 @@ actor ScriptedInferenceProvider: InferenceProvider {
 
   func stream(
     _ request: InferenceRequest
-  ) async throws -> AsyncThrowingStream<InferenceStreamEvent, any Error> {
+  ) async throws -> InferenceStream {
     capturedRequests.append(request)
     let script = scripts.isEmpty ? .streamFailure : scripts.removeFirst()
     switch script {
     case .events(let events):
-      return AsyncThrowingStream { continuation in
+      let stream = AsyncThrowingStream<InferenceStreamEvent, any Error> { continuation in
         for event in events {
           continuation.yield(event)
         }
         continuation.finish()
       }
+      return InferenceStream(
+        events: stream,
+        onCancellation: {},
+        waitForTermination: {}
+      )
     case .openingFailure:
       throw ScriptedInferenceProviderError.provider
     case .streamFailure:
-      return AsyncThrowingStream { continuation in
+      let stream = AsyncThrowingStream<InferenceStreamEvent, any Error> { continuation in
         continuation.finish(throwing: ScriptedInferenceProviderError.provider)
       }
+      return InferenceStream(
+        events: stream,
+        onCancellation: {},
+        waitForTermination: {}
+      )
     case .streamRuntimeFailure:
-      return AsyncThrowingStream { continuation in
+      let stream = AsyncThrowingStream<InferenceStreamEvent, any Error> { continuation in
         continuation.finish(
           throwing: AgentRuntimeError.invalidRequest("provider-owned private detail")
         )
       }
+      return InferenceStream(
+        events: stream,
+        onCancellation: {},
+        waitForTermination: {}
+      )
     case .suspend:
-      return AsyncThrowingStream { _ in }
+      let stream = AsyncThrowingStream<InferenceStreamEvent, any Error> { _ in }
+      return InferenceStream(
+        events: stream,
+        onCancellation: {},
+        waitForTermination: {}
+      )
     }
   }
 

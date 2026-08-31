@@ -48,7 +48,7 @@ extension AgentRuntime {
       try await append(.inferenceRequested(inferenceRequest), to: request.runID)
       try Task.checkCancellation()
 
-      let stream: AsyncThrowingStream<InferenceStreamEvent, any Error>
+      let stream: InferenceStream
       do {
         stream = try await inferenceProvider.stream(inferenceRequest)
       } catch is CancellationError {
@@ -60,7 +60,7 @@ extension AgentRuntime {
         throw AgentRuntimeError.providerFailure("The inference provider failed to open a stream.")
       }
 
-      var accumulator = InferenceTurnAccumulator(
+      let initialAccumulator = InferenceTurnAccumulator(
         budget: configuration.budget,
         allowedToolNames: allowedToolNames,
         priorToolCallIDs: seenToolCallIDs,
@@ -68,29 +68,32 @@ extension AgentRuntime {
         remainingReportedTokens: configuration.budget.maxReportedTokens - totalReportedTokens,
         allowsParallelToolCalls: allowsParallelToolCalls
       )
-      var iterator = stream.makeAsyncIterator()
-      while true {
-        let event: InferenceStreamEvent?
-        do {
-          event = try await iterator.next()
-        } catch is CancellationError {
-          throw CancellationError()
-        } catch {
-          if Task.isCancelled {
+      var accumulator = try await stream.consume { cursor in
+        var accumulator = initialAccumulator
+        while true {
+          let event: InferenceStreamEvent?
+          do {
+            event = try await cursor.next()
+          } catch is CancellationError {
             throw CancellationError()
+          } catch {
+            if Task.isCancelled {
+              throw CancellationError()
+            }
+            throw AgentRuntimeError.providerFailure("The inference stream failed.")
           }
-          throw AgentRuntimeError.providerFailure("The inference stream failed.")
+          guard let event else {
+            break
+          }
+          var candidateAccumulator = accumulator
+          try candidateAccumulator.accept(event)
+          try await self.append(.inferenceEvent(event), to: request.runID)
+          accumulator = candidateAccumulator
+          try Task.checkCancellation()
         }
-        guard let event else {
-          break
-        }
-        var candidateAccumulator = accumulator
-        try candidateAccumulator.accept(event)
-        try await append(.inferenceEvent(event), to: request.runID)
-        accumulator = candidateAccumulator
         try Task.checkCancellation()
+        return accumulator
       }
-      try Task.checkCancellation()
 
       let output = try accumulator.finish()
       switch effectiveToolChoice {

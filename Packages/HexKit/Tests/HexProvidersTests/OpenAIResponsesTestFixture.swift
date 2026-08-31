@@ -85,7 +85,9 @@ struct OpenAIResponsesTestFixture {
           continuation.yield(chunk)
         }
         continuation.finish()
-      }
+      },
+      cancel: {},
+      waitForTermination: {}
     )
   }
 
@@ -491,11 +493,13 @@ struct OpenAIResponsesTestFixture {
     request: InferenceRequest
   ) async throws -> [InferenceStreamEvent] {
     let stream = try await provider.stream(request)
-    var events: [InferenceStreamEvent] = []
-    for try await event in stream {
-      events.append(event)
+    return try await stream.consume { cursor in
+      var events: [InferenceStreamEvent] = []
+      while let event = try await cursor.next() {
+        events.append(event)
+      }
+      return events
     }
-    return events
   }
 
   static func split(_ data: Data, at offsets: [Int]) -> [Data] {
