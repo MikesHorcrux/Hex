@@ -364,7 +364,7 @@ struct MLXSwiftInferenceEngineLoaderTests {
   }
 
   @Test
-  func cloneFallbackNeverUnlinksAnUnexpectedDestinationEntry() throws {
+  func materializationFailureAfterOpeningDestinationZeroesOwnedBytes() throws {
     let root = try makeRoot()
     let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
     try makeCompleteModelDirectory(at: modelDirectory)
@@ -372,51 +372,47 @@ struct MLXSwiftInferenceEngineLoaderTests {
       path: "snapshot-namespace",
       directoryHint: .isDirectory
     )
+    let snapshotDirectory = namespaceDirectory.appending(
+      path: "snapshot-0",
+      directoryHint: .isDirectory
+    )
     defer {
       try? makeNamespaceWritable(namespaceDirectory)
       try? FileManager.default.removeItem(at: root)
     }
-    let marker = Data("unrelated-existing-entry".utf8)
+    let marker = Data("{\"model_type\":\"test\"}".utf8)
     let namespace = try MLXModelArtifactSnapshotNamespace(
       directory: namespaceDirectory,
       snapshotLimit: 1
     )
     let builder = MLXModelArtifactSnapshotBuilder(
       namespace: namespace,
-      cloneArtifact: { _, destinationDescriptor, name in
-        let fileDescriptor = name.withCString {
-          openat(
-            destinationDescriptor,
-            $0,
-            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
-            S_IRUSR | S_IWUSR
-          )
-        }
-        guard fileDescriptor >= 0 else {
-          return -1
-        }
-        _ = marker.withUnsafeBytes { bytes in
+      copyArtifact: { _, destinationDescriptor, _ in
+        let writeCount = marker.withUnsafeBytes { bytes -> Int in
           guard let baseAddress = bytes.baseAddress else {
             return -1
           }
-          return Darwin.write(fileDescriptor, baseAddress, bytes.count)
+          return Darwin.write(destinationDescriptor, baseAddress, bytes.count)
         }
-        close(fileDescriptor)
-        return -1
+        guard writeCount == marker.count else {
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
+        errno = EMFILE
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
       }
     )
 
     #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
       _ = try builder.makeSnapshot(for: makeConfiguration(directory: modelDirectory))
     }
-    let snapshotDirectory = namespaceDirectory.appending(
-      path: "snapshot-0",
-      directoryHint: .isDirectory
-    )
     try makeDirectoryWritable(snapshotDirectory)
-    #expect(
-      try Data(contentsOf: snapshotDirectory.appending(path: "config.json")) == marker
-    )
+    let destination = snapshotDirectory.appending(path: "config.json")
+    #expect(FileManager.default.fileExists(atPath: destination.path))
+    #expect(try fileSize(destination) == 0)
+    var status = stat()
+    #expect(lstat(destination.path, &status) == 0)
+    #expect(status.st_mode & S_IFMT == S_IFREG)
+    #expect(status.st_mode & mode_t(0o7777) == 0)
   }
 
   @Test

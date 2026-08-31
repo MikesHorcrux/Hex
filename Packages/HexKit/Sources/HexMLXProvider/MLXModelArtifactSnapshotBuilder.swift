@@ -4,21 +4,23 @@ import HexProviders
 
 struct MLXModelArtifactSnapshotBuilder: Sendable {
   private let namespace: MLXModelArtifactSnapshotNamespace
-  private let cloneArtifact: @Sendable (Int32, Int32, String) -> Int32
+  private let copyArtifact: @Sendable (Int32, Int32, UInt64) throws -> Void
 
   init(
     namespace: MLXModelArtifactSnapshotNamespace = MLXModelArtifactSnapshotNamespace(),
-    cloneArtifact: @escaping @Sendable (Int32, Int32, String) -> Int32 = {
+    copyArtifact: @escaping @Sendable (Int32, Int32, UInt64) throws -> Void = {
       sourceDescriptor,
       destinationDescriptor,
-      name in
-      name.withCString {
-        fclonefileat(sourceDescriptor, destinationDescriptor, $0, 0)
-      }
+      byteCount in
+      try MLXModelArtifactSnapshotBuilder.copyPinnedArtifact(
+        sourceDescriptor: sourceDescriptor,
+        destinationDescriptor: destinationDescriptor,
+        byteCount: byteCount
+      )
     }
   ) {
     self.namespace = namespace
-    self.cloneArtifact = cloneArtifact
+    self.copyArtifact = copyArtifact
   }
 
   func makeSnapshot(
@@ -64,10 +66,7 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     defer {
       if !preserveSnapshot {
         for entry in snapshotEntries {
-          _ = ftruncate(entry.fileDescriptor, 0)
-          _ = fsync(entry.fileDescriptor)
-          _ = fchmod(entry.fileDescriptor, 0)
-          close(entry.fileDescriptor)
+          Self.discardOwnedFileDescriptor(entry.fileDescriptor)
         }
         _ = fchmod(destinationDescriptor, 0)
         close(destinationDescriptor)
@@ -239,32 +238,28 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     into destinationDescriptor: Int32
   ) throws -> MLXModelArtifactSnapshotEntry {
     try Task.checkCancellation()
-    let cloneResult = cloneArtifact(
-      artifact.fileDescriptor,
-      destinationDescriptor,
-      artifact.name
-    )
-    let destinationFileDescriptor =
-      if cloneResult == 0 {
-        try openWritableClone(artifact, in: destinationDescriptor)
-      } else {
-        try copy(artifact, into: destinationDescriptor)
-      }
+    let destination = try openDestination(named: artifact.name, in: destinationDescriptor)
+    let destinationFileDescriptor = destination.fileDescriptor
     var preserveDescriptor = false
     defer {
       if !preserveDescriptor {
-        _ = ftruncate(destinationFileDescriptor, 0)
-        _ = fsync(destinationFileDescriptor)
-        close(destinationFileDescriptor)
+        Self.discardOwnedFileDescriptor(destinationFileDescriptor)
       }
     }
 
+    try copyArtifact(
+      artifact.fileDescriptor,
+      destinationFileDescriptor,
+      artifact.size
+    )
     var destinationStatus = stat()
     guard
       fstat(destinationFileDescriptor, &destinationStatus) == 0,
       destinationStatus.st_mode & S_IFMT == S_IFREG,
       destinationStatus.st_uid == geteuid(),
       UInt64(destinationStatus.st_nlink) == 1,
+      UInt64(destinationStatus.st_dev) == destination.device,
+      UInt64(destinationStatus.st_ino) == destination.inode,
       destinationStatus.st_size >= 0,
       UInt64(destinationStatus.st_size) == artifact.size,
       fchmod(destinationFileDescriptor, 0o400) == 0,
@@ -274,6 +269,8 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
       destinationStatus.st_uid == geteuid(),
       destinationStatus.st_mode & mode_t(0o7777) == mode_t(0o400),
       UInt64(destinationStatus.st_nlink) == 1,
+      UInt64(destinationStatus.st_dev) == destination.device,
+      UInt64(destinationStatus.st_ino) == destination.inode,
       destinationStatus.st_size >= 0,
       UInt64(destinationStatus.st_size) == artifact.size
     else {
@@ -288,85 +285,79 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     )
   }
 
-  private func openWritableClone(
-    _ artifact: MLXModelArtifact,
+  private func openDestination(
+    named name: String,
     in destinationDescriptor: Int32
-  ) throws -> Int32 {
-    let readDescriptor = artifact.name.withCString {
-      openat(destinationDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-    }
-    guard readDescriptor >= 0 else {
-      throw MLXLocalInferenceProviderError.invalidModelConfiguration
-    }
-    defer { close(readDescriptor) }
-    var readStatus = stat()
-    guard
-      fstat(readDescriptor, &readStatus) == 0,
-      readStatus.st_mode & S_IFMT == S_IFREG,
-      readStatus.st_uid == geteuid(),
-      UInt64(readStatus.st_nlink) == 1,
-      readStatus.st_size >= 0,
-      UInt64(readStatus.st_size) == artifact.size,
-      fchmod(readDescriptor, 0o600) == 0
-    else {
-      throw MLXLocalInferenceProviderError.invalidModelConfiguration
-    }
-    let writableDescriptor = artifact.name.withCString {
-      openat(destinationDescriptor, $0, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
-    }
-    guard writableDescriptor >= 0 else {
-      throw MLXLocalInferenceProviderError.invalidModelConfiguration
-    }
-    var writableStatus = stat()
-    guard
-      fstat(writableDescriptor, &writableStatus) == 0,
-      writableStatus.st_dev == readStatus.st_dev,
-      writableStatus.st_ino == readStatus.st_ino
-    else {
-      close(writableDescriptor)
-      throw MLXLocalInferenceProviderError.invalidModelConfiguration
-    }
-    return writableDescriptor
-  }
-
-  private func copy(
-    _ artifact: MLXModelArtifact,
-    into destinationDescriptor: Int32
-  ) throws -> Int32 {
-    guard lseek(artifact.fileDescriptor, 0, SEEK_SET) == 0 else {
-      throw MLXLocalInferenceProviderError.invalidModelConfiguration
-    }
-    let destinationFileDescriptor = artifact.name.withCString {
+  ) throws -> (fileDescriptor: Int32, device: UInt64, inode: UInt64) {
+    let fileDescriptor = name.withCString {
       openat(
         destinationDescriptor,
         $0,
-        O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+        O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
         S_IRUSR | S_IWUSR
       )
     }
-    guard destinationFileDescriptor >= 0 else {
+    guard fileDescriptor >= 0 else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
     var preserveDescriptor = false
     defer {
       if !preserveDescriptor {
-        _ = ftruncate(destinationFileDescriptor, 0)
-        _ = fsync(destinationFileDescriptor)
-        close(destinationFileDescriptor)
+        Self.discardOwnedFileDescriptor(fileDescriptor)
       }
+    }
+
+    var status = stat()
+    guard
+      fstat(fileDescriptor, &status) == 0,
+      status.st_mode & S_IFMT == S_IFREG,
+      status.st_uid == geteuid(),
+      status.st_mode & mode_t(0o7777) == mode_t(0o600),
+      UInt64(status.st_nlink) == 1,
+      status.st_size == 0
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    let device = UInt64(status.st_dev)
+    let inode = UInt64(status.st_ino)
+    guard
+      fchmod(fileDescriptor, S_IRUSR | S_IWUSR) == 0,
+      fsync(fileDescriptor) == 0,
+      fstat(fileDescriptor, &status) == 0,
+      status.st_mode & S_IFMT == S_IFREG,
+      status.st_uid == geteuid(),
+      status.st_mode & mode_t(0o7777) == mode_t(0o600),
+      UInt64(status.st_nlink) == 1,
+      UInt64(status.st_dev) == device,
+      UInt64(status.st_ino) == inode,
+      status.st_size == 0
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    preserveDescriptor = true
+    return (fileDescriptor, device, inode)
+  }
+
+  private static func copyPinnedArtifact(
+    sourceDescriptor: Int32,
+    destinationDescriptor: Int32,
+    byteCount: UInt64
+  ) throws {
+    guard lseek(sourceDescriptor, 0, SEEK_SET) == 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
 
     var buffer = [UInt8](repeating: 0, count: 1_024 * 1_024)
     var copiedBytes: UInt64 = 0
-    while copiedBytes < artifact.size {
+    while copiedBytes < byteCount {
       try Task.checkCancellation()
-      let remaining = artifact.size - copiedBytes
+      let remaining = byteCount - copiedBytes
       let requested = min(buffer.count, Int(remaining))
       let readCount = buffer.withUnsafeMutableBytes { bytes -> Int in
         guard let baseAddress = bytes.baseAddress else {
           return -1
         }
-        return Darwin.read(artifact.fileDescriptor, baseAddress, requested)
+        return Darwin.read(sourceDescriptor, baseAddress, requested)
       }
       guard readCount > 0 else {
         throw MLXLocalInferenceProviderError.invalidModelConfiguration
@@ -378,7 +369,7 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
             return -1
           }
           return Darwin.write(
-            destinationFileDescriptor,
+            destinationDescriptor,
             baseAddress.advanced(by: written),
             readCount - written
           )
@@ -392,13 +383,18 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     }
     var extraByte: UInt8 = 0
     guard
-      Darwin.read(artifact.fileDescriptor, &extraByte, 1) == 0,
-      fsync(destinationFileDescriptor) == 0
+      Darwin.read(sourceDescriptor, &extraByte, 1) == 0,
+      fsync(destinationDescriptor) == 0
     else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
-    preserveDescriptor = true
-    return destinationFileDescriptor
+  }
+
+  private static func discardOwnedFileDescriptor(_ fileDescriptor: Int32) {
+    _ = ftruncate(fileDescriptor, 0)
+    _ = fchmod(fileDescriptor, 0)
+    _ = fsync(fileDescriptor)
+    close(fileDescriptor)
   }
 
   private func validateSourceStillMatches(
