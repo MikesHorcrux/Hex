@@ -17,13 +17,17 @@ HexCore
 ├── HexRuntime
 └── HexIPC
 
-HexGateway ──> all library modules (composition and dependency injection)
-Hex app    ──> all library products (composition root)
+HexMLXProvider ──> HexProviders + HexCore (optional concrete adapter)
+HexGateway      ──> foundational library modules (composition and dependency injection)
+Hex app         ──> foundational library products (interactive composition root)
 ```
 
 - **HexCore** owns stable domain contracts and identifiers. It imports no other Hex module.
 - **HexPersistence** owns durable storage interfaces and implementations.
-- **HexProviders** owns inference-provider abstractions and adapters.
+- **HexProviders** owns provider-neutral inference adapters and their injection boundaries.
+- **HexMLXProvider** owns the optional concrete MLX Swift integration so `HexProviders` does not
+  import or link heavyweight local-model libraries. The app and gateway add this product only when
+  their composition roots select local inference.
 - **HexCapabilities** owns tool/capability contracts and execution policy inputs.
 - **HexPersonality** owns personality and long-term-memory policy against injected core contracts.
 - **HexRuntime** owns the agent loop and orchestration against contracts from `HexCore`; it does not
@@ -39,7 +43,8 @@ Cycles are not permitted. Lower layers never import the app, gateway, or a highe
 `Hex`, `HexTests`, and `HexUITests` are Xcode filesystem-synchronized root groups. New files inside
 those directories are discovered without per-file `project.pbxproj` entries. Feature implementation
 lives under the local `Packages/HexKit` package, where SwiftPM target directories provide the same
-no-project-churn behavior. The app links every library product once at the package boundary.
+no-project-churn behavior. The app links each foundational product once at the package boundary;
+concrete provider products are linked when their composition is enabled.
 
 `HexGateway` remains a SwiftPM executable instead of duplicating it as an Xcode native target. Xcode
 automatically exposes its `HexGateway` package scheme from the local package reference, while
