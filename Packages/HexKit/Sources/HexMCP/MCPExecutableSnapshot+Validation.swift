@@ -73,7 +73,8 @@ extension MCPExecutableSnapshot {
   ) -> Bool {
     let effectiveUserID = geteuid()
     return status.st_mode & S_IFMT == S_IFREG
-      && (status.st_uid == 0 || status.st_uid == effectiveUserID)
+      && (status.st_uid == 0
+        || (!allowsTrustedHardLinks && status.st_uid == effectiveUserID))
       && (status.st_nlink == 1
         || (allowsTrustedHardLinks && status.st_uid == 0 && status.st_nlink > 1))
       && status.st_size >= 0
@@ -87,19 +88,22 @@ extension MCPExecutableSnapshot {
   static let xcodeCodeSigningRequirement =
     #"anchor apple and identifier "com.apple.dt.Xcode""#
 
+  static let standardApplicationsPath = "/Applications"
+  static let standardXcodeBundlePath = "/Applications/Xcode.app"
+  static let standardApplicationsComponent = "Applications"
+  static let standardXcodeBundleComponent = "Xcode.app"
+  static let standardApplicationsGroupID = gid_t(80)
+
   /// Xcode's signed app bundles may contain root-owned hard-linked resources. Permit
-  /// those aliases only after anchoring the complete bundle path and nested signature to
-  /// Apple's Xcode requirement; all other snapshot sources retain the nlink == 1 rule.
+  /// those aliases only after anchoring the exact standard bundle path and nested signature
+  /// to Apple's Xcode requirement; all other snapshot sources retain the nlink == 1 rule.
   static func isTrustedSignedXcodeBundle(rootPath: String) -> Bool {
-    guard
-      rootPath.hasSuffix(".app"),
-      rootPath.hasPrefix("/"),
-      !rootPath.contains("\0"),
-      (rootPath as NSString).standardizingPath == rootPath,
-      isRootOwnedUnwritableDirectory(rootPath)
-    else {
-      return false
-    }
+    trustedSignedXcodeBundle(rootPath: rootPath) != nil
+  }
+
+  static func trustedSignedXcodeBundle(rootPath: String) -> TrustedXcodeBundle? {
+    guard let bundle = openTrustedXcodeBundle(rootPath: rootPath) else { return nil }
+    guard bundle.isIntact() else { return nil }
 
     var staticCode: SecStaticCode?
     guard
@@ -110,7 +114,7 @@ extension MCPExecutableSnapshot {
       ) == errSecSuccess,
       let staticCode
     else {
-      return false
+      return nil
     }
 
     var requirement: SecRequirement?
@@ -122,18 +126,26 @@ extension MCPExecutableSnapshot {
       ) == errSecSuccess,
       let requirement
     else {
-      return false
+      return nil
     }
 
     let flags = SecCSFlags(
       rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate
     )
-    return SecStaticCodeCheckValidity(staticCode, flags, requirement) == errSecSuccess
+    guard SecStaticCodeCheckValidity(staticCode, flags, requirement) == errSecSuccess else {
+      return nil
+    }
+    guard bundle.isIntact() else { return nil }
+    return bundle
   }
 
-  static func isAcceptableSourceDirectory(_ status: stat) -> Bool {
+  static func isAcceptableSourceDirectory(
+    _ status: stat,
+    requiresRootOwnership: Bool = false
+  ) -> Bool {
     status.st_mode & S_IFMT == S_IFDIR
-      && (status.st_uid == 0 || status.st_uid == geteuid())
+      && (status.st_uid == 0
+        || (!requiresRootOwnership && status.st_uid == geteuid()))
       && status.st_mode & (S_IWGRP | S_IWOTH | S_ISUID | S_ISGID) == 0
   }
 
@@ -143,32 +155,183 @@ extension MCPExecutableSnapshot {
       && status.st_mode & 0o077 == 0
   }
 
-  private static func isRootOwnedUnwritableDirectory(_ path: String) -> Bool {
-    let components = path.split(separator: "/").map(String.init)
-    guard !components.isEmpty else { return false }
-    var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-    guard descriptor >= 0 else { return false }
-    defer { Darwin.close(descriptor) }
+  static func isExactTrustedXcodeBundlePath(_ path: String) -> Bool {
+    path == standardXcodeBundlePath
+      && path.hasPrefix("/")
+      && !path.contains("\0")
+      && (path as NSString).standardizingPath == path
+  }
 
-    for component in components {
-      let nextDescriptor = component.withCString { name in
-        openat(descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-      }
-      guard nextDescriptor >= 0 else { return false }
-      var status = stat()
-      let valid =
-        fstat(nextDescriptor, &status) == 0
-        && status.st_mode & S_IFMT == S_IFDIR
-        && status.st_uid == 0
-        && status.st_mode & (S_IWGRP | S_IWOTH | S_ISUID | S_ISGID) == 0
-      guard valid else {
-        Darwin.close(nextDescriptor)
+  static func isAcceptableStandardApplicationsDirectory(_ status: stat) -> Bool {
+    status.st_mode & S_IFMT == S_IFDIR
+      && status.st_uid == 0
+      && status.st_gid == standardApplicationsGroupID
+      && status.st_mode & 0o7777 == 0o775
+  }
+
+  static func isAcceptableTrustedBundleComponent(_ status: stat) -> Bool {
+    let fileType = status.st_mode & S_IFMT
+    guard fileType == S_IFDIR || fileType == S_IFREG || fileType == S_IFLNK else {
+      return false
+    }
+    let writableBits = fileType == S_IFLNK ? mode_t(0) : S_IWGRP | S_IWOTH
+    return status.st_uid == 0
+      && status.st_mode & (writableBits | S_ISUID | S_ISGID) == 0
+  }
+
+  static func hasStableTrustedXcodePathIdentities(
+    ancestorInitialStatus: stat,
+    ancestorDescriptorStatus: stat,
+    ancestorPathStatus: stat,
+    bundleInitialStatus: stat,
+    bundleDescriptorStatus: stat,
+    bundlePathStatus: stat
+  ) -> Bool {
+    isAcceptableStandardApplicationsDirectory(ancestorInitialStatus)
+      && isAcceptableStandardApplicationsDirectory(ancestorDescriptorStatus)
+      && isAcceptableStandardApplicationsDirectory(ancestorPathStatus)
+      && bundleInitialStatus.st_mode & S_IFMT == S_IFDIR
+      && bundleDescriptorStatus.st_mode & S_IFMT == S_IFDIR
+      && bundlePathStatus.st_mode & S_IFMT == S_IFDIR
+      && isAcceptableTrustedBundleComponent(bundleInitialStatus)
+      && isAcceptableTrustedBundleComponent(bundleDescriptorStatus)
+      && isAcceptableTrustedBundleComponent(bundlePathStatus)
+      && sameSourceIdentityAndMetadata(ancestorInitialStatus, ancestorDescriptorStatus)
+      && sameSourceIdentityAndMetadata(ancestorInitialStatus, ancestorPathStatus)
+      && sameSourceIdentityAndMetadata(bundleInitialStatus, bundleDescriptorStatus)
+      && sameSourceIdentityAndMetadata(bundleInitialStatus, bundlePathStatus)
+  }
+
+  final class TrustedXcodeBundle: Sendable {
+    let rootPath: String
+    let rootDescriptor: Int32
+    let applicationsDescriptor: Int32
+    let applicationsStatus: stat
+    let bundleDescriptor: Int32
+    let bundleStatus: stat
+
+    init(
+      rootPath: String,
+      rootDescriptor: Int32,
+      applicationsDescriptor: Int32,
+      applicationsStatus: stat,
+      bundleDescriptor: Int32,
+      bundleStatus: stat
+    ) {
+      self.rootPath = rootPath
+      self.rootDescriptor = rootDescriptor
+      self.applicationsDescriptor = applicationsDescriptor
+      self.applicationsStatus = applicationsStatus
+      self.bundleDescriptor = bundleDescriptor
+      self.bundleStatus = bundleStatus
+    }
+
+    deinit {
+      Darwin.close(bundleDescriptor)
+      Darwin.close(applicationsDescriptor)
+      Darwin.close(rootDescriptor)
+    }
+
+    func isIntact() -> Bool {
+      guard MCPExecutableSnapshot.isExactTrustedXcodeBundlePath(rootPath) else {
         return false
       }
-      Darwin.close(descriptor)
-      descriptor = nextDescriptor
+      var ancestorDescriptorStatus = stat()
+      var ancestorPathStatus = stat()
+      var bundleDescriptorStatus = stat()
+      var bundlePathStatus = stat()
+      guard
+        fstat(applicationsDescriptor, &ancestorDescriptorStatus) == 0,
+        MCPExecutableSnapshot.standardApplicationsComponent.withCString({ name in
+          fstatat(rootDescriptor, name, &ancestorPathStatus, AT_SYMLINK_NOFOLLOW)
+        }) == 0,
+        fstat(bundleDescriptor, &bundleDescriptorStatus) == 0,
+        MCPExecutableSnapshot.standardXcodeBundleComponent.withCString({ name in
+          fstatat(
+            applicationsDescriptor,
+            name,
+            &bundlePathStatus,
+            AT_SYMLINK_NOFOLLOW
+          )
+        }) == 0
+      else {
+        return false
+      }
+      return MCPExecutableSnapshot.hasStableTrustedXcodePathIdentities(
+        ancestorInitialStatus: applicationsStatus,
+        ancestorDescriptorStatus: ancestorDescriptorStatus,
+        ancestorPathStatus: ancestorPathStatus,
+        bundleInitialStatus: bundleStatus,
+        bundleDescriptorStatus: bundleDescriptorStatus,
+        bundlePathStatus: bundlePathStatus
+      )
     }
-    return true
+  }
+
+  private static func openTrustedXcodeBundle(rootPath: String) -> TrustedXcodeBundle? {
+    guard isExactTrustedXcodeBundlePath(rootPath) else { return nil }
+
+    let rootDescriptor = Darwin.open(
+      "/",
+      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+    )
+    guard rootDescriptor >= 0 else { return nil }
+    var ownsRootDescriptor = true
+    defer {
+      if ownsRootDescriptor { Darwin.close(rootDescriptor) }
+    }
+
+    let applicationsDescriptor = standardApplicationsComponent.withCString { name in
+      openat(rootDescriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    }
+    guard applicationsDescriptor >= 0 else { return nil }
+    var ownsApplicationsDescriptor = true
+    defer {
+      if ownsApplicationsDescriptor { Darwin.close(applicationsDescriptor) }
+    }
+
+    var ancestorStatus = stat()
+    guard
+      fstat(applicationsDescriptor, &ancestorStatus) == 0,
+      isAcceptableStandardApplicationsDirectory(ancestorStatus)
+    else {
+      return nil
+    }
+
+    let bundleDescriptor = standardXcodeBundleComponent.withCString { name in
+      openat(
+        applicationsDescriptor,
+        name,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+      )
+    }
+    guard bundleDescriptor >= 0 else { return nil }
+    var ownsBundleDescriptor = true
+    defer {
+      if ownsBundleDescriptor { Darwin.close(bundleDescriptor) }
+    }
+
+    var bundleStatus = stat()
+    guard
+      fstat(bundleDescriptor, &bundleStatus) == 0,
+      bundleStatus.st_mode & S_IFMT == S_IFDIR,
+      isAcceptableTrustedBundleComponent(bundleStatus)
+    else {
+      return nil
+    }
+
+    let bundle = TrustedXcodeBundle(
+      rootPath: rootPath,
+      rootDescriptor: rootDescriptor,
+      applicationsDescriptor: applicationsDescriptor,
+      applicationsStatus: ancestorStatus,
+      bundleDescriptor: bundleDescriptor,
+      bundleStatus: bundleStatus
+    )
+    ownsRootDescriptor = false
+    ownsApplicationsDescriptor = false
+    ownsBundleDescriptor = false
+    return bundle
   }
 
   static func hasExecutionPermission(

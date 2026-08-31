@@ -13,7 +13,8 @@ extension MCPExecutableSnapshot {
       let sourceDescriptor = try openSourceDirectory(
         sourceRelativePath,
         beneath: sourceRootDescriptor,
-        missingIsAllowed: false
+        missingIsAllowed: false,
+        requiresRootOwnership: copyState.allowsTrustedHardLinks
       )
     else {
       throw MCPClientSessionError.connectionClosed
@@ -59,7 +60,10 @@ extension MCPExecutableSnapshot {
     var rootStatus = stat()
     guard
       fstat(sourceDescriptor, &rootStatus) == 0,
-      isAcceptableSourceDirectory(rootStatus)
+      isAcceptableSourceDirectory(
+        rootStatus,
+        requiresRootOwnership: copyState.allowsTrustedHardLinks
+      )
     else {
       throw MCPClientSessionError.connectionClosed
     }
@@ -108,7 +112,12 @@ extension MCPExecutableSnapshot {
       }
       switch childStatus.st_mode & S_IFMT {
       case S_IFDIR:
-        guard isAcceptableSourceDirectory(childStatus) else {
+        guard
+          isAcceptableSourceDirectory(
+            childStatus,
+            requiresRootOwnership: copyState.allowsTrustedHardLinks
+          )
+        else {
           throw MCPClientSessionError.connectionClosed
         }
         let childDescriptor = name.withCString { childName in
@@ -333,8 +342,12 @@ extension MCPExecutableSnapshot {
     copyState: inout CopyState
   ) throws {
     guard
-      initialStatus.st_uid == 0 || initialStatus.st_uid == geteuid(),
+      initialStatus.st_uid == 0
+        || (!copyState.allowsTrustedHardLinks && initialStatus.st_uid == geteuid()),
       initialStatus.st_nlink == 1,
+      initialStatus.st_mode
+        & ((initialStatus.st_mode & S_IFMT == S_IFLNK ? mode_t(0) : S_IWGRP | S_IWOTH)
+          | S_ISUID | S_ISGID) == 0,
       initialStatus.st_size > 0,
       initialStatus.st_size <= off_t(maximumSymbolicLinkBytes)
     else {

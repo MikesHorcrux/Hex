@@ -8,12 +8,28 @@ extension MCPExecutableSnapshot {
     initialStatus: stat,
     destination: PrivateDirectory,
     copyState: inout CopyState,
-    afterSourceValidation: (@Sendable (_ snapshotPath: String) -> Void)?
+    afterSourceValidation: (@Sendable (_ snapshotPath: String) -> Void)?,
+    trustedXcodeBundle: TrustedXcodeBundle? = nil
   ) throws -> (descriptor: Int32, status: stat) {
-    let sourceRootDescriptor = Darwin.open(
-      layout.rootPath,
-      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-    )
+    let sourceRootDescriptor: Int32
+    if let trustedXcodeBundle {
+      guard
+        trustedXcodeBundle.rootPath == layout.rootPath,
+        trustedXcodeBundle.isIntact()
+      else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      sourceRootDescriptor = fcntl(
+        trustedXcodeBundle.bundleDescriptor,
+        F_DUPFD_CLOEXEC,
+        STDERR_FILENO + 1
+      )
+    } else {
+      sourceRootDescriptor = Darwin.open(
+        layout.rootPath,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+      )
+    }
     guard sourceRootDescriptor >= 0 else {
       throw MCPClientSessionError.connectionClosed
     }
@@ -21,7 +37,10 @@ extension MCPExecutableSnapshot {
     var initialRootStatus = stat()
     guard
       fstat(sourceRootDescriptor, &initialRootStatus) == 0,
-      isAcceptableSourceDirectory(initialRootStatus)
+      isAcceptableSourceDirectory(
+        initialRootStatus,
+        requiresRootOwnership: trustedXcodeBundle != nil
+      )
     else {
       throw MCPClientSessionError.connectionClosed
     }
@@ -30,7 +49,8 @@ extension MCPExecutableSnapshot {
         layout.executableRelativePath,
         beneath: sourceRootDescriptor,
         requireExecutable: true,
-        missingIsAllowed: false
+        missingIsAllowed: false,
+        allowsTrustedHardLinks: trustedXcodeBundle != nil
       )
     else {
       throw MCPClientSessionError.connectionClosed
@@ -78,6 +98,11 @@ extension MCPExecutableSnapshot {
         sameSourceIdentityAndMetadata(initialRootStatus, finalRootStatus)
       else {
         throw MCPClientSessionError.connectionClosed
+      }
+      if let trustedXcodeBundle {
+        guard trustedXcodeBundle.isIntact() else {
+          throw MCPClientSessionError.connectionClosed
+        }
       }
       return executable
     } catch {
@@ -484,7 +509,8 @@ extension MCPExecutableSnapshot {
       let packageDescriptor = try openSourceDirectory(
         packageRoot,
         beneath: rootDescriptor,
-        missingIsAllowed: missingIsAllowed
+        missingIsAllowed: missingIsAllowed,
+        requiresRootOwnership: allowsTrustedHardLinks
       )
     else {
       return nil
@@ -507,7 +533,10 @@ extension MCPExecutableSnapshot {
       var status = stat()
       guard
         fstat(expectedParentDescriptor, &status) == 0,
-        isAcceptableSourceDirectory(status)
+        isAcceptableSourceDirectory(
+          status,
+          requiresRootOwnership: allowsTrustedHardLinks
+        )
       else {
         throw MCPClientSessionError.connectionClosed
       }
@@ -557,13 +586,19 @@ extension MCPExecutableSnapshot {
         var status = stat()
         guard
           fstat(descriptor, &status) == 0,
-          isAcceptableSourceDirectory(status)
+          isAcceptableSourceDirectory(
+            status,
+            requiresRootOwnership: allowsTrustedHardLinks
+          )
         else {
           Darwin.close(descriptor)
           throw MCPClientSessionError.connectionClosed
         }
         do {
-          try revalidateFrameworkSymlinkBindings(symlinkBindings)
+          try revalidateFrameworkSymlinkBindings(
+            symlinkBindings,
+            requiresRootOwnership: allowsTrustedHardLinks
+          )
         } catch {
           Darwin.close(descriptor)
           throw error
@@ -607,7 +642,8 @@ extension MCPExecutableSnapshot {
         let linkTarget = try readFrameworkSymlink(
           name: component,
           descriptor: currentDescriptor,
-          status: componentStatus
+          status: componentStatus,
+          requiresRootOwnership: allowsTrustedHardLinks
         )
         let linkIdentity = "\(componentStatus.st_dev):\(componentStatus.st_ino)"
         guard visitedSymlinks.insert(linkIdentity).inserted else {
@@ -637,7 +673,8 @@ extension MCPExecutableSnapshot {
           finalLinkTarget = try readFrameworkSymlink(
             name: component,
             descriptor: currentDescriptor,
-            status: finalLinkStatus
+            status: finalLinkStatus,
+            requiresRootOwnership: allowsTrustedHardLinks
           )
         } catch {
           Darwin.close(parentDuplicate)
@@ -668,7 +705,12 @@ extension MCPExecutableSnapshot {
         if pendingComponents.isEmpty { pendingComponents = ["."] }
         componentIndex = 0
       case S_IFDIR:
-        guard isAcceptableSourceDirectory(componentStatus) else {
+        guard
+          isAcceptableSourceDirectory(
+            componentStatus,
+            requiresRootOwnership: allowsTrustedHardLinks
+          )
+        else {
           throw MCPClientSessionError.connectionClosed
         }
         if componentIndex == pendingComponents.count {
@@ -742,7 +784,10 @@ extension MCPExecutableSnapshot {
           throw MCPClientSessionError.connectionClosed
         }
         do {
-          try revalidateFrameworkSymlinkBindings(symlinkBindings)
+          try revalidateFrameworkSymlinkBindings(
+            symlinkBindings,
+            requiresRootOwnership: allowsTrustedHardLinks
+          )
         } catch {
           Darwin.close(descriptor)
           throw error
@@ -757,12 +802,15 @@ extension MCPExecutableSnapshot {
   private static func readFrameworkSymlink(
     name: String,
     descriptor: Int32,
-    status: stat
+    status: stat,
+    requiresRootOwnership: Bool = false
   ) throws -> String {
+    let writableBits = status.st_mode & S_IFMT == S_IFLNK ? mode_t(0) : S_IWGRP | S_IWOTH
     guard
       status.st_mode & S_IFMT == S_IFLNK,
-      status.st_uid == 0 || status.st_uid == geteuid(),
+      status.st_uid == 0 || (!requiresRootOwnership && status.st_uid == geteuid()),
       status.st_nlink == 1,
+      status.st_mode & (writableBits | S_ISUID | S_ISGID) == 0,
       status.st_size > 0,
       status.st_size <= off_t(maximumSymbolicLinkBytes)
     else {
@@ -789,7 +837,8 @@ extension MCPExecutableSnapshot {
   }
 
   private static func revalidateFrameworkSymlinkBindings(
-    _ bindings: [FrameworkSymlinkBinding]
+    _ bindings: [FrameworkSymlinkBinding],
+    requiresRootOwnership: Bool = false
   ) throws {
     for binding in bindings {
       var currentStatus = stat()
@@ -811,7 +860,8 @@ extension MCPExecutableSnapshot {
         try readFrameworkSymlink(
           name: binding.name,
           descriptor: binding.parentDescriptor,
-          status: currentStatus
+          status: currentStatus,
+          requiresRootOwnership: requiresRootOwnership
         ) == binding.target
       else {
         throw MCPClientSessionError.connectionClosed
