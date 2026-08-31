@@ -57,7 +57,17 @@ struct SQLiteJournalPathSecurityTests {
       return
     }
 
-    await expectInvalidPath(aliasURL)
+    do {
+      _ = try await SQLiteAgentEventJournal.open(
+        configuration: SQLiteAgentEventJournalConfiguration(databaseURL: aliasURL)
+      )
+      Issue.record("Expected the dedicated directory owner to reject an alias journal.")
+    } catch let error as SQLiteAgentEventJournalError {
+      guard case .ownershipUnavailable = error else {
+        Issue.record("Expected ownershipUnavailable, received \(error).")
+        return
+      }
+    }
     do {
       _ = try await journal.records(for: .init(), after: nil, limit: 1)
       Issue.record("Expected the active owner to detect the new hard-link alias.")

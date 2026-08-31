@@ -3,23 +3,33 @@ import Foundation
 
 final class SQLiteJournalFileLock {
   private let databaseDescriptor: Int32
+  private let directoryDescriptor: Int32
   private let lockDescriptor: Int32
 
   init(secureDirectory: SQLiteJournalSecureDirectory) throws {
-    let databaseDescriptor = try secureDirectory.openDatabaseFile()
+    let directoryDescriptor = try secureDirectory.openOwnershipDirectory()
     do {
-      try Self.acquireDatabaseOwnership(on: databaseDescriptor)
-      let lockDescriptor = try secureDirectory.openLockFile()
+      try Self.acquireLock(on: directoryDescriptor)
+      let databaseDescriptor = try secureDirectory.openDatabaseFile()
       do {
-        try Self.acquireLock(on: lockDescriptor)
-        self.databaseDescriptor = databaseDescriptor
-        self.lockDescriptor = lockDescriptor
+        try Self.acquireDatabaseOwnership(on: databaseDescriptor)
+        let lockDescriptor = try secureDirectory.openLockFile()
+        do {
+          try Self.acquireLock(on: lockDescriptor)
+          self.databaseDescriptor = databaseDescriptor
+          self.directoryDescriptor = directoryDescriptor
+          self.lockDescriptor = lockDescriptor
+        } catch {
+          Darwin.close(lockDescriptor)
+          throw error
+        }
       } catch {
-        Darwin.close(lockDescriptor)
+        Darwin.close(databaseDescriptor)
         throw error
       }
     } catch {
-      Darwin.close(databaseDescriptor)
+      flock(directoryDescriptor, LOCK_UN)
+      Darwin.close(directoryDescriptor)
       throw error
     }
   }
@@ -29,9 +39,12 @@ final class SQLiteJournalFileLock {
     Darwin.close(lockDescriptor)
     Self.releaseDatabaseOwnership(on: databaseDescriptor)
     Darwin.close(databaseDescriptor)
+    flock(directoryDescriptor, LOCK_UN)
+    Darwin.close(directoryDescriptor)
   }
 
   func validateIdentities(in secureDirectory: SQLiteJournalSecureDirectory) throws {
+    try secureDirectory.validateDirectoryIdentity(descriptor: directoryDescriptor)
     try secureDirectory.validateDatabaseIdentity(descriptor: databaseDescriptor)
     try secureDirectory.validateLockIdentity(descriptor: lockDescriptor)
   }

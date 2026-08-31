@@ -1,8 +1,8 @@
 import Foundation
 
 enum SQLiteJournalMigrator {
-  static let currentSchemaVersion = 2
-  static let runsTableSQL =
+  static let currentSchemaVersion = 3
+  static let versionOneRunsTableSQL =
     """
     CREATE TABLE runs (
       run_id TEXT PRIMARY KEY NOT NULL,
@@ -12,7 +12,7 @@ enum SQLiteJournalMigrator {
       updated_at_us INTEGER NOT NULL
     )
     """
-  static let eventRecordsTableSQL =
+  static let versionOneEventRecordsTableSQL =
     """
     CREATE TABLE event_records (
       event_id TEXT NOT NULL UNIQUE,
@@ -27,10 +27,71 @@ enum SQLiteJournalMigrator {
       FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
     )
     """
-  static let checkpointsTableSQL =
+  static let versionTwoCheckpointsTableSQL =
     """
     CREATE TABLE journal_checkpoints (
       run_id TEXT NOT NULL,
+      through_sequence INTEGER NOT NULL,
+      created_at_us INTEGER NOT NULL,
+      checkpoint_schema_version INTEGER NOT NULL,
+      snapshot BLOB NOT NULL,
+      PRIMARY KEY (run_id, through_sequence),
+      FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    )
+    """
+  static let runsTableSQL =
+    """
+    CREATE TABLE runs (
+      run_id TEXT COLLATE NOCASE PRIMARY KEY NOT NULL CHECK (
+        length(run_id) = 36 AND run_id = upper(run_id) AND
+        substr(run_id, 9, 1) = '-' AND substr(run_id, 14, 1) = '-' AND
+        substr(run_id, 19, 1) = '-' AND substr(run_id, 24, 1) = '-' AND
+        length(replace(run_id, '-', '')) = 32 AND
+        replace(run_id, '-', '') NOT GLOB '*[^0-9A-F]*'
+      ),
+      next_sequence INTEGER NOT NULL,
+      terminal_sequence INTEGER,
+      created_at_us INTEGER NOT NULL,
+      updated_at_us INTEGER NOT NULL
+    )
+    """
+  static let eventRecordsTableSQL =
+    """
+    CREATE TABLE event_records (
+      event_id TEXT COLLATE NOCASE NOT NULL UNIQUE CHECK (
+        length(event_id) = 36 AND event_id = upper(event_id) AND
+        substr(event_id, 9, 1) = '-' AND substr(event_id, 14, 1) = '-' AND
+        substr(event_id, 19, 1) = '-' AND substr(event_id, 24, 1) = '-' AND
+        length(replace(event_id, '-', '')) = 32 AND
+        replace(event_id, '-', '') NOT GLOB '*[^0-9A-F]*'
+      ),
+      run_id TEXT COLLATE NOCASE NOT NULL CHECK (
+        length(run_id) = 36 AND run_id = upper(run_id) AND
+        substr(run_id, 9, 1) = '-' AND substr(run_id, 14, 1) = '-' AND
+        substr(run_id, 19, 1) = '-' AND substr(run_id, 24, 1) = '-' AND
+        length(replace(run_id, '-', '')) = 32 AND
+        replace(run_id, '-', '') NOT GLOB '*[^0-9A-F]*'
+      ),
+      sequence INTEGER NOT NULL,
+      timestamp_us INTEGER NOT NULL,
+      record_schema_version INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      tool_call_id TEXT,
+      payload BLOB NOT NULL,
+      PRIMARY KEY (run_id, sequence),
+      FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    )
+    """
+  static let checkpointsTableSQL =
+    """
+    CREATE TABLE journal_checkpoints (
+      run_id TEXT COLLATE NOCASE NOT NULL CHECK (
+        length(run_id) = 36 AND run_id = upper(run_id) AND
+        substr(run_id, 9, 1) = '-' AND substr(run_id, 14, 1) = '-' AND
+        substr(run_id, 19, 1) = '-' AND substr(run_id, 24, 1) = '-' AND
+        length(replace(run_id, '-', '')) = 32 AND
+        replace(run_id, '-', '') NOT GLOB '*[^0-9A-F]*'
+      ),
       through_sequence INTEGER NOT NULL,
       created_at_us INTEGER NOT NULL,
       checkpoint_schema_version INTEGER NOT NULL,
@@ -145,12 +206,22 @@ enum SQLiteJournalMigrator {
         try connection.execute("PRAGMA user_version = 1")
         try createVersionTwo(connection: connection)
         try connection.execute("PRAGMA user_version = 2")
+        try createVersionThree(connection: connection, maximumTextBytes: maximumTextBytes)
+        try connection.execute("PRAGMA user_version = 3")
         try validateSchema(connection: connection, maximumTextBytes: maximumTextBytes)
       }
     case 1:
       try connection.withImmediateTransaction {
         try createVersionTwo(connection: connection)
         try connection.execute("PRAGMA user_version = 2")
+        try createVersionThree(connection: connection, maximumTextBytes: maximumTextBytes)
+        try connection.execute("PRAGMA user_version = 3")
+        try validateSchema(connection: connection, maximumTextBytes: maximumTextBytes)
+      }
+    case 2:
+      try connection.withImmediateTransaction {
+        try createVersionThree(connection: connection, maximumTextBytes: maximumTextBytes)
+        try connection.execute("PRAGMA user_version = 3")
         try validateSchema(connection: connection, maximumTextBytes: maximumTextBytes)
       }
     default:
@@ -161,13 +232,124 @@ enum SQLiteJournalMigrator {
   }
 
   private static func createVersionOne(connection: SQLiteConnection) throws {
-    try connection.execute(runsTableSQL)
-    try connection.execute(eventRecordsTableSQL)
+    try connection.execute(versionOneRunsTableSQL)
+    try connection.execute(versionOneEventRecordsTableSQL)
   }
 
   private static func createVersionTwo(connection: SQLiteConnection) throws {
+    try connection.execute(versionTwoCheckpointsTableSQL)
+    try connection.execute(metadataIndexSQL)
+  }
+
+  private static func createVersionThree(
+    connection: SQLiteConnection,
+    maximumTextBytes: Int
+  ) throws {
+    try validateVersionTwoSchema(
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
+    try validateUUIDNormalizationInput(
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
+
+    try connection.execute("DROP INDEX event_records_run_kind_tool_call_idx")
+    try connection.execute("ALTER TABLE journal_checkpoints RENAME TO journal_checkpoints_v2")
+    try connection.execute("ALTER TABLE event_records RENAME TO event_records_v2")
+    try connection.execute("ALTER TABLE runs RENAME TO runs_v2")
+    try connection.execute(runsTableSQL)
+    try connection.execute(eventRecordsTableSQL)
     try connection.execute(checkpointsTableSQL)
     try connection.execute(metadataIndexSQL)
+    try connection.execute(
+      """
+      INSERT INTO runs (run_id, next_sequence, terminal_sequence, created_at_us, updated_at_us)
+      SELECT upper(run_id), next_sequence, terminal_sequence, created_at_us, updated_at_us
+      FROM runs_v2
+      """
+    )
+    try connection.execute(
+      """
+      INSERT INTO event_records (
+        event_id, run_id, sequence, timestamp_us, record_schema_version, kind, tool_call_id, payload
+      )
+      SELECT upper(event_id), upper(run_id), sequence, timestamp_us, record_schema_version, kind,
+             tool_call_id, payload
+      FROM event_records_v2
+      """
+    )
+    try connection.execute(
+      """
+      INSERT INTO journal_checkpoints (
+        run_id, through_sequence, created_at_us, checkpoint_schema_version, snapshot
+      )
+      SELECT upper(run_id), through_sequence, created_at_us, checkpoint_schema_version, snapshot
+      FROM journal_checkpoints_v2
+      """
+    )
+    try connection.execute("DROP TABLE journal_checkpoints_v2")
+    try connection.execute("DROP TABLE event_records_v2")
+    try connection.execute("DROP TABLE runs_v2")
+  }
+
+  private static func validateUUIDNormalizationInput(
+    connection: SQLiteConnection,
+    maximumTextBytes: Int
+  ) throws {
+    try validateUUIDColumn(
+      query: "SELECT run_id FROM runs ORDER BY run_id COLLATE NOCASE, run_id COLLATE BINARY",
+      label: "runs.run_id",
+      rejectsLogicalDuplicates: true,
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
+    try validateUUIDColumn(
+      query:
+        "SELECT event_id FROM event_records ORDER BY event_id COLLATE NOCASE, event_id COLLATE BINARY",
+      label: "event_records.event_id",
+      rejectsLogicalDuplicates: true,
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
+    for (query, label) in [
+      ("SELECT run_id FROM event_records ORDER BY run_id", "event_records.run_id"),
+      ("SELECT run_id FROM journal_checkpoints ORDER BY run_id", "journal_checkpoints.run_id"),
+    ] {
+      try validateUUIDColumn(
+        query: query,
+        label: label,
+        rejectsLogicalDuplicates: false,
+        connection: connection,
+        maximumTextBytes: maximumTextBytes
+      )
+    }
+  }
+
+  private static func validateUUIDColumn(
+    query: String,
+    label: String,
+    rejectsLogicalDuplicates: Bool,
+    connection: SQLiteConnection,
+    maximumTextBytes: Int
+  ) throws {
+    let statement = try connection.prepare(query)
+    var previousCanonicalValue: String?
+    while try statement.step() == .row {
+      let value = try statement.columnText(at: 0, maximumBytes: maximumTextBytes)
+      guard let uuid = UUID(uuidString: value) else {
+        throw SQLiteAgentEventJournalError.corruptSchema(
+          "\(label) contains text that is not a UUID."
+        )
+      }
+      let canonicalValue = uuid.uuidString
+      if rejectsLogicalDuplicates, canonicalValue == previousCanonicalValue {
+        throw SQLiteAgentEventJournalError.corruptSchema(
+          "\(label) contains a case-insensitive UUID collision."
+        )
+      }
+      previousCanonicalValue = canonicalValue
+    }
   }
 
 }

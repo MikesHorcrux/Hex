@@ -22,7 +22,7 @@ extension SQLiteAgentEventJournal {
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
-      try SQLiteJournalMigrator.validateForeignKeyData(connection: connection)
+      try validateWholeJournalIntegrity(connection: connection)
       guard try eventExists(for: runID, sequence: sequence, connection: connection) else {
         throw SQLiteAgentEventJournalError.checkpointSequenceMissing(
           runID: runID,
@@ -87,6 +87,10 @@ extension SQLiteAgentEventJournal {
     let connection = try requireConnection()
     return try connection.withDeferredTransaction {
       try Task.checkCancellation()
+      try SQLiteJournalMigrator.validateSchemaDefinition(
+        connection: connection,
+        maximumTextBytes: configuration.maximumTextBytes
+      )
       let counts = try checkpointIntegrityCounts(for: runID, connection: connection)
       guard counts.runCount == 1 else {
         guard
@@ -98,6 +102,7 @@ extension SQLiteAgentEventJournal {
             "Checkpoint or event state exists without exactly one run record."
           )
         }
+        try validateWholeJournalIntegrity(connection: connection)
         return nil
       }
       guard counts.eventCount > 0, counts.orphanCheckpointCount == 0 else {
@@ -105,6 +110,7 @@ extension SQLiteAgentEventJournal {
           "The run or one of its checkpoints references missing event state."
         )
       }
+      try validateWholeJournalIntegrity(connection: connection)
       guard counts.checkpointCount > 0 else {
         return nil
       }
@@ -220,6 +226,16 @@ extension SQLiteAgentEventJournal {
     from statement: SQLiteStatement,
     expectedRunID: AgentRunID
   ) throws -> AgentJournalCheckpoint {
+    try decodeCheckpointWithByteCount(
+      from: statement,
+      expectedRunID: expectedRunID
+    ).checkpoint
+  }
+
+  func decodeCheckpointWithByteCount(
+    from statement: SQLiteStatement,
+    expectedRunID: AgentRunID
+  ) throws -> (checkpoint: AgentJournalCheckpoint, byteCount: Int) {
     let runIDString = try statement.columnText(
       at: 0,
       maximumBytes: configuration.maximumTextBytes
@@ -227,6 +243,11 @@ extension SQLiteAgentEventJournal {
     guard let runUUID = UUID(uuidString: runIDString) else {
       throw SQLiteAgentEventJournalError.corruptRecord(
         "A checkpoint run_id is not a UUID string."
+      )
+    }
+    guard runIDString == runUUID.uuidString else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "A checkpoint run_id is not stored as canonical UUID text."
       )
     }
     let runID = AgentRunID(rawValue: runUUID)
@@ -243,19 +264,28 @@ extension SQLiteAgentEventJournal {
     }
     let timestampMicroseconds = try statement.columnInt64(at: 2)
     let schemaVersion = try statement.columnInt64(at: 3)
+    let payload = try statement.columnBlob(
+      at: 4,
+      maximumBytes: configuration.maximumPayloadBytes
+    )
     let snapshot = try AgentEventCodec.decodeSnapshot(
-      from: statement.columnBlob(
-        at: 4,
-        maximumBytes: configuration.maximumPayloadBytes
-      ),
+      from: payload,
       schemaVersion: schemaVersion
     )
-    return AgentJournalCheckpoint(
-      runID: runID,
-      throughSequence: UInt64(sequence),
-      createdAt: AgentEventCodec.date(for: timestampMicroseconds),
-      schemaVersion: AgentEventCodec.checkpointSchemaVersion,
-      snapshot: snapshot
+    guard try AgentEventCodec.encode(snapshot: snapshot) == payload else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "The checkpoint snapshot is not canonical schema-version-one JSON."
+      )
+    }
+    return (
+      AgentJournalCheckpoint(
+        runID: runID,
+        throughSequence: UInt64(sequence),
+        createdAt: AgentEventCodec.date(for: timestampMicroseconds),
+        schemaVersion: AgentEventCodec.checkpointSchemaVersion,
+        snapshot: snapshot
+      ),
+      runIDString.utf8.count + payload.count
     )
   }
 }

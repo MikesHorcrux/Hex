@@ -35,8 +35,12 @@ extension SQLiteAgentEventJournal {
         )
       }
 
+      if !reports.isEmpty {
+        try validateWholeJournalIntegrity(connection: connection)
+      }
       try Task.checkCancellation()
       for report in reports {
+        try Task.checkCancellation()
         let failure = AgentFailure(
           code: .invalidState,
           message: "Run interrupted before reaching a terminal state.",
@@ -48,6 +52,7 @@ extension SQLiteAgentEventJournal {
           connection: connection
         )
       }
+      try Task.checkCancellation()
       return reports
     }
   }
@@ -91,9 +96,9 @@ extension SQLiteAgentEventJournal {
           maximum: configuration.maximumRecoveryBytes
         )
       }
-      guard let uuid = UUID(uuidString: value) else {
+      guard let uuid = UUID(uuidString: value), value == uuid.uuidString else {
         throw SQLiteAgentEventJournalError.corruptRecord(
-          "An interrupted run_id is not a UUID string."
+          "An interrupted run_id is not stored as canonical UUID text."
         )
       }
       runIDs.append(AgentRunID(rawValue: uuid))

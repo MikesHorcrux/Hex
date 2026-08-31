@@ -194,4 +194,29 @@ enum JournalTestSupport {
     }
     return (runID, events)
   }
+
+  static func createVersionTwoFixture(
+    at databaseURL: URL
+  ) throws -> (runID: AgentRunID, events: [AgentEvent]) {
+    let fixture = try createVersionOneFixture(at: databaseURL)
+    try withConnection(at: databaseURL) { connection in
+      try connection.execute(
+        """
+        CREATE TABLE journal_checkpoints (
+          run_id TEXT NOT NULL,
+          through_sequence INTEGER NOT NULL,
+          created_at_us INTEGER NOT NULL,
+          checkpoint_schema_version INTEGER NOT NULL,
+          snapshot BLOB NOT NULL,
+          PRIMARY KEY (run_id, through_sequence),
+          FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+        );
+        CREATE INDEX event_records_run_kind_tool_call_idx
+        ON event_records (run_id, kind, tool_call_id);
+        PRAGMA user_version = 2;
+        """
+      )
+    }
+    return fixture
+  }
 }

@@ -291,6 +291,11 @@ extension SQLiteAgentEventJournal {
     guard let eventUUID = UUID(uuidString: eventIDString) else {
       throw SQLiteAgentEventJournalError.corruptRecord("event_id is not a UUID string.")
     }
+    guard eventIDString == eventUUID.uuidString else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "event_id is not stored as canonical UUID text."
+      )
+    }
 
     let runIDString = try statement.columnText(
       at: 1,
@@ -298,6 +303,11 @@ extension SQLiteAgentEventJournal {
     )
     guard let runUUID = UUID(uuidString: runIDString) else {
       throw SQLiteAgentEventJournalError.corruptRecord("run_id is not a UUID string.")
+    }
+    guard runIDString == runUUID.uuidString else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "run_id is not stored as canonical UUID text."
+      )
     }
     let storedRunID = AgentRunID(rawValue: runUUID)
     guard storedRunID == expectedRunID else {
@@ -328,6 +338,11 @@ extension SQLiteAgentEventJournal {
       from: payload,
       schemaVersion: recordSchemaVersion
     )
+    guard try AgentEventCodec.encode(event: event) == payload else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "The event payload is not canonical schema-version-one JSON."
+      )
+    }
 
     guard event.journalKind == kind else {
       throw SQLiteAgentEventJournalError.corruptRecord(

@@ -119,6 +119,27 @@ final class SQLiteJournalSecureDirectory {
     try openOwnedRegularFile(named: databaseName, createIfMissing: true)
   }
 
+  /// The anchored dedicated-directory inode is the ownership boundary. Replacing its path creates
+  /// a distinct boundary and causes this journal instance to reject further operations.
+  func openOwnershipDirectory() throws -> Int32 {
+    try validateParentIdentity()
+    let ownershipDescriptor = Darwin.openat(
+      descriptor,
+      ".",
+      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    )
+    guard ownershipDescriptor >= 0 else {
+      throw Self.systemError(errno)
+    }
+    do {
+      try validateDirectoryIdentity(descriptor: ownershipDescriptor)
+      return ownershipDescriptor
+    } catch {
+      Darwin.close(ownershipDescriptor)
+      throw error
+    }
+  }
+
   func openLockFile() throws -> Int32 {
     try openOwnedRegularFile(named: databaseName + ".lock", createIfMissing: true)
   }
@@ -174,6 +195,22 @@ final class SQLiteJournalSecureDirectory {
     else {
       throw SQLiteAgentEventJournalError.invalidConfiguration(
         "The held journal lock path changed identity or permissions."
+      )
+    }
+  }
+
+  func validateDirectoryIdentity(descriptor ownershipDescriptor: Int32) throws {
+    try validateParentIdentity()
+    let ownershipStatus = try status(for: ownershipDescriptor)
+    let anchoredStatus = try status(for: descriptor)
+    guard
+      ownershipStatus.st_mode & S_IFMT == S_IFDIR,
+      ownershipStatus.st_uid == effectiveUserID,
+      ownershipStatus.st_mode & 0o777 == S_IRWXU,
+      Self.sameIdentity(ownershipStatus, anchoredStatus)
+    else {
+      throw SQLiteAgentEventJournalError.invalidConfiguration(
+        "The held journal directory changed identity, ownership, or permissions."
       )
     }
   }

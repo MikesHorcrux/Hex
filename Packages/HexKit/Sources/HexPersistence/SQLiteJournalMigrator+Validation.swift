@@ -32,6 +32,9 @@ extension SQLiteJournalMigrator {
     }
 
     try validateSchemaObjects(
+      runsSQL: runsTableSQL,
+      eventRecordsSQL: eventRecordsTableSQL,
+      checkpointsSQL: checkpointsTableSQL,
       connection: connection,
       maximumTextBytes: maximumTextBytes
     )
@@ -143,6 +146,25 @@ extension SQLiteJournalMigrator {
 
   }
 
+  static func validateVersionTwoSchema(
+    connection: SQLiteConnection,
+    maximumTextBytes: Int
+  ) throws {
+    guard try schemaVersion(connection: connection) == 2 else {
+      throw SQLiteAgentEventJournalError.corruptSchema(
+        "Version-two migration input has an unexpected schema version."
+      )
+    }
+    try validateSchemaObjects(
+      runsSQL: versionOneRunsTableSQL,
+      eventRecordsSQL: versionOneEventRecordsTableSQL,
+      checkpointsSQL: versionTwoCheckpointsTableSQL,
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
+    try validateForeignKeyData(connection: connection)
+  }
+
   private static func validateColumns(
     _ expected: [SQLiteColumnDefinition],
     table: String,
@@ -177,6 +199,9 @@ extension SQLiteJournalMigrator {
   }
 
   private static func validateSchemaObjects(
+    runsSQL: String,
+    eventRecordsSQL: String,
+    checkpointsSQL: String,
     connection: SQLiteConnection,
     maximumTextBytes: Int
   ) throws {
@@ -230,19 +255,19 @@ extension SQLiteJournalMigrator {
         type: "table",
         name: "event_records",
         table: "event_records",
-        sql: eventRecordsTableSQL
+        sql: eventRecordsSQL
       ),
       schemaObjectKey(
         type: "table",
         name: "journal_checkpoints",
         table: "journal_checkpoints",
-        sql: checkpointsTableSQL
+        sql: checkpointsSQL
       ),
       schemaObjectKey(
         type: "table",
         name: "runs",
         table: "runs",
-        sql: runsTableSQL
+        sql: runsSQL
       ),
     ].sorted()
 
@@ -365,11 +390,11 @@ extension SQLiteJournalMigrator {
       }
     }
     for name in uniqueIndexNames {
-      if try indexColumns(
+      if try indexKeyDefinitions(
         named: name,
         connection: connection,
         maximumTextBytes: maximumTextBytes
-      ) == ["event_id"] {
+      ) == ["event_id|NOCASE"] {
         return true
       }
     }
@@ -399,12 +424,12 @@ extension SQLiteJournalMigrator {
       }
     }
     guard found,
-      try indexColumns(
+      try indexKeyDefinitions(
         named: expectedName,
         connection: connection,
         maximumTextBytes: maximumTextBytes
       )
-        == ["run_id", "kind", "tool_call_id"]
+        == ["run_id|NOCASE", "kind|BINARY", "tool_call_id|BINARY"]
     else {
       throw SQLiteAgentEventJournalError.corruptSchema(
         "The event metadata index is missing or has unexpected columns."
@@ -412,16 +437,24 @@ extension SQLiteJournalMigrator {
     }
   }
 
-  private static func indexColumns(
+  private static func indexKeyDefinitions(
     named name: String,
     connection: SQLiteConnection,
     maximumTextBytes: Int
   ) throws -> [String] {
     let escapedName = name.replacingOccurrences(of: "\"", with: "\"\"")
-    let statement = try connection.prepare("PRAGMA index_info(\"\(escapedName)\")")
+    let statement = try connection.prepare("PRAGMA index_xinfo(\"\(escapedName)\")")
     var columns: [String] = []
     while try statement.step() == .row {
-      columns.append(try statement.columnText(at: 2, maximumBytes: maximumTextBytes))
+      guard try statement.columnInt64(at: 5) == 1 else {
+        continue
+      }
+      let column = try statement.columnText(at: 2, maximumBytes: maximumTextBytes)
+      let collation = try statement.columnText(
+        at: 4,
+        maximumBytes: maximumTextBytes
+      ).uppercased()
+      columns.append("\(column)|\(collation)")
     }
     return columns
   }
