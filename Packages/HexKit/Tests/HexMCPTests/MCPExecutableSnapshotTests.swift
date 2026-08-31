@@ -50,10 +50,11 @@ struct MCPExecutableSnapshotTests {
     )
     #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(wrongMode))
 
+    let nonRootOwner = geteuid() == 0 ? uid_t(501) : geteuid()
     let wrongOwner = metadata(
       fileType: S_IFDIR,
       permissions: 0o775,
-      uid: geteuid(),
+      uid: nonRootOwner,
       gid: MCPExecutableSnapshot.standardApplicationsGroupID
     )
     #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(wrongOwner))
