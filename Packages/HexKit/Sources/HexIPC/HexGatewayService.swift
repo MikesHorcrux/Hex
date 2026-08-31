@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 
 /// The sole mutable owner of gateway sessions, run lifecycle, replay buffers, and live subscribers.
@@ -24,5 +25,15 @@ public actor HexGatewayService {
     self.configuration = configuration
     codec = GatewayWireCodec(configuration: configuration)
     self.gatewayInstanceID = gatewayInstanceID
+  }
+
+  func requireValidGatewayIdentity(
+    _ rawValue: UUID,
+    message: String
+  ) throws {
+    let zeroUUID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    guard rawValue != zeroUUID else {
+      throw GatewayFailure(code: .malformedPayload, message: message)
+    }
   }
 }

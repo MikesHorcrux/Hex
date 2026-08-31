@@ -3,9 +3,14 @@ import HexIPC
 
 actor MalformedStartGatewayTransport: HexGatewayTransport {
   private let disposition: GatewayStartRunDisposition
+  private let activeRun: GatewayRunSnapshot?
 
-  init(disposition: GatewayStartRunDisposition) {
+  init(
+    disposition: GatewayStartRunDisposition,
+    activeRun: GatewayRunSnapshot? = nil
+  ) {
     self.disposition = disposition
+    self.activeRun = activeRun
   }
 
   func handshake(
@@ -16,7 +21,7 @@ actor MalformedStartGatewayTransport: HexGatewayTransport {
       sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(200)),
       gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(201)),
       selectedVersion: .current,
-      activeRun: nil
+      activeRun: activeRun
     )
   }
 
@@ -41,7 +46,7 @@ actor MalformedStartGatewayTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     AsyncThrowingStream { continuation in
       continuation.finish()
     }

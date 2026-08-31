@@ -78,7 +78,7 @@ struct GatewayReplayTests {
     )
     var iterator = initialStream.makeAsyncIterator()
     await driver.yield(firstRecord)
-    #expect(try await iterator.next() == firstRecord)
+    #expect(try await iterator.next()?.record == firstRecord)
 
     await firstTransport.disconnect()
     do {

@@ -7,10 +7,18 @@ extension HexGatewayService {
   public func eventRecords(
     after untrustedCursor: GatewayEventCursor,
     sessionID untrustedSessionID: GatewaySessionID
-  ) throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     let sessionID = try codec.roundTrip(untrustedSessionID)
     let cursor = try codec.roundTrip(untrustedCursor)
     try requireSession(sessionID)
+    try requireValidGatewayIdentity(
+      cursor.runID.rawValue,
+      message: "The gateway event cursor contains an invalid run identity."
+    )
+    try requireValidGatewayIdentity(
+      cursor.invocationID.rawValue,
+      message: "The gateway event cursor contains an invalid invocation identity."
+    )
 
     guard var state = runs[cursor.runID] else {
       throw GatewayFailure(
@@ -42,14 +50,18 @@ extension HexGatewayService {
       )
     }
 
-    let pair = AsyncThrowingStream<AgentEventRecord, any Error>.makeStream(
+    let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream(
       bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
     )
     let stream = pair.stream
     let continuation = pair.continuation
 
     for record in state.retainedRecords where record.sequence > cursor.sequence {
-      guard enqueue(record, into: continuation) else {
+      let envelope = GatewayEventEnvelope(
+        invocationID: state.invocationID,
+        record: record
+      )
+      guard enqueue(envelope, into: continuation) else {
         continuation.finish(
           throwing: GatewayFailure(
             code: .consumerTooSlow,
@@ -128,12 +140,16 @@ extension HexGatewayService {
       )
     }
 
+    let envelope: GatewayEventEnvelope
     let record: AgentEventRecord
     let wireByteCount: Int
     do {
-      let encodedRecord = try codec.encode(untrustedRecord)
-      record = try codec.decode(AgentEventRecord.self, from: encodedRecord)
-      wireByteCount = encodedRecord.count
+      let encodedEnvelope = try codec.encode(
+        GatewayEventEnvelope(invocationID: invocationID, record: untrustedRecord)
+      )
+      envelope = try codec.decode(GatewayEventEnvelope.self, from: encodedEnvelope)
+      record = envelope.record
+      wireByteCount = encodedEnvelope.count
     } catch let failure as GatewayFailure {
       failRun(runID, invocationID: invocationID, with: failure)
       throw failure
@@ -160,6 +176,16 @@ extension HexGatewayService {
         code: .unsupportedEventSchema,
         message: "The event record schema version is unsupported."
       )
+      failRun(runID, invocationID: invocationID, with: failure)
+      throw failure
+    }
+
+    do {
+      try requireValidGatewayIdentity(
+        record.id.rawValue,
+        message: "The run driver emitted an event record with an invalid identity."
+      )
+    } catch let failure as GatewayFailure {
       failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
@@ -239,7 +265,7 @@ extension HexGatewayService {
     )
     var subscribersToRemove: [UUID] = []
     for (subscriberID, subscriber) in state.subscribers {
-      guard enqueue(record, into: subscriber.continuation) else {
+      guard enqueue(envelope, into: subscriber.continuation) else {
         subscriber.continuation.finish(throwing: slowConsumerFailure)
         subscribersToRemove.append(subscriberID)
         continue
@@ -268,10 +294,10 @@ extension HexGatewayService {
   }
 
   private func enqueue(
-    _ record: AgentEventRecord,
-    into continuation: AsyncThrowingStream<AgentEventRecord, any Error>.Continuation
+    _ envelope: GatewayEventEnvelope,
+    into continuation: AsyncThrowingStream<GatewayEventEnvelope, any Error>.Continuation
   ) -> Bool {
-    switch continuation.yield(record) {
+    switch continuation.yield(envelope) {
     case .enqueued:
       return true
     case .dropped, .terminated:

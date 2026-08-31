@@ -61,4 +61,14 @@ enum GatewayTestValues {
     }
     return records
   }
+
+  static func collect(
+    _ stream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
+  ) async throws -> [AgentEventRecord] {
+    var records: [AgentEventRecord] = []
+    for try await envelope in stream {
+      records.append(envelope.record)
+    }
+    return records
+  }
 }

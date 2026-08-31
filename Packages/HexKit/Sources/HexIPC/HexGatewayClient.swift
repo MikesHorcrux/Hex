@@ -2,8 +2,8 @@ import Foundation
 import HexCore
 
 /// App-facing gateway client with in-memory, explicitly acknowledged replay cursors keyed by exact
-/// run invocation. Cursor state is not durable across app termination; callers must apply each record
-/// before acknowledging it with the invocation identity that produced it.
+/// run invocation. Cursor state is not durable across app termination; callers must apply each
+/// invocation-bound envelope before acknowledging that same envelope.
 public actor HexGatewayClient {
   let transport: any HexGatewayTransport
   let configuration: GatewayConfiguration
@@ -12,6 +12,7 @@ public actor HexGatewayClient {
   let handshakeRequest: GatewayHandshakeRequest
   var gatewayInstanceID: GatewayInstanceID?
   var acknowledgedSequences: [GatewayRunAcknowledgementKey: UInt64] = [:]
+  var terminalAcknowledgements: Set<GatewayRunAcknowledgementKey> = []
   var acknowledgementOrder: [GatewayRunAcknowledgementKey] = []
   var startAttemptIDs: [AgentRunID: GatewayClientStartAttemptID] = [:]
   var connectionAttemptID: GatewayClientConnectionAttemptID?
@@ -20,6 +21,7 @@ public actor HexGatewayClient {
   var connectedGenerationID: GatewayClientConnectionGenerationID?
   var connectedLease: GatewayTransportConnectionLease?
   var eventStreams: [UUID: GatewayClientEventStreamState] = [:]
+  var eventStreamReservations: [UUID: GatewayClientEventStreamReservation] = [:]
 
   public init(
     transport: any HexGatewayTransport,
@@ -61,17 +63,27 @@ public actor HexGatewayClient {
 
   /// Returns false for an already-applied record and fails closed if applying the record would skip a
   /// sequence. A true result does not advance the cursor; call `acknowledge` only after reduction.
-  public func shouldApply(
-    _ record: AgentEventRecord,
-    invocationID: GatewayRunInvocationID
-  ) throws -> Bool {
+  public func shouldApply(_ envelope: GatewayEventEnvelope) throws -> Bool {
+    try validateEventRoute(
+      runID: envelope.record.runID,
+      invocationID: envelope.invocationID
+    )
+    let record = try validateEventEnvelope(
+      envelope,
+      runID: envelope.record.runID,
+      invocationID: envelope.invocationID,
+      requiredSequence: envelope.record.sequence
+    )
     let key = GatewayRunAcknowledgementKey(
       runID: record.runID,
-      invocationID: invocationID
+      invocationID: envelope.invocationID
     )
     let acknowledgedSequence = acknowledgedSequences[key] ?? 0
     if record.sequence <= acknowledgedSequence {
       return false
+    }
+    guard !terminalAcknowledgements.contains(key) else {
+      throw eventAfterTerminalFailure()
     }
 
     let expectedSequence = acknowledgedSequence.addingReportingOverflow(1)
@@ -84,17 +96,27 @@ public actor HexGatewayClient {
     return true
   }
 
-  public func acknowledge(
-    _ record: AgentEventRecord,
-    invocationID: GatewayRunInvocationID
-  ) throws {
+  public func acknowledge(_ envelope: GatewayEventEnvelope) throws {
+    try validateEventRoute(
+      runID: envelope.record.runID,
+      invocationID: envelope.invocationID
+    )
+    let record = try validateEventEnvelope(
+      envelope,
+      runID: envelope.record.runID,
+      invocationID: envelope.invocationID,
+      requiredSequence: envelope.record.sequence
+    )
     let key = GatewayRunAcknowledgementKey(
       runID: record.runID,
-      invocationID: invocationID
+      invocationID: envelope.invocationID
     )
     let acknowledgedSequence = acknowledgedSequences[key] ?? 0
     if record.sequence <= acknowledgedSequence {
       return
+    }
+    guard !terminalAcknowledgements.contains(key) else {
+      throw eventAfterTerminalFailure()
     }
 
     let expectedSequence = acknowledgedSequence.addingReportingOverflow(1)
@@ -105,6 +127,9 @@ public actor HexGatewayClient {
       )
     }
     storeAcknowledgement(record.sequence, for: key)
+    if isTerminal(record.event) {
+      terminalAcknowledgements.insert(key)
+    }
   }
 
   public func forgetAcknowledgement(
@@ -139,16 +164,19 @@ public actor HexGatewayClient {
     while acknowledgementOrder.count > configuration.maximumRememberedRuns {
       let evictedKey = acknowledgementOrder.removeFirst()
       acknowledgedSequences.removeValue(forKey: evictedKey)
+      terminalAcknowledgements.remove(evictedKey)
     }
   }
 
   func removeAcknowledgement(for key: GatewayRunAcknowledgementKey) {
     acknowledgedSequences.removeValue(forKey: key)
+    terminalAcknowledgements.remove(key)
     acknowledgementOrder.removeAll { $0 == key }
   }
 
   func removeAllAcknowledgements() {
     acknowledgedSequences.removeAll(keepingCapacity: true)
+    terminalAcknowledgements.removeAll(keepingCapacity: true)
     acknowledgementOrder.removeAll(keepingCapacity: true)
   }
 

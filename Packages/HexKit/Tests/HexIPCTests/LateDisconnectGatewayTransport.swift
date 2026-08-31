@@ -51,7 +51,7 @@ actor LateDisconnectGatewayTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     guard connectedLease == lease else {
       throw tornDownFailure()
     }

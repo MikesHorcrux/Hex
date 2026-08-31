@@ -49,7 +49,7 @@ actor ReorderedHandshakeGatewayTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     AsyncThrowingStream { continuation in
       continuation.finish()
     }

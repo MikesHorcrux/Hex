@@ -62,11 +62,16 @@ struct HexGatewayClientTests {
       sequence: 1,
       event: .runStarted
     )
+    let terminalRecord = GatewayTestValues.record(
+      runID: runID,
+      sequence: 2,
+      event: .runCompleted
+    )
     let instanceID = GatewayInstanceID(rawValue: GatewayTestValues.uuid(41))
     let invocationID = GatewayTestValues.invocationID(41)
     let transport = FakeHexGatewayTransport(
       handshakeResponses: [response(instanceID: instanceID, sessionValue: 1)],
-      recordsByRun: [runID: [record]]
+      recordsByRun: [runID: [record, terminalRecord]]
     )
     let client = HexGatewayClient(transport: transport)
     _ = try await client.connect()
@@ -78,8 +83,8 @@ struct HexGatewayClientTests {
       client.eventRecords(for: runID, invocationID: invocationID)
     )
 
-    #expect(first == [record])
-    #expect(second == [record])
+    #expect(first == [record, terminalRecord])
+    #expect(second == [record, terminalRecord])
     #expect(await transport.requestedCursors().map(\.sequence) == [0, 0])
   }
 

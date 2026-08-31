@@ -53,13 +53,19 @@ actor RegressingSnapshotGatewayTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     AsyncThrowingStream { continuation in
       continuation.yield(
-        GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
+        GatewayEventEnvelope(
+          invocationID: cursor.invocationID,
+          record: GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
+        )
       )
       continuation.yield(
-        GatewayTestValues.record(runID: runID, sequence: 2, event: .runCompleted)
+        GatewayEventEnvelope(
+          invocationID: cursor.invocationID,
+          record: GatewayTestValues.record(runID: runID, sequence: 2, event: .runCompleted)
+        )
       )
       continuation.finish()
     }

@@ -79,7 +79,12 @@ struct GatewayServiceWireAcceptanceTests {
       GatewayTestValues.record(runID: runID, sequence: 3, event: .runCompleted),
     ]
     let probeCodec = GatewayWireCodec(configuration: .standard)
-    let wireByteCounts = try records.map { try probeCodec.encode($0).count }
+    let probeInvocationID = GatewayTestValues.invocationID()
+    let wireByteCounts = try records.map { record in
+      try probeCodec.encode(
+        GatewayEventEnvelope(invocationID: probeInvocationID, record: record)
+      ).count
+    }
     let largestRecordBytes = try #require(wireByteCounts.max())
     let retainedTailBytes = wireByteCounts[1] + wireByteCounts[2]
     let configuration = try #require(
@@ -150,7 +155,7 @@ struct GatewayServiceWireAcceptanceTests {
     let startRecord = GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
 
     await driver.yieldAndWait(startRecord)
-    #expect(try await liveIterator.next() == startRecord)
+    #expect(try await liveIterator.next()?.record == startRecord)
     await driver.yieldAndWait(rejectedRecord)
     await driver.waitUntilStopped(runID)
 

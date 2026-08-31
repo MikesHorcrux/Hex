@@ -3,10 +3,15 @@ import HexIPC
 
 actor MalformedEventGatewayTransport: HexGatewayTransport {
   private let records: [AgentEventRecord]
+  private let invocationID: GatewayRunInvocationID?
   private(set) var eventRequestCount = 0
 
-  init(records: [AgentEventRecord]) {
+  init(
+    records: [AgentEventRecord],
+    invocationID: GatewayRunInvocationID? = nil
+  ) {
     self.records = records
+    self.invocationID = invocationID
   }
 
   func handshake(
@@ -45,11 +50,16 @@ actor MalformedEventGatewayTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     eventRequestCount += 1
     return AsyncThrowingStream { continuation in
       for record in records {
-        continuation.yield(record)
+        continuation.yield(
+          GatewayEventEnvelope(
+            invocationID: invocationID ?? cursor.invocationID,
+            record: record
+          )
+        )
       }
       continuation.finish()
     }

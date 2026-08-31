@@ -11,8 +11,8 @@ struct GatewayActiveSnapshotRegressionTests {
     let runID = transport.runID
     let invocationID = transport.invocationID
     let stream = try await client.eventRecords(for: runID, invocationID: invocationID)
-    for try await record in stream {
-      try await client.acknowledge(record, invocationID: invocationID)
+    for try await envelope in stream {
+      try await client.acknowledge(envelope)
     }
     #expect(
       await client.acknowledgedCursor(for: runID, invocationID: invocationID).sequence == 2

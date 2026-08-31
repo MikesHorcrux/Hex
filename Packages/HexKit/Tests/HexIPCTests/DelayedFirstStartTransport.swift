@@ -45,7 +45,7 @@ actor DelayedFirstStartTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     try await base.eventRecords(after: cursor, lease: lease)
   }
 

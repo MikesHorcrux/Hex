@@ -8,6 +8,10 @@ extension HexGatewayService {
     let sessionID = try codec.roundTrip(untrustedSessionID)
     let request = try codec.roundTrip(untrustedRequest)
     try requireSession(sessionID)
+    try requireValidGatewayIdentity(
+      request.runID.rawValue,
+      message: "The gateway start request contains an invalid run identity."
+    )
 
     if let existingState = runs[request.runID] {
       guard existingState.request == request else {
@@ -105,6 +109,14 @@ extension HexGatewayService {
     let sessionID = try codec.roundTrip(untrustedSessionID)
     let request = try codec.roundTrip(untrustedRequest)
     try requireSession(sessionID)
+    try requireValidGatewayIdentity(
+      request.runID.rawValue,
+      message: "The gateway cancellation request contains an invalid run identity."
+    )
+    try requireValidGatewayIdentity(
+      request.invocationID.rawValue,
+      message: "The gateway cancellation request contains an invalid invocation identity."
+    )
 
     guard var state = runs[request.runID] else {
       return try codec.roundTrip(

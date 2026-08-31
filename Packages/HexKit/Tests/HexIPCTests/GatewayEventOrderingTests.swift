@@ -195,7 +195,7 @@ struct GatewayEventOrderingTests {
   }
 
   private func collectBeforeDeadline(
-    _ stream: AsyncThrowingStream<AgentEventRecord, any Error>
+    _ stream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
   ) async -> [AgentEventRecord]? {
     await withTaskGroup(of: [AgentEventRecord]?.self) { group in
       group.addTask {

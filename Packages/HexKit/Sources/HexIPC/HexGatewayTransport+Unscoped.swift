@@ -23,7 +23,7 @@ extension HexGatewayTransport {
 
   public func eventRecords(
     after cursor: GatewayEventCursor
-  ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     try await eventRecords(after: cursor, lease: .unscoped)
   }
 

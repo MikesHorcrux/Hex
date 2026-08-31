@@ -241,12 +241,17 @@ struct GatewayConnectionLifecycleTests {
     await transport.resolveDisconnect()
     await expectSuperseded(delayedDisconnect)
 
-    let stream = try await client.eventRecords(
-      for: GatewayTestValues.runID(235),
-      invocationID: GatewayTestValues.invocationID(235)
+    let runID = GatewayTestValues.runID(235)
+    let invocationID = GatewayTestValues.invocationID(235)
+    let stream = try await client.eventRecords(for: runID, invocationID: invocationID)
+    await transport.emit(
+      GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
+    )
+    await transport.emit(
+      GatewayTestValues.record(runID: runID, sequence: 2, event: .runCompleted)
     )
     await transport.finishStream()
-    #expect(try await GatewayTestValues.collect(stream).isEmpty)
+    #expect(try await GatewayTestValues.collect(stream).count == 2)
   }
 
   @Test
@@ -454,8 +459,8 @@ struct GatewayConnectionLifecycleTests {
     await transport.waitUntilStreamIsInstalled()
     let collector = Task {
       var records: [AgentEventRecord] = []
-      for try await record in stream {
-        records.append(record)
+      for try await envelope in stream {
+        records.append(envelope.record)
         if !records.isEmpty {
           break
         }

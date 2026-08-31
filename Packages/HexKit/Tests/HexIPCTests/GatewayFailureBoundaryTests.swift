@@ -44,7 +44,7 @@ struct GatewayFailureBoundaryTests {
   }
 
   private func terminalFailure(
-    from stream: AsyncThrowingStream<AgentEventRecord, any Error>
+    from stream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
   ) async -> GatewayFailure? {
     do {
       _ = try await GatewayTestValues.collect(stream)

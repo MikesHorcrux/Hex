@@ -1,6 +1,6 @@
 public struct GatewayConfiguration: Equatable, Sendable {
   /// The standard wire envelope reserves one MiB beyond HexRuntime's standard 7,340,032-byte
-  /// journal-event budget for `AgentEventRecord` metadata and JSON framing. HexIPC intentionally
+  /// journal-event budget for `GatewayEventEnvelope` metadata and JSON framing. HexIPC intentionally
   /// does not depend on HexRuntime, so integration must keep these two documented budgets aligned.
   ///
   /// Replay retains at most eight records and 32 MiB per run. With four remembered runs, two live

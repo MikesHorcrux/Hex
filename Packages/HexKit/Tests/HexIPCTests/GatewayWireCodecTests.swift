@@ -61,6 +61,10 @@ struct GatewayWireCodecTests {
       sequence: 1,
       event: .runStarted
     )
+    let envelope = GatewayEventEnvelope(
+      invocationID: invocationID,
+      record: record
+    )
     let cursor = GatewayEventCursor(
       runID: runID,
       invocationID: invocationID,
@@ -103,6 +107,7 @@ struct GatewayWireCodecTests {
     #expect(try codec.roundTrip(handshake) == handshake)
     #expect(try codec.roundTrip(record) == record)
     #expect(try codec.roundTrip(record).schemaVersion == 1)
+    #expect(try codec.roundTrip(envelope) == envelope)
     #expect(try codec.roundTrip(cursor) == cursor)
     #expect(try codec.roundTrip(cancellation) == cancellation)
     #expect(try codec.roundTrip(cancellationResponse) == cancellationResponse)
@@ -124,6 +129,17 @@ struct GatewayWireCodecTests {
     let malformedCancellationIdentity = Data(
       "{\"invocationID\":\"not-a-uuid\",\"runID\":\"\(runID)\"}".utf8
     )
+    let record = GatewayTestValues.record(
+      runID: GatewayTestValues.runID(),
+      sequence: 1,
+      event: .runStarted
+    )
+    let envelopeObject = try #require(
+      JSONSerialization.jsonObject(with: codec.encode(record)) as? [String: Any]
+    )
+    let missingEnvelopeIdentity = try JSONSerialization.data(
+      withJSONObject: ["record": envelopeObject]
+    )
     let validStartResponse = GatewayStartRunResponse(
       runID: GatewayTestValues.runID(),
       disposition: .started(invocationID: GatewayTestValues.invocationID())
@@ -143,6 +159,11 @@ struct GatewayWireCodecTests {
     try expectMalformedPayload(
       GatewayCancelRunRequest.self,
       data: malformedCancellationIdentity,
+      codec: codec
+    )
+    try expectMalformedPayload(
+      GatewayEventEnvelope.self,
+      data: missingEnvelopeIdentity,
       codec: codec
     )
     try expectMalformedPayload(

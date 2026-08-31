@@ -13,8 +13,10 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
   private var startContinuation: CheckedContinuation<GatewayStartRunResponse, any Error>?
   private var cancelContinuation: CheckedContinuation<GatewayCancelRunResponse, any Error>?
   private var eventRecordsContinuation:
-    CheckedContinuation<AsyncThrowingStream<AgentEventRecord, any Error>, any Error>?
-  private var streamContinuation: AsyncThrowingStream<AgentEventRecord, any Error>.Continuation?
+    CheckedContinuation<AsyncThrowingStream<GatewayEventEnvelope, any Error>, any Error>?
+  private var pendingEventRecordsInvocationID: GatewayRunInvocationID?
+  private var streamContinuation: AsyncThrowingStream<GatewayEventEnvelope, any Error>.Continuation?
+  private var streamInvocationID: GatewayRunInvocationID?
   private var disconnectContinuation: CheckedContinuation<Void, Never>?
   private var connectedLease: GatewayTransportConnectionLease?
   private(set) var disconnectCount = 0
@@ -84,14 +86,15 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     try requireConnection(lease)
     if holdsEventRecordsResponse {
+      pendingEventRecordsInvocationID = cursor.invocationID
       return try await withCheckedThrowingContinuation { continuation in
         eventRecordsContinuation = continuation
       }
     }
-    return installStream()
+    return installStream(invocationID: cursor.invocationID)
   }
 
   func disconnect(lease: GatewayTransportConnectionLease) async {
@@ -107,9 +110,12 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
     connectedLease = nil
   }
 
-  private func installStream() -> AsyncThrowingStream<AgentEventRecord, any Error> {
-    let pair = AsyncThrowingStream<AgentEventRecord, any Error>.makeStream()
+  private func installStream(
+    invocationID: GatewayRunInvocationID
+  ) -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
+    let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream()
     streamContinuation = pair.continuation
+    streamInvocationID = invocationID
     return pair.stream
   }
 
@@ -218,8 +224,14 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
   }
 
   func resolveEventRecords() {
-    eventRecordsContinuation?.resume(returning: installStream())
+    guard let pendingEventRecordsInvocationID else {
+      return
+    }
+    eventRecordsContinuation?.resume(
+      returning: installStream(invocationID: pendingEventRecordsInvocationID)
+    )
     eventRecordsContinuation = nil
+    self.pendingEventRecordsInvocationID = nil
   }
 
   func failEventRecords(message: String) {
@@ -231,6 +243,7 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
       )
     )
     eventRecordsContinuation = nil
+    pendingEventRecordsInvocationID = nil
   }
 
   func waitUntilStreamIsInstalled() async {
@@ -240,12 +253,18 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
   }
 
   func emit(_ record: AgentEventRecord) {
-    streamContinuation?.yield(record)
+    guard let streamInvocationID else {
+      return
+    }
+    streamContinuation?.yield(
+      GatewayEventEnvelope(invocationID: streamInvocationID, record: record)
+    )
   }
 
   func finishStream() {
     streamContinuation?.finish()
     streamContinuation = nil
+    streamInvocationID = nil
   }
 
   func waitUntilDisconnectIsPending() async {

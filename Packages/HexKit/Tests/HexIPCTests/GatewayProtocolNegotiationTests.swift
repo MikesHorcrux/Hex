@@ -43,8 +43,8 @@ struct GatewayProtocolNegotiationTests {
       service: service,
       request: GatewayHandshakeRequest(
         clientID: GatewayClientID(rawValue: GatewayTestValues.uuid(4)),
-        minimumVersion: GatewayProtocolVersion(major: 1, minor: 0),
-        maximumVersion: GatewayProtocolVersion(major: 1, minor: 0)
+        minimumVersion: GatewayProtocolVersion(major: 1, minor: 1),
+        maximumVersion: GatewayProtocolVersion(major: 1, minor: 1)
       ),
       code: .incompatibleProtocolVersion
     )

@@ -21,7 +21,7 @@ public protocol HexGatewayTransport: Sendable {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error>
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error>
 
   /// Disconnects only the physical connection still owned by `lease`. Implementations must compare
   /// ownership again at the destructive mutation point after every suspension and ignore stale

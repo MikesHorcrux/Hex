@@ -37,33 +37,41 @@ extension HexGatewayClient {
       throw error
     }
 
-    try Task.checkCancellation()
-    try requireCurrentConnectionAttempt(attemptID, generationID: generationID)
     do {
-      try validateHandshake(response)
-    } catch {
       try Task.checkCancellation()
       try requireCurrentConnectionAttempt(attemptID, generationID: generationID)
+      try validateHandshake(response)
+      try Task.checkCancellation()
+      try requireCurrentConnectionAttempt(attemptID, generationID: generationID)
+
+      let previousGatewayInstanceID = gatewayInstanceID
+      if let previousGatewayInstanceID,
+        previousGatewayInstanceID != response.gatewayInstanceID
+      {
+        removeAllAcknowledgements()
+      }
+      if let activeRun = response.activeRun {
+        let key = GatewayRunAcknowledgementKey(
+          runID: activeRun.runID,
+          invocationID: activeRun.invocationID
+        )
+        if acknowledgedSequences[key] == nil {
+          storeAcknowledgement(0, for: key)
+        }
+      }
+      gatewayInstanceID = response.gatewayInstanceID
+      connectedGenerationID = generationID
+      connectedLease = lease
+      connectionAttemptID = nil
+      return GatewayConnectionResult(
+        response: response,
+        previousGatewayInstanceID: previousGatewayInstanceID
+      )
+    } catch {
       invalidateConnectionAttempt(matching: attemptID, generationID: generationID)
+      await transport.disconnect(lease: lease)
       throw error
     }
-
-    let previousGatewayInstanceID = gatewayInstanceID
-    try Task.checkCancellation()
-    try requireCurrentConnectionAttempt(attemptID, generationID: generationID)
-    if let previousGatewayInstanceID,
-      previousGatewayInstanceID != response.gatewayInstanceID
-    {
-      removeAllAcknowledgements()
-    }
-    gatewayInstanceID = response.gatewayInstanceID
-    connectedGenerationID = generationID
-    connectedLease = lease
-    connectionAttemptID = nil
-    return GatewayConnectionResult(
-      response: response,
-      previousGatewayInstanceID: previousGatewayInstanceID
-    )
   }
 
   /// Invalidates the current connection generation before asking the transport to disconnect.
@@ -106,6 +114,7 @@ extension HexGatewayClient {
     connectionAttemptID = attemptID
     startAttemptIDs.removeAll()
     terminateEventStreamsForConnectionChange()
+    eventStreamReservations.removeAll(keepingCapacity: true)
     return generationID
   }
 
@@ -119,6 +128,7 @@ extension HexGatewayClient {
     connectionAttemptID = nil
     connectedGenerationID = nil
     connectedLease = nil
+    connectionLease = nil
   }
 
   func requireCurrentConnectionAttempt(

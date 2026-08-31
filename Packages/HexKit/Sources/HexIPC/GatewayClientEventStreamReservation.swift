@@ -1,0 +1,7 @@
+import HexCore
+
+struct GatewayClientEventStreamReservation: Sendable {
+  let runID: AgentRunID
+  let invocationID: GatewayRunInvocationID
+  let generationID: GatewayClientConnectionGenerationID
+}

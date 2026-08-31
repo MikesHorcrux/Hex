@@ -55,7 +55,7 @@ actor FakeHexGatewayTransport: HexGatewayTransport {
   func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     try requireConnection(lease: lease)
     cursors.append(cursor)
     let records = recordsByRun[cursor.runID, default: []].filter {
@@ -63,7 +63,9 @@ actor FakeHexGatewayTransport: HexGatewayTransport {
     }
     return AsyncThrowingStream { continuation in
       for record in records {
-        continuation.yield(record)
+        continuation.yield(
+          GatewayEventEnvelope(invocationID: cursor.invocationID, record: record)
+        )
       }
       continuation.finish()
     }

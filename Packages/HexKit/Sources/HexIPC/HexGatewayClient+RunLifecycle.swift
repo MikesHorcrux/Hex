@@ -54,6 +54,16 @@ extension HexGatewayClient {
     try Task.checkCancellation()
     switch response.disposition {
     case .started(let invocationID):
+      let wasPreviouslyKnown = acknowledgedSequences.keys.contains { key in
+        key.invocationID == invocationID
+      }
+      guard !wasPreviouslyKnown else {
+        invalidateStartAttempt(for: runID, matching: attemptID)
+        throw GatewayFailure(
+          code: .staleRunInvocation,
+          message: "The gateway reused a known identity for a newly started invocation."
+        )
+      }
       // A newly admitted generation always begins at cursor zero, even when its run identifier was
       // previously acknowledged before bounded service eviction.
       removeAcknowledgements(for: response.runID)
@@ -66,6 +76,13 @@ extension HexGatewayClient {
       )
     case .alreadyRunning(let invocationID), .alreadyTerminal(let invocationID):
       removeAcknowledgements(for: response.runID, except: invocationID)
+      let key = GatewayRunAcknowledgementKey(
+        runID: response.runID,
+        invocationID: invocationID
+      )
+      if acknowledgedSequences[key] == nil {
+        storeAcknowledgement(0, for: key)
+      }
     case .busy:
       break
     }

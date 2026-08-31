@@ -1,8 +1,8 @@
 public struct GatewayProtocolVersion: Codable, Comparable, Sendable {
-  /// Version 1.1 adds mandatory run-invocation identity to replay and cancellation contracts. The
-  /// gateway cannot safely serve 1.0 clients because a reused run identifier is ambiguous there.
-  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 1)
-  public static let current = GatewayProtocolVersion(major: 1, minor: 1)
+  /// Version 1.2 binds every streamed event to its server-issued run invocation. The gateway cannot
+  /// safely serve earlier clients because a bare record can be reclassified after run-ID reuse.
+  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 2)
+  public static let current = GatewayProtocolVersion(major: 1, minor: 2)
 
   public let major: UInt16
   public let minor: UInt16

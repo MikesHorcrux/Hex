@@ -103,10 +103,10 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
   public func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
-  ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     let sessionID = try requireSession(ownedBy: lease)
 
-    let upstream: AsyncThrowingStream<AgentEventRecord, any Error>
+    let upstream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
     do {
       let wireCursor = try codec.roundTrip(cursor)
       upstream = try await service.eventRecords(after: wireCursor, sessionID: sessionID)
@@ -114,7 +114,7 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
       throw codec.canonicalFailure(from: error)
     }
 
-    let pair = AsyncThrowingStream<AgentEventRecord, any Error>.makeStream(
+    let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream(
       bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
     )
     let stream = pair.stream
@@ -122,9 +122,9 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
     let codec = self.codec
     let task = Task {
       do {
-        for try await record in upstream {
-          let wireRecord = try codec.roundTrip(record)
-          switch continuation.yield(wireRecord) {
+        for try await envelope in upstream {
+          let wireEnvelope = try codec.roundTrip(envelope)
+          switch continuation.yield(wireEnvelope) {
           case .enqueued:
             continue
           case .dropped, .terminated:

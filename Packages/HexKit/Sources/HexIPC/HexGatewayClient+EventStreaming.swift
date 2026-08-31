@@ -5,11 +5,16 @@ extension HexGatewayClient {
   public func eventRecords(
     for runID: AgentRunID,
     invocationID: GatewayRunInvocationID
-  ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     try Task.checkCancellation()
     try validateEventRoute(runID: runID, invocationID: invocationID)
     let connection = try requireConnectedGeneration()
     let cursor = acknowledgedCursor(for: runID, invocationID: invocationID)
+    let acknowledgementKey = GatewayRunAcknowledgementKey(
+      runID: runID,
+      invocationID: invocationID
+    )
+    let hasAcknowledgedTerminal = terminalAcknowledgements.contains(acknowledgementKey)
     let firstSequence = cursor.sequence.addingReportingOverflow(1)
     guard !firstSequence.overflow else {
       throw GatewayFailure(
@@ -17,7 +22,16 @@ extension HexGatewayClient {
         message: "The gateway event cursor cannot advance beyond its sequence."
       )
     }
-    let upstream: AsyncThrowingStream<AgentEventRecord, any Error>
+    let reservationID = try reserveEventStream(
+      runID: runID,
+      invocationID: invocationID,
+      generationID: connection.generationID
+    )
+    defer {
+      releaseEventStreamReservation(reservationID)
+    }
+
+    let upstream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
     do {
       upstream = try await transport.eventRecords(
         after: cursor,
@@ -29,10 +43,15 @@ extension HexGatewayClient {
       throw error
     }
 
-    try Task.checkCancellation()
-    try requireCurrentConnectedGeneration(connection.generationID)
+    do {
+      try Task.checkCancellation()
+      try requireCurrentConnectedGeneration(connection.generationID)
+    } catch {
+      terminateUnpublishedEventStream(upstream)
+      throw error
+    }
     let streamID = UUID()
-    let pair = AsyncThrowingStream<AgentEventRecord, any Error>.makeStream(
+    let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream(
       bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
     )
     let task = Task { [weak self] in
@@ -42,26 +61,35 @@ extension HexGatewayClient {
       }
       do {
         var expectedSequence: UInt64? = firstSequence.partialValue
-        for try await record in upstream {
+        var didObserveTerminal = hasAcknowledgedTerminal
+        for try await envelope in upstream {
           guard let requiredSequence = expectedSequence else {
             throw invalidEventSequenceFailure()
           }
-          try self.validateEventRecord(
-            record,
+          let record = try self.validateEventEnvelope(
+            envelope,
             runID: runID,
+            invocationID: invocationID,
             requiredSequence: requiredSequence
           )
+          guard !didObserveTerminal else {
+            throw self.eventAfterTerminalFailure()
+          }
+          didObserveTerminal = self.isTerminal(record.event)
           let followingSequence = record.sequence.addingReportingOverflow(1)
           expectedSequence = followingSequence.overflow ? nil : followingSequence.partialValue
           guard
             await self.enqueue(
-              record,
+              envelope,
               streamID: streamID,
               generationID: connection.generationID
             )
           else {
             return
           }
+        }
+        guard didObserveTerminal else {
+          throw self.missingTerminalEventFailure()
         }
         await self.finishEventStream(streamID, generationID: connection.generationID)
       } catch is CancellationError {
@@ -85,6 +113,8 @@ extension HexGatewayClient {
       }
     }
     eventStreams[streamID] = GatewayClientEventStreamState(
+      runID: runID,
+      invocationID: invocationID,
       generationID: connection.generationID,
       continuation: pair.continuation,
       task: task
@@ -105,11 +135,19 @@ extension HexGatewayClient {
     }
   }
 
-  nonisolated func validateEventRecord(
-    _ record: AgentEventRecord,
+  nonisolated func validateEventEnvelope(
+    _ envelope: GatewayEventEnvelope,
     runID: AgentRunID,
+    invocationID: GatewayRunInvocationID,
     requiredSequence: UInt64
-  ) throws {
+  ) throws -> AgentEventRecord {
+    guard envelope.invocationID == invocationID else {
+      throw GatewayFailure(
+        code: .staleRunInvocation,
+        message: "The gateway returned an event from a different run invocation."
+      )
+    }
+    let record = envelope.record
     guard record.runID == runID else {
       throw GatewayFailure(
         code: .wrongRun,
@@ -132,6 +170,7 @@ extension HexGatewayClient {
     guard record.sequence == requiredSequence else {
       throw invalidEventSequenceFailure()
     }
+    return record
   }
 
   nonisolated func invalidEventSequenceFailure() -> GatewayFailure {
@@ -141,8 +180,31 @@ extension HexGatewayClient {
     )
   }
 
+  nonisolated func eventAfterTerminalFailure() -> GatewayFailure {
+    GatewayFailure(
+      code: .eventAfterTerminal,
+      message: "The gateway returned an event after a terminal outcome."
+    )
+  }
+
+  nonisolated func missingTerminalEventFailure() -> GatewayFailure {
+    GatewayFailure(
+      code: .producerEndedWithoutTerminalEvent,
+      message: "The gateway event stream ended without a terminal outcome."
+    )
+  }
+
+  nonisolated func isTerminal(_ event: AgentEvent) -> Bool {
+    switch event {
+    case .runCompleted, .runCancelled, .runFailed:
+      true
+    default:
+      false
+    }
+  }
+
   func enqueue(
-    _ record: AgentEventRecord,
+    _ envelope: GatewayEventEnvelope,
     streamID: UUID,
     generationID: GatewayClientConnectionGenerationID
   ) -> Bool {
@@ -153,7 +215,7 @@ extension HexGatewayClient {
     else {
       return false
     }
-    switch state.continuation.yield(record) {
+    switch state.continuation.yield(envelope) {
     case .enqueued:
       return true
     case .dropped:
@@ -216,5 +278,53 @@ extension HexGatewayClient {
       state.continuation.finish(throwing: failure)
       state.task.cancel()
     }
+  }
+
+  func reserveEventStream(
+    runID: AgentRunID,
+    invocationID: GatewayRunInvocationID,
+    generationID: GatewayClientConnectionGenerationID
+  ) throws -> UUID {
+    let activeCount = eventStreams.values.count { $0.runID == runID }
+    let reservationCount = eventStreamReservations.values.count { $0.runID == runID }
+    let totalStreamCount = eventStreams.count + eventStreamReservations.count
+    let totalStreamLimit =
+      configuration.maximumSubscribersPerRun * configuration.maximumRememberedRuns
+    guard
+      activeCount + reservationCount < configuration.maximumSubscribersPerRun,
+      totalStreamCount < totalStreamLimit
+    else {
+      throw GatewayFailure(
+        code: .capacityExceeded,
+        message: "The client has reached its configured live-stream limit for this run.",
+        isRetryable: true
+      )
+    }
+
+    let reservationID = UUID()
+    eventStreamReservations[reservationID] = GatewayClientEventStreamReservation(
+      runID: runID,
+      invocationID: invocationID,
+      generationID: generationID
+    )
+    return reservationID
+  }
+
+  func releaseEventStreamReservation(_ reservationID: UUID) {
+    eventStreamReservations.removeValue(forKey: reservationID)
+  }
+
+  nonisolated func terminateUnpublishedEventStream(
+    _ stream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
+  ) {
+    let task = Task {
+      do {
+        var iterator = stream.makeAsyncIterator()
+        _ = try await iterator.next()
+      } catch {
+        // Cancellation is the cleanup signal; upstream failures are intentionally not published.
+      }
+    }
+    task.cancel()
   }
 }
