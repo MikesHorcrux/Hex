@@ -3,12 +3,38 @@ extension SQLiteJournalMigrator {
     connection: SQLiteConnection,
     maximumTextBytes: Int
   ) throws {
+    try validateSchemaDefinition(
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
+
+    let foreignKeyCheck = try connection.prepare("PRAGMA foreign_key_check")
+    guard try foreignKeyCheck.step() == .done else {
+      throw SQLiteAgentEventJournalError.corruptSchema(
+        "The database contains a foreign-key violation."
+      )
+    }
+  }
+
+  static func validateSchemaDefinition(
+    connection: SQLiteConnection,
+    maximumTextBytes: Int
+  ) throws {
     let version = try schemaVersion(connection: connection)
     guard version == currentSchemaVersion else {
       throw SQLiteAgentEventJournalError.corruptSchema(
         "Expected schema version \(currentSchemaVersion), found \(version)."
       )
     }
+
+    try validateSchemaObjects(
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
+    try validateTableAttributes(
+      connection: connection,
+      maximumTextBytes: maximumTextBytes
+    )
 
     try validateColumns(
       [
@@ -111,12 +137,6 @@ extension SQLiteJournalMigrator {
       )
     }
 
-    let foreignKeyCheck = try connection.prepare("PRAGMA foreign_key_check")
-    guard try foreignKeyCheck.step() == .done else {
-      throw SQLiteAgentEventJournalError.corruptSchema(
-        "The database contains a foreign-key violation."
-      )
-    }
   }
 
   private static func validateColumns(
@@ -125,7 +145,7 @@ extension SQLiteJournalMigrator {
     connection: SQLiteConnection,
     maximumTextBytes: Int
   ) throws {
-    let statement = try connection.prepare("PRAGMA table_info(\(table))")
+    let statement = try connection.prepare("PRAGMA table_xinfo(\(table))")
     var actual: [SQLiteColumnDefinition] = []
     while try statement.step() == .row {
       actual.append(
@@ -140,7 +160,8 @@ extension SQLiteJournalMigrator {
             at: 4,
             maximumBytes: maximumTextBytes
           ),
-          primaryKeyPosition: Int(try statement.columnInt64(at: 5))
+          primaryKeyPosition: Int(try statement.columnInt64(at: 5)),
+          hidden: Int(try statement.columnInt64(at: 6))
         )
       )
     }
@@ -149,6 +170,136 @@ extension SQLiteJournalMigrator {
         "Table \(table) has unexpected columns \(actual)."
       )
     }
+  }
+
+  private static func validateSchemaObjects(
+    connection: SQLiteConnection,
+    maximumTextBytes: Int
+  ) throws {
+    let statement = try connection.prepare(
+      "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name"
+    )
+    var actual: [String] = []
+    while try statement.step() == .row {
+      let type = try statement.columnText(at: 0, maximumBytes: maximumTextBytes)
+      let name = try statement.columnText(at: 1, maximumBytes: maximumTextBytes)
+      let table = try statement.columnText(at: 2, maximumBytes: maximumTextBytes)
+      let sql = try statement.columnOptionalText(
+        at: 3,
+        maximumBytes: SQLiteAgentEventJournalConfiguration.hardMaximumTextBytes
+      )
+      actual.append(schemaObjectKey(type: type, name: name, table: table, sql: sql))
+    }
+
+    let expected = [
+      schemaObjectKey(
+        type: "index",
+        name: "event_records_run_kind_tool_call_idx",
+        table: "event_records",
+        sql: metadataIndexSQL
+      ),
+      schemaObjectKey(
+        type: "index",
+        name: "sqlite_autoindex_event_records_1",
+        table: "event_records",
+        sql: nil
+      ),
+      schemaObjectKey(
+        type: "index",
+        name: "sqlite_autoindex_event_records_2",
+        table: "event_records",
+        sql: nil
+      ),
+      schemaObjectKey(
+        type: "index",
+        name: "sqlite_autoindex_journal_checkpoints_1",
+        table: "journal_checkpoints",
+        sql: nil
+      ),
+      schemaObjectKey(
+        type: "index",
+        name: "sqlite_autoindex_runs_1",
+        table: "runs",
+        sql: nil
+      ),
+      schemaObjectKey(
+        type: "table",
+        name: "event_records",
+        table: "event_records",
+        sql: eventRecordsTableSQL
+      ),
+      schemaObjectKey(
+        type: "table",
+        name: "journal_checkpoints",
+        table: "journal_checkpoints",
+        sql: checkpointsTableSQL
+      ),
+      schemaObjectKey(
+        type: "table",
+        name: "runs",
+        table: "runs",
+        sql: runsTableSQL
+      ),
+    ].sorted()
+
+    guard actual == expected else {
+      throw SQLiteAgentEventJournalError.corruptSchema(
+        "sqlite_schema contains unexpected or behaviorally modified objects."
+      )
+    }
+  }
+
+  private static func validateTableAttributes(
+    connection: SQLiteConnection,
+    maximumTextBytes: Int
+  ) throws {
+    let expectedColumnCounts = [
+      "runs": 5,
+      "event_records": 8,
+      "journal_checkpoints": 5,
+    ]
+    let statement = try connection.prepare("PRAGMA table_list")
+    var validatedNames: Set<String> = []
+    while try statement.step() == .row {
+      let schema = try statement.columnText(at: 0, maximumBytes: maximumTextBytes)
+      let name = try statement.columnText(at: 1, maximumBytes: maximumTextBytes)
+      guard schema == "main", let expectedColumnCount = expectedColumnCounts[name] else {
+        continue
+      }
+      let type = try statement.columnText(at: 2, maximumBytes: maximumTextBytes)
+      let columnCount = try statement.columnInt64(at: 3)
+      let isWithoutRowID = try statement.columnInt64(at: 4)
+      let isStrict = try statement.columnInt64(at: 5)
+      guard
+        type == "table",
+        columnCount == Int64(expectedColumnCount),
+        isWithoutRowID == 0,
+        isStrict == 0,
+        validatedNames.insert(name).inserted
+      else {
+        throw SQLiteAgentEventJournalError.corruptSchema(
+          "Table \(name) has unexpected canonical attributes."
+        )
+      }
+    }
+    guard validatedNames == Set(expectedColumnCounts.keys) else {
+      throw SQLiteAgentEventJournalError.corruptSchema(
+        "One or more required tables are missing canonical attributes."
+      )
+    }
+  }
+
+  private static func schemaObjectKey(
+    type: String,
+    name: String,
+    table: String,
+    sql: String?
+  ) -> String {
+    let normalizedSQL =
+      sql.map { value in
+        value.filter { !$0.isWhitespace }.lowercased()
+      } ?? "<sqlite-internal>"
+    return "\(type)|\(name)|\(table)|\(normalizedSQL)"
   }
 
   private static func validateForeignKey(

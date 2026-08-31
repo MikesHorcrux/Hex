@@ -8,7 +8,12 @@ extension SQLiteAgentEventJournal {
     try Task.checkCancellation()
     let connection = try requireConnection()
     return try connection.withImmediateTransaction {
-      try appendInTransaction(event, to: runID, connection: connection)
+      try Task.checkCancellation()
+      try SQLiteJournalMigrator.validateSchemaDefinition(
+        connection: connection,
+        maximumTextBytes: configuration.maximumTextBytes
+      )
+      return try appendInTransaction(event, to: runID, connection: connection)
     }
   }
 

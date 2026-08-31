@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import HexCore
 
@@ -39,10 +40,7 @@ enum JournalTestSupport {
     at databaseURL: URL,
     _ body: (SQLiteConnection) throws -> Value
   ) throws -> Value {
-    let connection = try SQLiteConnection(
-      databaseURL: databaseURL,
-      busyTimeoutMilliseconds: 5_000
-    )
+    let connection = try makeConnection(at: databaseURL)
     do {
       let value = try body(connection)
       try connection.close()
@@ -55,6 +53,46 @@ enum JournalTestSupport {
       }
       throw error
     }
+  }
+
+  static func makeConnection(
+    at databaseURL: URL,
+    busyTimeoutMilliseconds: Int = 5_000
+  ) throws -> SQLiteConnection {
+    try SQLiteConnection(
+      databaseURL: canonicalDatabaseURL(databaseURL),
+      busyTimeoutMilliseconds: busyTimeoutMilliseconds
+    )
+  }
+
+  static func fileStatus(at url: URL) throws -> stat {
+    var fileStatus = stat()
+    guard lstat(url.path, &fileStatus) == 0 else {
+      throw SQLiteAgentEventJournalError.database(
+        code: Int32(errno),
+        message: String(cString: strerror(errno))
+      )
+    }
+    return fileStatus
+  }
+
+  private static func canonicalDatabaseURL(_ databaseURL: URL) throws -> URL {
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let parentPath = databaseURL.deletingLastPathComponent().path
+    let result = parentPath.withCString { pathPointer in
+      realpath(pathPointer, &buffer)
+    }
+    guard result != nil else {
+      throw SQLiteAgentEventJournalError.database(
+        code: Int32(errno),
+        message: String(cString: strerror(errno))
+      )
+    }
+    let codeUnits = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    return URL(
+      fileURLWithPath: String(decoding: codeUnits, as: UTF8.self),
+      isDirectory: true
+    ).appendingPathComponent(databaseURL.lastPathComponent, isDirectory: false)
   }
 
   static func execute(_ sql: String, at databaseURL: URL) throws {

@@ -6,7 +6,8 @@ final class SQLiteConnection {
 
   init(databaseURL: URL, busyTimeoutMilliseconds: Int) throws {
     var database: OpaquePointer?
-    let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+    let flags =
+      SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW
     let result = sqlite3_open_v2(databaseURL.path, &database, flags, nil)
     guard result == SQLITE_OK, let database else {
       let message: String
@@ -101,7 +102,18 @@ final class SQLiteConnection {
   }
 
   func withImmediateTransaction<Value>(_ body: () throws -> Value) throws -> Value {
-    try execute("BEGIN IMMEDIATE")
+    try withTransaction(beginStatement: "BEGIN IMMEDIATE", body)
+  }
+
+  func withDeferredTransaction<Value>(_ body: () throws -> Value) throws -> Value {
+    try withTransaction(beginStatement: "BEGIN", body)
+  }
+
+  private func withTransaction<Value>(
+    beginStatement: String,
+    _ body: () throws -> Value
+  ) throws -> Value {
+    try execute(beginStatement)
     do {
       let value = try body()
       try execute("COMMIT")

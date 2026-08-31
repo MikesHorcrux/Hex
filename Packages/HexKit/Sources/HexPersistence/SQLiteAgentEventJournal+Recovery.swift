@@ -5,6 +5,11 @@ extension SQLiteAgentEventJournal {
   func recoverInterruptedRuns() throws -> [InterruptedAgentRun] {
     let connection = try requireConnection()
     return try connection.withImmediateTransaction {
+      try Task.checkCancellation()
+      try SQLiteJournalMigrator.validateSchemaDefinition(
+        connection: connection,
+        maximumTextBytes: configuration.maximumTextBytes
+      )
       let interruptedRuns = try interruptedRunIDs(connection: connection)
       var reports: [InterruptedAgentRun] = []
       reports.reserveCapacity(interruptedRuns.runIDs.count)

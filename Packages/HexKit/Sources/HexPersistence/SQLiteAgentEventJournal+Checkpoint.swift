@@ -17,6 +17,11 @@ extension SQLiteAgentEventJournal {
 
     let connection = try requireConnection()
     return try connection.withImmediateTransaction {
+      try Task.checkCancellation()
+      try SQLiteJournalMigrator.validateSchemaDefinition(
+        connection: connection,
+        maximumTextBytes: configuration.maximumTextBytes
+      )
       guard try eventExists(for: runID, sequence: sequence, connection: connection) else {
         throw SQLiteAgentEventJournalError.checkpointSequenceMissing(
           runID: runID,

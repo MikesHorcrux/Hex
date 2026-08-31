@@ -11,6 +11,8 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
   static let hardMaximumRecoveryRecordCount = 100_000
   static let hardMaximumRecoveryBytes = 128 * 1_024 * 1_024
 
+  /// A database file inside a dedicated journal directory. Opening the journal requires that
+  /// directory to be owned by the current user and secures it to mode 0700.
   public let databaseURL: URL
   public let busyTimeoutMilliseconds: Int
   public let maximumReadLimit: Int

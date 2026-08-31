@@ -2,6 +2,48 @@ import Foundation
 
 enum SQLiteJournalMigrator {
   static let currentSchemaVersion = 2
+  static let runsTableSQL =
+    """
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY NOT NULL,
+      next_sequence INTEGER NOT NULL,
+      terminal_sequence INTEGER,
+      created_at_us INTEGER NOT NULL,
+      updated_at_us INTEGER NOT NULL
+    )
+    """
+  static let eventRecordsTableSQL =
+    """
+    CREATE TABLE event_records (
+      event_id TEXT NOT NULL UNIQUE,
+      run_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      timestamp_us INTEGER NOT NULL,
+      record_schema_version INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      tool_call_id TEXT,
+      payload BLOB NOT NULL,
+      PRIMARY KEY (run_id, sequence),
+      FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    )
+    """
+  static let checkpointsTableSQL =
+    """
+    CREATE TABLE journal_checkpoints (
+      run_id TEXT NOT NULL,
+      through_sequence INTEGER NOT NULL,
+      created_at_us INTEGER NOT NULL,
+      checkpoint_schema_version INTEGER NOT NULL,
+      snapshot BLOB NOT NULL,
+      PRIMARY KEY (run_id, through_sequence),
+      FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    )
+    """
+  static let metadataIndexSQL =
+    """
+    CREATE INDEX event_records_run_kind_tool_call_idx
+    ON event_records (run_id, kind, tool_call_id)
+    """
 
   static func prepare(
     connection: SQLiteConnection,
@@ -119,55 +161,13 @@ enum SQLiteJournalMigrator {
   }
 
   private static func createVersionOne(connection: SQLiteConnection) throws {
-    try connection.execute(
-      """
-      CREATE TABLE runs (
-        run_id TEXT PRIMARY KEY NOT NULL,
-        next_sequence INTEGER NOT NULL,
-        terminal_sequence INTEGER,
-        created_at_us INTEGER NOT NULL,
-        updated_at_us INTEGER NOT NULL
-      )
-      """
-    )
-    try connection.execute(
-      """
-      CREATE TABLE event_records (
-        event_id TEXT NOT NULL UNIQUE,
-        run_id TEXT NOT NULL,
-        sequence INTEGER NOT NULL,
-        timestamp_us INTEGER NOT NULL,
-        record_schema_version INTEGER NOT NULL,
-        kind TEXT NOT NULL,
-        tool_call_id TEXT,
-        payload BLOB NOT NULL,
-        PRIMARY KEY (run_id, sequence),
-        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-      )
-      """
-    )
+    try connection.execute(runsTableSQL)
+    try connection.execute(eventRecordsTableSQL)
   }
 
   private static func createVersionTwo(connection: SQLiteConnection) throws {
-    try connection.execute(
-      """
-      CREATE TABLE journal_checkpoints (
-        run_id TEXT NOT NULL,
-        through_sequence INTEGER NOT NULL,
-        created_at_us INTEGER NOT NULL,
-        checkpoint_schema_version INTEGER NOT NULL,
-        snapshot BLOB NOT NULL,
-        PRIMARY KEY (run_id, through_sequence),
-        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-      )
-      """
-    )
-    try connection.execute(
-      """
-      CREATE INDEX event_records_run_kind_tool_call_idx
-      ON event_records (run_id, kind, tool_call_id)
-      """
-    )
+    try connection.execute(checkpointsTableSQL)
+    try connection.execute(metadataIndexSQL)
   }
 
 }

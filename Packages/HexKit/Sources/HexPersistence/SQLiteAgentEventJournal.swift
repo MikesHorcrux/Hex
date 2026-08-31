@@ -7,13 +7,14 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
   let databaseURL: URL
   var connection: SQLiteConnection?
   var fileLock: SQLiteJournalFileLock?
+  var secureDirectory: SQLiteJournalSecureDirectory?
 
   /// Runs repaired during this specific open. A later idempotent open reports an empty array.
   public private(set) var recoveredRuns: [InterruptedAgentRun] = []
 
   private init(configuration: SQLiteAgentEventJournalConfiguration) {
     self.configuration = configuration
-    databaseURL = configuration.databaseURL.standardizedFileURL.resolvingSymlinksInPath()
+    databaseURL = configuration.databaseURL.standardizedFileURL
   }
 
   /// Acquires ownership, configures SQLite, migrates, validates, and recovers before returning.
@@ -33,48 +34,33 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
       self.connection = nil
     }
     fileLock = nil
+    secureDirectory = nil
   }
 
   func requireConnection() throws -> SQLiteConnection {
     guard let connection else {
       throw SQLiteAgentEventJournalError.closed
     }
+    guard let secureDirectory, let fileLock else {
+      throw SQLiteAgentEventJournalError.closed
+    }
+    try secureDirectory.hardenSQLiteFiles()
+    try fileLock.validateDatabaseIdentity(in: secureDirectory)
     return connection
   }
 
   private func initialize() throws {
     try Task.checkCancellation()
 
-    let parentURL = databaseURL.deletingLastPathComponent()
-    let fileManager = FileManager()
-    var isDirectory = ObjCBool(false)
-    if fileManager.fileExists(atPath: parentURL.path, isDirectory: &isDirectory) {
-      guard isDirectory.boolValue else {
-        throw SQLiteAgentEventJournalError.invalidConfiguration(
-          "The database parent path is not a directory."
-        )
-      }
-    } else {
-      try fileManager.createDirectory(
-        at: parentURL,
-        withIntermediateDirectories: true,
-        attributes: nil
-      )
-    }
-
-    var databaseIsDirectory = ObjCBool(false)
-    if fileManager.fileExists(atPath: databaseURL.path, isDirectory: &databaseIsDirectory),
-      databaseIsDirectory.boolValue
-    {
-      throw SQLiteAgentEventJournalError.invalidConfiguration(
-        "The database URL refers to a directory."
-      )
-    }
-
-    fileLock = try SQLiteJournalFileLock(databaseURL: databaseURL)
+    let secureDirectory = try SQLiteJournalSecureDirectory(databaseURL: databaseURL)
+    self.secureDirectory = secureDirectory
+    let fileLock = try SQLiteJournalFileLock(secureDirectory: secureDirectory)
+    self.fileLock = fileLock
     do {
+      try secureDirectory.hardenSQLiteFiles()
+      try fileLock.validateDatabaseIdentity(in: secureDirectory)
       let openedConnection = try SQLiteConnection(
-        databaseURL: databaseURL,
+        databaseURL: secureDirectory.sqliteDatabaseURL,
         busyTimeoutMilliseconds: configuration.busyTimeoutMilliseconds
       )
       connection = openedConnection
@@ -83,10 +69,15 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
         busyTimeoutMilliseconds: configuration.busyTimeoutMilliseconds,
         maximumTextBytes: configuration.maximumTextBytes
       )
+      try secureDirectory.hardenSQLiteFiles()
+      try fileLock.validateDatabaseIdentity(in: secureDirectory)
       recoveredRuns = try recoverInterruptedRuns()
+      try secureDirectory.hardenSQLiteFiles()
+      try fileLock.validateDatabaseIdentity(in: secureDirectory)
     } catch {
       connection = nil
-      fileLock = nil
+      self.fileLock = nil
+      self.secureDirectory = nil
       throw error
     }
   }
