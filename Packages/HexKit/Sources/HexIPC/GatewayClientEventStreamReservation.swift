@@ -5,4 +5,5 @@ struct GatewayClientEventStreamReservation: Sendable {
   let invocationID: GatewayRunInvocationID
   let generationID: GatewayClientConnectionGenerationID
   let lease: GatewayTransportConnectionLease
+  let cancellationState: GatewayClientEventStreamCancellationState
 }

@@ -22,6 +22,9 @@ public actor HexGatewayClient {
   var connectedLease: GatewayTransportConnectionLease?
   var eventStreams: [UUID: GatewayClientEventStreamState] = [:]
   var eventStreamReservations: [UUID: GatewayClientEventStreamReservation] = [:]
+  // Physical IDs intentionally survive reconnect cleanup until their transport calls return.
+  var physicalEventStreamAcquisitionIDs: Set<UUID> = []
+  var eventStreamAcquisitionWaiters: [GatewayClientEventStreamAcquisitionWaiter] = []
 
   public init(
     transport: any HexGatewayTransport,

@@ -114,7 +114,7 @@ extension HexGatewayClient {
     connectionAttemptID = attemptID
     startAttemptIDs.removeAll()
     terminateEventStreamsForConnectionChange()
-    eventStreamReservations.removeAll(keepingCapacity: true)
+    terminateEventStreamAcquisitionWaitersForConnectionChange()
     return generationID
   }
 

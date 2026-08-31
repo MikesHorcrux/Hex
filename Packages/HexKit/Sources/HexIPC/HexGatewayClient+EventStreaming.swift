@@ -6,6 +6,23 @@ extension HexGatewayClient {
     for runID: AgentRunID,
     invocationID: GatewayRunInvocationID
   ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
+    let cancellationState = GatewayClientEventStreamCancellationState()
+    return try await withTaskCancellationHandler {
+      try await acquireEventRecords(
+        for: runID,
+        invocationID: invocationID,
+        cancellationState: cancellationState
+      )
+    } onCancel: {
+      cancellationState.cancel()
+    }
+  }
+
+  private func acquireEventRecords(
+    for runID: AgentRunID,
+    invocationID: GatewayRunInvocationID,
+    cancellationState: GatewayClientEventStreamCancellationState
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     try Task.checkCancellation()
     try validateEventRoute(runID: runID, invocationID: invocationID)
     let connection = try requireConnectedGeneration()
@@ -26,7 +43,8 @@ extension HexGatewayClient {
       runID: runID,
       invocationID: invocationID,
       generationID: connection.generationID,
-      lease: connection.lease
+      lease: connection.lease,
+      cancellationState: cancellationState
     )
     defer {
       releaseEventStreamReservation(
@@ -38,21 +56,19 @@ extension HexGatewayClient {
 
     let upstream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
     do {
-      upstream = try await withTaskCancellationHandler {
-        try await transport.eventRecords(
-          after: cursor,
-          lease: connection.lease
-        )
-      } onCancel: {
-        Task {
-          await self.releaseEventStreamReservation(
-            reservationID,
-            generationID: connection.generationID,
-            lease: connection.lease
-          )
-        }
-      }
+      try await acquirePhysicalEventStreamSlot(
+        reservationID: reservationID,
+        generationID: connection.generationID,
+        lease: connection.lease,
+        cancellationState: cancellationState
+      )
+      try Task.checkCancellation()
+      upstream = try await transport.eventRecords(
+        after: cursor,
+        lease: connection.lease
+      )
     } catch {
+      releasePhysicalEventStreamSlot(reservationID)
       try Task.checkCancellation()
       try requireCurrentConnectedGeneration(connection.generationID)
       throw error
@@ -62,9 +78,11 @@ extension HexGatewayClient {
       try Task.checkCancellation()
       try requireCurrentConnectedGeneration(connection.generationID)
     } catch {
-      terminateUnpublishedEventStream(upstream)
+      await terminateUnpublishedEventStream(upstream)
+      releasePhysicalEventStreamSlot(reservationID)
       throw error
     }
+    releasePhysicalEventStreamSlot(reservationID)
     let streamID = UUID()
     let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream(
       bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
@@ -299,8 +317,14 @@ extension HexGatewayClient {
     runID: AgentRunID,
     invocationID: GatewayRunInvocationID,
     generationID: GatewayClientConnectionGenerationID,
-    lease: GatewayTransportConnectionLease
+    lease: GatewayTransportConnectionLease,
+    cancellationState: GatewayClientEventStreamCancellationState
   ) throws -> UUID {
+    removeCancelledEventStreamReservations()
+    try Task.checkCancellation()
+    guard !cancellationState.isCancelled else {
+      throw CancellationError()
+    }
     let activeCount = eventStreams.values.count { $0.runID == runID }
     let reservationCount = eventStreamReservations.values.count { $0.runID == runID }
     let totalStreamCount = eventStreams.count + eventStreamReservations.count
@@ -322,9 +346,99 @@ extension HexGatewayClient {
       runID: runID,
       invocationID: invocationID,
       generationID: generationID,
-      lease: lease
+      lease: lease,
+      cancellationState: cancellationState
     )
     return reservationID
+  }
+
+  func acquirePhysicalEventStreamSlot(
+    reservationID: UUID,
+    generationID: GatewayClientConnectionGenerationID,
+    lease: GatewayTransportConnectionLease,
+    cancellationState: GatewayClientEventStreamCancellationState
+  ) async throws {
+    try Task.checkCancellation()
+    guard !cancellationState.isCancelled else {
+      throw CancellationError()
+    }
+    try requireCurrentConnectedGeneration(generationID)
+    guard
+      let reservation = eventStreamReservations[reservationID],
+      reservation.generationID == generationID,
+      reservation.lease == lease,
+      reservation.cancellationState === cancellationState
+    else {
+      throw supersededOperationFailure()
+    }
+
+    if physicalEventStreamAcquisitionIDs.count < maximumPhysicalEventStreamAcquisitions {
+      physicalEventStreamAcquisitionIDs.insert(reservationID)
+      return
+    }
+
+    removeCancelledEventStreamReservations()
+    guard eventStreamAcquisitionWaiters.count < maximumPhysicalEventStreamAcquisitions else {
+      throw GatewayFailure(
+        code: .capacityExceeded,
+        message: "The client has reached its configured pending stream-acquisition limit.",
+        isRetryable: true
+      )
+    }
+
+    let signal = AsyncThrowingStream<Void, any Error>.makeStream(
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    cancellationState.installCancellationHandler {
+      signal.continuation.finish(throwing: CancellationError())
+    }
+    defer {
+      cancellationState.removeCancellationHandler()
+    }
+    guard !cancellationState.isCancelled else {
+      throw CancellationError()
+    }
+
+    eventStreamAcquisitionWaiters.append(
+      GatewayClientEventStreamAcquisitionWaiter(
+        reservationID: reservationID,
+        generationID: generationID,
+        lease: lease,
+        cancellationState: cancellationState,
+        continuation: signal.continuation
+      )
+    )
+
+    do {
+      var iterator = signal.stream.makeAsyncIterator()
+      guard try await iterator.next() != nil else {
+        throw supersededOperationFailure()
+      }
+    } catch {
+      removeEventStreamAcquisitionWaiter(reservationID)
+      releasePhysicalEventStreamSlot(reservationID)
+      try Task.checkCancellation()
+      guard !cancellationState.isCancelled else {
+        throw CancellationError()
+      }
+      try requireCurrentConnectedGeneration(generationID)
+      throw error
+    }
+
+    removeEventStreamAcquisitionWaiter(reservationID)
+    do {
+      try Task.checkCancellation()
+      guard !cancellationState.isCancelled else {
+        throw CancellationError()
+      }
+      try requireCurrentConnectedGeneration(generationID)
+      guard physicalEventStreamAcquisitionIDs.contains(reservationID) else {
+        throw supersededOperationFailure()
+      }
+    } catch {
+      releasePhysicalEventStreamSlot(reservationID)
+      throw error
+    }
   }
 
   func releaseEventStreamReservation(
@@ -342,9 +456,101 @@ extension HexGatewayClient {
     eventStreamReservations.removeValue(forKey: reservationID)
   }
 
+  func releasePhysicalEventStreamSlot(_ reservationID: UUID) {
+    guard physicalEventStreamAcquisitionIDs.remove(reservationID) != nil else {
+      return
+    }
+    resumeEventStreamAcquisitionWaiters()
+  }
+
+  func terminateEventStreamAcquisitionWaitersForConnectionChange() {
+    let waiters = eventStreamAcquisitionWaiters
+    eventStreamAcquisitionWaiters.removeAll(keepingCapacity: true)
+    eventStreamReservations.removeAll(keepingCapacity: true)
+    let failure = supersededOperationFailure()
+    for waiter in waiters {
+      waiter.continuation.finish(throwing: failure)
+    }
+  }
+
+  private var maximumPhysicalEventStreamAcquisitions: Int {
+    configuration.maximumSubscribersPerRun * configuration.maximumRememberedRuns
+  }
+
+  private func removeCancelledEventStreamReservations() {
+    let cancelledReservationIDs = Set(
+      eventStreamReservations.compactMap { reservationID, reservation in
+        reservation.cancellationState.isCancelled ? reservationID : nil
+      }
+    )
+    guard !cancelledReservationIDs.isEmpty else {
+      return
+    }
+
+    for reservationID in cancelledReservationIDs {
+      eventStreamReservations.removeValue(forKey: reservationID)
+    }
+
+    var retainedWaiters: [GatewayClientEventStreamAcquisitionWaiter] = []
+    retainedWaiters.reserveCapacity(eventStreamAcquisitionWaiters.count)
+    for waiter in eventStreamAcquisitionWaiters {
+      if cancelledReservationIDs.contains(waiter.reservationID) {
+        waiter.continuation.finish(throwing: CancellationError())
+      } else {
+        retainedWaiters.append(waiter)
+      }
+    }
+    eventStreamAcquisitionWaiters = retainedWaiters
+    resumeEventStreamAcquisitionWaiters()
+  }
+
+  private func removeEventStreamAcquisitionWaiter(_ reservationID: UUID) {
+    eventStreamAcquisitionWaiters.removeAll { waiter in
+      waiter.reservationID == reservationID
+    }
+  }
+
+  private func resumeEventStreamAcquisitionWaiters() {
+    while physicalEventStreamAcquisitionIDs.count < maximumPhysicalEventStreamAcquisitions,
+      !eventStreamAcquisitionWaiters.isEmpty
+    {
+      let waiter = eventStreamAcquisitionWaiters.removeFirst()
+      guard
+        let reservation = eventStreamReservations[waiter.reservationID],
+        reservation.generationID == waiter.generationID,
+        reservation.lease == waiter.lease,
+        reservation.cancellationState === waiter.cancellationState,
+        connectionGenerationID == waiter.generationID,
+        connectedGenerationID == waiter.generationID,
+        connectedLease == waiter.lease
+      else {
+        waiter.continuation.finish(throwing: supersededOperationFailure())
+        continue
+      }
+      guard !waiter.cancellationState.isCancelled else {
+        eventStreamReservations.removeValue(forKey: waiter.reservationID)
+        waiter.continuation.finish(throwing: CancellationError())
+        continue
+      }
+
+      physicalEventStreamAcquisitionIDs.insert(waiter.reservationID)
+      switch waiter.continuation.yield(()) {
+      case .enqueued:
+        waiter.continuation.finish()
+      case .dropped, .terminated:
+        physicalEventStreamAcquisitionIDs.remove(waiter.reservationID)
+        eventStreamReservations.removeValue(forKey: waiter.reservationID)
+      @unknown default:
+        physicalEventStreamAcquisitionIDs.remove(waiter.reservationID)
+        eventStreamReservations.removeValue(forKey: waiter.reservationID)
+        waiter.continuation.finish(throwing: supersededOperationFailure())
+      }
+    }
+  }
+
   nonisolated func terminateUnpublishedEventStream(
     _ stream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
-  ) {
+  ) async {
     let task = Task {
       do {
         var iterator = stream.makeAsyncIterator()
@@ -354,5 +560,6 @@ extension HexGatewayClient {
       }
     }
     task.cancel()
+    _ = await task.result
   }
 }

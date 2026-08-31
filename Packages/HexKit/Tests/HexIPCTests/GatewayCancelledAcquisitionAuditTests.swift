@@ -4,67 +4,39 @@ import Testing
 
 @Suite("Gateway cancelled acquisition audit")
 struct GatewayCancelledAcquisitionAuditTests {
-  @Test
-  func cancellationPromptlyReleasesReservationWithoutTearingDownReplacement() async throws {
+  @Test(arguments: 0..<100)
+  func cancellationQueuesImmediateReplacementBehindPhysicalLimit(_ iteration: Int) async throws {
     let configuration = try #require(
       GatewayConfiguration(
         maximumWireBytes: 32_768,
         maximumRetainedRecordsPerRun: 1,
         subscriberBufferCapacity: 1,
-        maximumSubscribersPerRun: 1
+        maximumSubscribersPerRun: 1,
+        maximumRememberedRuns: 1
       )
     )
     let transport = HangingGatewayTransport(holdsStreamAcquisition: true)
     let client = HexGatewayClient(transport: transport, configuration: configuration)
     _ = try await client.connect()
-    let runID = GatewayTestValues.runID(250)
-    let invocationID = GatewayTestValues.invocationID(250)
+    let identitySeed = UInt8(truncatingIfNeeded: 100 + iteration)
+    let runID = GatewayTestValues.runID(identitySeed)
+    let invocationID = GatewayTestValues.invocationID(identitySeed)
 
     let cancelled = Task {
       try await client.eventRecords(for: runID, invocationID: invocationID)
     }
     await transport.waitForPendingStreamCount(1)
     cancelled.cancel()
-    for _ in 0..<100 {
-      await Task.yield()
-    }
-
-    let reservationCountAfterCancellation = await client.eventStreamReservations.count
-    #expect(reservationCountAfterCancellation == 0)
-    guard reservationCountAfterCancellation == 0 else {
-      try await client.disconnect()
-      _ = try? await cancelled.value
-      return
-    }
-
     let replacement = Task {
       try await client.eventRecords(for: runID, invocationID: invocationID)
     }
-    for _ in 0..<100 {
-      await Task.yield()
-    }
-    let pendingCount = await transport.pendingStreamCount
-    #expect(pendingCount == 2)
-    guard pendingCount == 2 else {
-      try await client.disconnect()
-      _ = try? await cancelled.value
-      _ = try? await replacement.value
-      return
-    }
 
-    await transport.resolveNextPendingStream()
+    await transport.allowPendingStreamAcquisitionsToResolve()
     await expectCancellation(cancelled)
-    for _ in 0..<100 {
-      await Task.yield()
-    }
-    #expect(await client.eventStreamReservations.count == 1)
-    #expect(await client.eventStreams.isEmpty)
-    #expect(await transport.activeStreamCount == 0)
-
-    await transport.resolveNextPendingStream()
     let replacementStream = try await replacement.value
-    #expect(await client.eventStreamReservations.isEmpty)
-    #expect(await client.eventStreams.count == 1)
+    await transport.waitForActiveStreamCount(1)
+
+    #expect(await transport.maximumPendingStreamCount == 1)
     #expect(await transport.activeStreamCount == 1)
 
     try await client.disconnect()
@@ -72,13 +44,14 @@ struct GatewayCancelledAcquisitionAuditTests {
   }
 
   @Test
-  func cancelledLateFailureCannotMutateReplacementGeneration() async throws {
+  func cancelledLateFailureCannotMutateReconnectedReplacementGeneration() async throws {
     let configuration = try #require(
       GatewayConfiguration(
         maximumWireBytes: 32_768,
         maximumRetainedRecordsPerRun: 1,
         subscriberBufferCapacity: 1,
-        maximumSubscribersPerRun: 1
+        maximumSubscribersPerRun: 1,
+        maximumRememberedRuns: 1
       )
     )
     let transport = HangingGatewayTransport(holdsStreamAcquisition: true)
@@ -92,39 +65,123 @@ struct GatewayCancelledAcquisitionAuditTests {
     }
     await transport.waitForPendingStreamCount(1)
     cancelled.cancel()
-    for _ in 0..<100 {
-      await Task.yield()
-    }
-    #expect(await client.eventStreamReservations.isEmpty)
-
     _ = try await client.connect()
     let replacement = Task {
       try await client.eventRecords(for: runID, invocationID: invocationID)
     }
-    for _ in 0..<100 {
-      await Task.yield()
-    }
-    let pendingCount = await transport.pendingStreamCount
-    #expect(pendingCount == 2)
-    guard pendingCount == 2 else {
-      try await client.disconnect()
-      _ = try? await cancelled.value
-      _ = try? await replacement.value
-      return
-    }
 
-    await transport.failNextPendingStream(message: "secret stale transport failure")
+    await transport.failPendingStreamAcquisitionsAndAllowFutureOnes(
+      message: "secret stale transport failure"
+    )
     await expectCancellation(cancelled)
-    #expect(await client.eventStreamReservations.count == 1)
-    #expect(await client.eventStreams.isEmpty)
-
-    await transport.resolveNextPendingStream()
     let replacementStream = try await replacement.value
-    #expect(await client.eventStreamReservations.isEmpty)
-    #expect(await client.eventStreams.count == 1)
+    await transport.waitForActiveStreamCount(1)
+
+    #expect(await transport.maximumPendingStreamCount == 1)
+    #expect(await transport.activeStreamCount == 1)
 
     try await client.disconnect()
     _ = replacementStream
+  }
+
+  @Test
+  func repeatedIgnoredCancellationsNeverStartAnotherPhysicalAcquisition() async throws {
+    let configuration = try #require(
+      GatewayConfiguration(
+        maximumWireBytes: 32_768,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumSubscribersPerRun: 1,
+        maximumRememberedRuns: 1
+      )
+    )
+    let transport = HangingGatewayTransport(holdsStreamAcquisition: true)
+    let client = HexGatewayClient(transport: transport, configuration: configuration)
+    _ = try await client.connect()
+    let runID = GatewayTestValues.runID(252)
+    let invocationID = GatewayTestValues.invocationID(252)
+
+    var acquisition = Task {
+      try await client.eventRecords(for: runID, invocationID: invocationID)
+    }
+    await transport.waitForPendingStreamCount(1)
+    var cancelledAcquisitions:
+      [Task<AsyncThrowingStream<GatewayEventEnvelope, any Error>, any Error>] = []
+
+    for _ in 0..<20 {
+      acquisition.cancel()
+      cancelledAcquisitions.append(acquisition)
+      acquisition = Task {
+        try await client.eventRecords(for: runID, invocationID: invocationID)
+      }
+    }
+
+    await transport.allowPendingStreamAcquisitionsToResolve()
+    for cancelledAcquisition in cancelledAcquisitions {
+      await expectCancellation(cancelledAcquisition)
+    }
+    let retainedStream = try await acquisition.value
+    await transport.waitForActiveStreamCount(1)
+
+    #expect(await transport.maximumPendingStreamCount == 1)
+    #expect(await transport.activeStreamCount == 1)
+
+    try await client.disconnect()
+    _ = retainedStream
+  }
+
+  @Test
+  func replacementQueueRetainsOnlyConfiguredLogicalCapacity() async throws {
+    let configuration = try #require(
+      GatewayConfiguration(
+        maximumWireBytes: 32_768,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumSubscribersPerRun: 1,
+        maximumRememberedRuns: 1
+      )
+    )
+    let transport = HangingGatewayTransport(holdsStreamAcquisition: true)
+    let client = HexGatewayClient(transport: transport, configuration: configuration)
+    _ = try await client.connect()
+    let runID = GatewayTestValues.runID(253)
+    let invocationID = GatewayTestValues.invocationID(253)
+
+    let cancelled = Task {
+      try await client.eventRecords(for: runID, invocationID: invocationID)
+    }
+    await transport.waitForPendingStreamCount(1)
+    cancelled.cancel()
+    let candidates = (0..<2).map { _ in
+      Task {
+        try await client.eventRecords(for: runID, invocationID: invocationID)
+      }
+    }
+
+    await transport.allowPendingStreamAcquisitionsToResolve()
+    await expectCancellation(cancelled)
+
+    var retainedStreams: [AsyncThrowingStream<GatewayEventEnvelope, any Error>] = []
+    var capacityFailureCount = 0
+    for candidate in candidates {
+      do {
+        retainedStreams.append(try await candidate.value)
+      } catch let failure as GatewayFailure {
+        #expect(failure.code == .capacityExceeded)
+        capacityFailureCount += 1
+      } catch {
+        Issue.record("Expected a bounded-capacity result, received: \(error)")
+      }
+    }
+    await transport.waitForActiveStreamCount(1)
+
+    #expect(retainedStreams.count == 1)
+    #expect(capacityFailureCount == 1)
+    #expect(await transport.maximumPendingStreamCount == 1)
+    #expect(await transport.activeStreamCount == 1)
+
+    try await client.disconnect()
+    _ = retainedStreams
   }
 
   private func expectCancellation<Value: Sendable>(

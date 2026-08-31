@@ -3,7 +3,7 @@ import HexCore
 import HexIPC
 
 actor HangingGatewayTransport: HexGatewayTransport {
-  private let holdsStreamAcquisition: Bool
+  private var holdsStreamAcquisition: Bool
   private var connectedLease: GatewayTransportConnectionLease?
   private var continuations:
     [UUID: AsyncThrowingStream<GatewayEventEnvelope, any Error>.Continuation] = [:]
@@ -13,6 +13,9 @@ actor HangingGatewayTransport: HexGatewayTransport {
       any Error
     >] = [:]
   private var pendingOrder: [UUID] = []
+  private var pendingCountWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+  private var activeCountWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+  private(set) var maximumPendingStreamCount = 0
 
   init(holdsStreamAcquisition: Bool = false) {
     self.holdsStreamAcquisition = holdsStreamAcquisition
@@ -72,6 +75,8 @@ actor HangingGatewayTransport: HexGatewayTransport {
       return try await withCheckedThrowingContinuation { continuation in
         pendingContinuations[requestID] = continuation
         pendingOrder.append(requestID)
+        maximumPendingStreamCount = max(maximumPendingStreamCount, pendingContinuations.count)
+        resumePendingCountWaiters()
       }
     }
     return installStream()
@@ -85,41 +90,45 @@ actor HangingGatewayTransport: HexGatewayTransport {
         returning: installStream()
       )
     }
+    resumePendingCountWaiters()
   }
 
-  func resolveNextPendingStream() {
-    guard !pendingOrder.isEmpty else {
-      return
-    }
-    let requestID = pendingOrder.removeFirst()
-    pendingContinuations.removeValue(forKey: requestID)?.resume(
-      returning: installStream()
-    )
+  func allowPendingStreamAcquisitionsToResolve() {
+    holdsStreamAcquisition = false
+    resolvePendingStreams()
   }
 
-  func failNextPendingStream(message: String) {
-    guard !pendingOrder.isEmpty else {
-      return
-    }
-    let requestID = pendingOrder.removeFirst()
-    pendingContinuations.removeValue(forKey: requestID)?.resume(
-      throwing: GatewayFailure(
-        code: .transportUnavailable,
-        message: message,
-        isRetryable: true
+  func failPendingStreamAcquisitionsAndAllowFutureOnes(message: String) {
+    holdsStreamAcquisition = false
+    let requestIDs = pendingOrder
+    pendingOrder.removeAll(keepingCapacity: true)
+    for requestID in requestIDs {
+      pendingContinuations.removeValue(forKey: requestID)?.resume(
+        throwing: GatewayFailure(
+          code: .transportUnavailable,
+          message: message,
+          isRetryable: true
+        )
       )
-    )
+    }
+    resumePendingCountWaiters()
   }
 
   func waitForPendingStreamCount(_ expectedCount: Int) async {
-    while pendingContinuations.count != expectedCount {
-      await Task.yield()
+    guard pendingContinuations.count != expectedCount else {
+      return
+    }
+    await withCheckedContinuation { continuation in
+      pendingCountWaiters[expectedCount, default: []].append(continuation)
     }
   }
 
   func waitForActiveStreamCount(_ expectedCount: Int) async {
-    while continuations.count != expectedCount {
-      await Task.yield()
+    guard continuations.count != expectedCount else {
+      return
+    }
+    await withCheckedContinuation { continuation in
+      activeCountWaiters[expectedCount, default: []].append(continuation)
     }
   }
 
@@ -127,6 +136,7 @@ actor HangingGatewayTransport: HexGatewayTransport {
     let streamID = UUID()
     let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream()
     continuations[streamID] = pair.continuation
+    resumeActiveCountWaiters()
     pair.continuation.onTermination = { @Sendable _ in
       Task {
         await self.removeStream(streamID)
@@ -143,8 +153,10 @@ actor HangingGatewayTransport: HexGatewayTransport {
     let pending = Array(pendingContinuations.values)
     pendingContinuations.removeAll()
     pendingOrder.removeAll(keepingCapacity: true)
+    resumePendingCountWaiters()
     let activeContinuations = Array(continuations.values)
     continuations.removeAll()
+    resumeActiveCountWaiters()
     for continuation in activeContinuations {
       continuation.finish()
     }
@@ -160,6 +172,21 @@ actor HangingGatewayTransport: HexGatewayTransport {
 
   private func removeStream(_ streamID: UUID) {
     continuations.removeValue(forKey: streamID)
+    resumeActiveCountWaiters()
+  }
+
+  private func resumePendingCountWaiters() {
+    let waiters = pendingCountWaiters.removeValue(forKey: pendingContinuations.count) ?? []
+    for waiter in waiters {
+      waiter.resume()
+    }
+  }
+
+  private func resumeActiveCountWaiters() {
+    let waiters = activeCountWaiters.removeValue(forKey: continuations.count) ?? []
+    for waiter in waiters {
+      waiter.resume()
+    }
   }
 
   private func requireConnection(_ lease: GatewayTransportConnectionLease) throws {
