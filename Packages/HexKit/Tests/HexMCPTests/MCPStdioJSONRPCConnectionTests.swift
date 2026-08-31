@@ -470,6 +470,13 @@ struct MCPStdioJSONRPCConnectionTests {
 
   @Test("Builds the installed Xcode bridge closure without launching it")
   func snapshotsInstalledXcodeBridgeRuntimeClosure() throws {
+    let namespaceBasename = "hex-mcp-xcode-closure-\(UUID().uuidString)"
+    let namespaceURL = URL(
+      fileURLWithPath: "/private/tmp/\(namespaceBasename)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+
     let configuration = try MCPServerConfiguration.xcode(
       sourceEnvironment: ["PATH": "/usr/bin:/bin"],
       developerDirectory: URL(
@@ -491,7 +498,8 @@ struct MCPStdioJSONRPCConnectionTests {
       from: sourceDescriptor,
       initialStatus: sourceStatus,
       sourcePath: configuration.executableURL.path,
-      afterSourceValidation: nil
+      afterSourceValidation: nil,
+      namespaceBasename: namespaceBasename
     )
     let executablePath = try #require(snapshot?.executablePath)
     let snapshotRoot = URL(fileURLWithPath: executablePath)

@@ -35,8 +35,7 @@ of silently changing the local legacy handshake.
   root-owned and free of group/world-write and set-id bits. Their hard-linked regular resources
   are admitted only after the complete bundle path is opened without following symlinks, its
   ancestor and bundle-root descriptor identities remain stable across signature validation, and its
-  nested code signature satisfies the non-generic `anchor apple and identifier
-  "com.apple.dt.Xcode"` requirement; all other bundles keep the single-link requirement.
+  nested code signature satisfies the exact `(anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "59GAB85EFG") and identifier "com.apple.dt.Xcode"` requirement; all other bundles keep the single-link requirement.
 - Admit snapshots through atomic claims in the fixed, owner-only
   `/private/tmp/.hex-mcp-snapshots.v1` namespace. The standard policy permits 32 retained slots;
   each slot admits at most 2,048 entries, 8 MiB of pathname and symbolic-link metadata, and
