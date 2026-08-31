@@ -1,14 +1,19 @@
+import Foundation
 import HexCore
 
 /// App-facing gateway client with in-memory, explicitly acknowledged replay cursors keyed by exact
 /// run invocation. Cursor state is not durable across app termination; callers must apply each record
 /// before acknowledging it with the invocation identity that produced it.
 public actor HexGatewayClient {
-  private let transport: any HexGatewayTransport
-  private let handshakeRequest: GatewayHandshakeRequest
-  private var gatewayInstanceID: GatewayInstanceID?
-  private var acknowledgedSequences: [GatewayRunAcknowledgementKey: UInt64] = [:]
-  private var startAttemptIDs: [AgentRunID: GatewayClientStartAttemptID] = [:]
+  let transport: any HexGatewayTransport
+  let handshakeRequest: GatewayHandshakeRequest
+  var gatewayInstanceID: GatewayInstanceID?
+  var acknowledgedSequences: [GatewayRunAcknowledgementKey: UInt64] = [:]
+  var startAttemptIDs: [AgentRunID: GatewayClientStartAttemptID] = [:]
+  var connectionAttemptID: GatewayClientConnectionAttemptID?
+  var connectionGenerationID = GatewayClientConnectionGenerationID()
+  var connectedGenerationID: GatewayClientConnectionGenerationID?
+  var eventStreams: [UUID: GatewayClientEventStreamState] = [:]
 
   public init(
     transport: any HexGatewayTransport,
@@ -21,100 +26,6 @@ public actor HexGatewayClient {
       clientID: clientID,
       minimumVersion: minimumVersion,
       maximumVersion: maximumVersion
-    )
-  }
-
-  public func connect() async throws -> GatewayConnectionResult {
-    let previousGatewayInstanceID = gatewayInstanceID
-    let response = try await transport.handshake(handshakeRequest)
-    if let previousGatewayInstanceID,
-      previousGatewayInstanceID != response.gatewayInstanceID
-    {
-      acknowledgedSequences.removeAll()
-    }
-    gatewayInstanceID = response.gatewayInstanceID
-    return GatewayConnectionResult(
-      response: response,
-      previousGatewayInstanceID: previousGatewayInstanceID
-    )
-  }
-
-  /// Starts a run through the transport. For the same run identifier, a newer concurrent call
-  /// supersedes every older in-flight call. Superseded responses and failures are redacted and can
-  /// never mutate acknowledgement state belonging to the newer call.
-  public func startRun(
-    _ request: GatewayStartRunRequest
-  ) async throws -> GatewayStartRunResponse {
-    try Task.checkCancellation()
-    let runID = request.runID
-    let attemptID = GatewayClientStartAttemptID()
-    startAttemptIDs[runID] = attemptID
-
-    let response: GatewayStartRunResponse
-    do {
-      response = try await withTaskCancellationHandler {
-        try await transport.startRun(request)
-      } onCancel: {
-        Task {
-          await self.invalidateStartAttempt(
-            for: runID,
-            matching: attemptID
-          )
-        }
-      }
-    } catch {
-      if Task.isCancelled {
-        invalidateStartAttempt(for: runID, matching: attemptID)
-        throw CancellationError()
-      }
-
-      try requireCurrentStartAttempt(for: runID, matching: attemptID)
-      try Task.checkCancellation()
-      invalidateStartAttempt(for: runID, matching: attemptID)
-      throw error
-    }
-
-    try Task.checkCancellation()
-    try requireCurrentStartAttempt(for: runID, matching: attemptID)
-    guard response.runID == runID else {
-      try Task.checkCancellation()
-      invalidateStartAttempt(for: runID, matching: attemptID)
-      throw GatewayFailure(
-        code: .wrongRun,
-        message: "The gateway returned a start response for a different run."
-      )
-    }
-
-    try Task.checkCancellation()
-    switch response.disposition {
-    case .started(let invocationID):
-      // A newly admitted generation always begins at cursor zero, even when its run identifier was
-      // previously acknowledged before bounded service eviction.
-      removeAcknowledgements(for: response.runID)
-      acknowledgedSequences[
-        GatewayRunAcknowledgementKey(runID: response.runID, invocationID: invocationID)
-      ] = 0
-    case .alreadyRunning(let invocationID), .alreadyTerminal(let invocationID):
-      removeAcknowledgements(for: response.runID, except: invocationID)
-    case .busy:
-      break
-    }
-    invalidateStartAttempt(for: runID, matching: attemptID)
-    return response
-  }
-
-  public func cancelRun(
-    _ request: GatewayCancelRunRequest
-  ) async throws -> GatewayCancelRunResponse {
-    try await transport.cancelRun(request)
-  }
-
-  public func eventRecords(
-    for runID: AgentRunID,
-    invocationID: GatewayRunInvocationID
-  ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
-    try await transport.eventRecords(
-      after: acknowledgedCursor(for: runID, invocationID: invocationID)
     )
   }
 
@@ -190,11 +101,7 @@ public actor HexGatewayClient {
     )
   }
 
-  public func disconnect() async {
-    await transport.disconnect()
-  }
-
-  private func removeAcknowledgements(
+  func removeAcknowledgements(
     for runID: AgentRunID,
     except retainedInvocationID: GatewayRunInvocationID? = nil
   ) {
@@ -203,29 +110,10 @@ public actor HexGatewayClient {
     }
   }
 
-  private func requireCurrentStartAttempt(
-    for runID: AgentRunID,
-    matching attemptID: GatewayClientStartAttemptID
-  ) throws {
-    guard startAttemptIDs[runID] == attemptID else {
-      throw supersededStartFailure()
-    }
-  }
-
-  private func invalidateStartAttempt(
-    for runID: AgentRunID,
-    matching attemptID: GatewayClientStartAttemptID
-  ) {
-    guard startAttemptIDs[runID] == attemptID else {
-      return
-    }
-    startAttemptIDs.removeValue(forKey: runID)
-  }
-
-  private func supersededStartFailure() -> GatewayFailure {
+  func supersededOperationFailure() -> GatewayFailure {
     GatewayFailure(
       code: .supersededOperation,
-      message: "The start operation was superseded by a newer attempt."
+      message: "The gateway client operation was superseded."
     )
   }
 }

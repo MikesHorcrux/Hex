@@ -308,7 +308,7 @@ struct GatewayClientReentrancyTests {
         failure
           == GatewayFailure(
             code: .supersededOperation,
-            message: "The start operation was superseded by a newer attempt.",
+            message: "The gateway client operation was superseded.",
             isRetryable: false
           )
       )
