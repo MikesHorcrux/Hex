@@ -37,13 +37,14 @@ extension WorkspaceFileSystem {
     guard fstat(descriptor, &status) == 0, status.st_size >= 0 else {
       throw WorkspaceFileSystemError.ioFailure
     }
+    readDataPreflightHook?(maximumBytes)
     guard status.st_size <= maximumBytes else {
       throw WorkspaceFileSystemError.fileTooLarge
     }
 
     var data = Data()
     data.reserveCapacity(Int(status.st_size))
-    var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+    var buffer = [UInt8](repeating: 0, count: max(1, min(64 * 1_024, maximumBytes)))
     while true {
       try Task.checkCancellation()
       let bytesRead = buffer.withUnsafeMutableBytes { bytes in
@@ -67,7 +68,17 @@ extension WorkspaceFileSystem {
     return data
   }
 
-  func directoryEntries(components: [String]) throws -> [WorkspaceDirectoryEntry] {
+  func directoryEntries(
+    components: [String],
+    maximumEntries: Int? = nil
+  ) throws -> [WorkspaceDirectoryEntry] {
+    let entryLimit = min(
+      maximumEntries ?? configuration.maximumDirectoryEntries,
+      configuration.maximumDirectoryEntries
+    )
+    guard entryLimit >= 0 else {
+      throw WorkspaceFileSystemError.capacityExceeded
+    }
     let descriptor = try openDirectory(components: components)
     guard let directory = fdopendir(descriptor) else {
       Darwin.close(descriptor)
@@ -76,7 +87,9 @@ extension WorkspaceFileSystem {
     defer { closedir(directory) }
 
     var entries: [WorkspaceDirectoryEntry] = []
-    var resultBytes = 0
+    var resultSize = try WorkspaceDirectoryResultSize(
+      maximumBytes: configuration.maximumDirectoryResultBytes
+    )
     while true {
       try Task.checkCancellation()
       errno = 0
@@ -97,7 +110,7 @@ extension WorkspaceFileSystem {
       guard name != ".", name != ".." else {
         continue
       }
-      guard entries.count < configuration.maximumDirectoryEntries else {
+      guard entries.count < entryLimit else {
         throw WorkspaceFileSystemError.capacityExceeded
       }
       let entryComponents = components + [name]
@@ -107,20 +120,6 @@ extension WorkspaceFileSystem {
         throw WorkspaceFileSystemError.capacityExceeded
       }
       let path = displayPath(entryComponents)
-      let (entryBytes, entryOverflowed) = path.utf8.count.addingReportingOverflow(
-        name.utf8.count + 128
-      )
-      let (candidateResultBytes, resultOverflowed) = resultBytes.addingReportingOverflow(
-        entryBytes
-      )
-      guard
-        !entryOverflowed,
-        !resultOverflowed,
-        candidateResultBytes <= configuration.maximumDirectoryResultBytes
-      else {
-        throw WorkspaceFileSystemError.capacityExceeded
-      }
-      resultBytes = candidateResultBytes
       let status = try entryStatus(named: name, in: dirfd(directory))
       let kind: WorkspaceEntryKind
       let byteCount: Int?
@@ -138,14 +137,17 @@ extension WorkspaceFileSystem {
         kind = .other
         byteCount = nil
       }
-      entries.append(
-        WorkspaceDirectoryEntry(
-          path: path,
-          name: name,
-          kind: kind,
-          byteCount: byteCount
-        )
+      let entry = WorkspaceDirectoryEntry(
+        path: path,
+        name: name,
+        kind: kind,
+        byteCount: byteCount
       )
+      try resultSize.append(
+        entry,
+        maximumBytes: configuration.maximumDirectoryResultBytes
+      )
+      entries.append(entry)
     }
     entries.sort { $0.name < $1.name }
     return entries

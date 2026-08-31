@@ -25,7 +25,7 @@ extension WorkspaceFileSystem {
     else {
       throw WorkspaceFileSystemError.invalidWorkingDirectory
     }
-    let canonicalDirectory = workingDirectory.standardizedFileURL.resolvingSymlinksInPath()
+    let canonicalDirectory = workingDirectory.standardizedFileURL
     let rootComponents = rootURL.pathComponents
     let candidateComponents = canonicalDirectory.pathComponents
     guard
@@ -35,6 +35,9 @@ extension WorkspaceFileSystem {
       throw WorkspaceFileSystemError.invalidWorkingDirectory
     }
     let relativeComponents = Array(candidateComponents.dropFirst(rootComponents.count))
+    guard relativeComponents.allSatisfy(WorkspacePathScalarPolicy.isPromptSafe) else {
+      throw WorkspaceFileSystemError.invalidWorkingDirectory
+    }
     try validateComponents(relativeComponents, error: .invalidWorkingDirectory)
     let descriptor: Int32
     do {
@@ -167,7 +170,7 @@ extension WorkspaceFileSystem {
         component != "..",
         component.utf8.count <= 255,
         !component.contains("/"),
-        !component.contains("\0")
+        WorkspacePathScalarPolicy.isPromptSafe(component)
       else {
         throw error
       }
@@ -211,8 +214,12 @@ extension WorkspaceFileSystem {
     workingDirectory: URL?
   ) throws -> String {
     let components = try combinedComponents(path: path, workingDirectory: workingDirectory)
-    return components.reduce(rootURL) { partialURL, component in
+    let resource = components.reduce(rootURL) { partialURL, component in
       partialURL.appending(path: component)
     }.path
+    guard WorkspacePathScalarPolicy.isPromptSafe(resource) else {
+      throw WorkspaceFileSystemError.invalidPath
+    }
+    return resource
   }
 }

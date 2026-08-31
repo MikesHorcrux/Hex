@@ -21,6 +21,7 @@ extension WorkspaceFileSystem {
     Darwin.close(descriptor)
 
     var fileCount = 0
+    var entryCount = 0
     var totalBytes = 0
     var matches: [WorkspaceSearchMatch] = []
     try searchDirectory(
@@ -28,6 +29,7 @@ extension WorkspaceFileSystem {
       depth: 0,
       query: query,
       fileCount: &fileCount,
+      entryCount: &entryCount,
       totalBytes: &totalBytes,
       matches: &matches
     )
@@ -39,10 +41,25 @@ extension WorkspaceFileSystem {
     depth: Int,
     query: String,
     fileCount: inout Int,
+    entryCount: inout Int,
     totalBytes: inout Int,
     matches: inout [WorkspaceSearchMatch]
   ) throws {
-    let entries = try directoryEntries(components: components)
+    let remainingEntryCapacity = configuration.maximumSearchEntries - entryCount
+    let entries = try directoryEntries(
+      components: components,
+      maximumEntries: remainingEntryCapacity
+    )
+    let (candidateEntryCount, entryCountOverflowed) = entryCount.addingReportingOverflow(
+      entries.count
+    )
+    guard
+      !entryCountOverflowed,
+      candidateEntryCount <= configuration.maximumSearchEntries
+    else {
+      throw WorkspaceFileSystemError.capacityExceeded
+    }
+    entryCount = candidateEntryCount
     for entry in entries {
       try Task.checkCancellation()
       switch entry.kind {
@@ -52,10 +69,24 @@ extension WorkspaceFileSystem {
         }
         fileCount += 1
         let fileComponents = components + [entry.name]
-        let data = try readData(
-          components: fileComponents,
-          maximumBytes: configuration.maximumReadBytes
+        let (remainingSearchBytes, remainingBytesOverflowed) =
+          configuration.maximumSearchBytes.subtractingReportingOverflow(totalBytes)
+        guard !remainingBytesOverflowed, remainingSearchBytes >= 0 else {
+          throw WorkspaceFileSystemError.capacityExceeded
+        }
+        let effectiveReadLimit = min(
+          configuration.maximumReadBytes,
+          remainingSearchBytes
         )
+        let data: Data
+        do {
+          data = try readData(
+            components: fileComponents,
+            maximumBytes: effectiveReadLimit
+          )
+        } catch WorkspaceFileSystemError.fileTooLarge {
+          throw WorkspaceFileSystemError.capacityExceeded
+        }
         let (candidateBytes, overflowed) = totalBytes.addingReportingOverflow(data.count)
         guard !overflowed, candidateBytes <= configuration.maximumSearchBytes else {
           throw WorkspaceFileSystemError.capacityExceeded
@@ -92,6 +123,7 @@ extension WorkspaceFileSystem {
           depth: depth + 1,
           query: query,
           fileCount: &fileCount,
+          entryCount: &entryCount,
           totalBytes: &totalBytes,
           matches: &matches
         )

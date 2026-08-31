@@ -5,6 +5,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
     maximumDirectoryEntries: 4_096,
     maximumDirectoryResultBytes: 512 * 1_024,
     maximumSearchFiles: 10_000,
+    maximumSearchEntries: 100_000,
     maximumSearchBytes: 32 * 1_024 * 1_024,
     maximumSearchMatches: 500,
     maximumSearchDepth: 64,
@@ -16,6 +17,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
   public let maximumDirectoryEntries: Int
   public let maximumDirectoryResultBytes: Int
   public let maximumSearchFiles: Int
+  public let maximumSearchEntries: Int
   public let maximumSearchBytes: Int
   public let maximumSearchMatches: Int
   public let maximumSearchDepth: Int
@@ -27,6 +29,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
     maximumDirectoryEntries: Int = 4_096,
     maximumDirectoryResultBytes: Int = 512 * 1_024,
     maximumSearchFiles: Int = 10_000,
+    maximumSearchEntries: Int = 100_000,
     maximumSearchBytes: Int = 32 * 1_024 * 1_024,
     maximumSearchMatches: Int = 500,
     maximumSearchDepth: Int = 64,
@@ -38,6 +41,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
       (1...100_000).contains(maximumDirectoryEntries),
       (1...16 * 1_024 * 1_024).contains(maximumDirectoryResultBytes),
       (1...1_000_000).contains(maximumSearchFiles),
+      (1...10_000_000).contains(maximumSearchEntries),
       (1...1 * 1_024 * 1_024 * 1_024).contains(maximumSearchBytes),
       (1...100_000).contains(maximumSearchMatches),
       (1...256).contains(maximumSearchDepth),
@@ -52,6 +56,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
       maximumDirectoryEntries: maximumDirectoryEntries,
       maximumDirectoryResultBytes: maximumDirectoryResultBytes,
       maximumSearchFiles: maximumSearchFiles,
+      maximumSearchEntries: maximumSearchEntries,
       maximumSearchBytes: maximumSearchBytes,
       maximumSearchMatches: maximumSearchMatches,
       maximumSearchDepth: maximumSearchDepth,
@@ -65,6 +70,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
     maximumDirectoryEntries: Int,
     maximumDirectoryResultBytes: Int,
     maximumSearchFiles: Int,
+    maximumSearchEntries: Int,
     maximumSearchBytes: Int,
     maximumSearchMatches: Int,
     maximumSearchDepth: Int,
@@ -75,6 +81,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
     self.maximumDirectoryEntries = maximumDirectoryEntries
     self.maximumDirectoryResultBytes = maximumDirectoryResultBytes
     self.maximumSearchFiles = maximumSearchFiles
+    self.maximumSearchEntries = maximumSearchEntries
     self.maximumSearchBytes = maximumSearchBytes
     self.maximumSearchMatches = maximumSearchMatches
     self.maximumSearchDepth = maximumSearchDepth
@@ -87,6 +94,6 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
       && value != ".."
       && value.utf8.count <= 255
       && !value.contains("/")
-      && !value.contains("\0")
+      && WorkspacePathScalarPolicy.isPromptSafe(value)
   }
 }
