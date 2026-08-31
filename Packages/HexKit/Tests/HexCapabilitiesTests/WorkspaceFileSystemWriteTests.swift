@@ -22,6 +22,25 @@ struct WorkspaceFileSystemWriteTests {
   }
 
   @Test
+  func accountsForActualUTF8BytesInCanonicallyEquivalentMatches() throws {
+    let decomposedSource = "e\u{301}"
+    let composedPattern = "é"
+    #expect(decomposedSource.utf8.count == 3)
+    #expect(composedPattern.utf8.count == 2)
+
+    let result = try BoundedTextReplacement.build(
+      source: decomposedSource,
+      replacing: composedPattern,
+      with: "x",
+      expectedOccurrences: 1,
+      maximumBytes: 4
+    )
+
+    #expect(result == "x")
+    #expect(result.utf8.count == 1)
+  }
+
+  @Test
   func createsThenRevisionGuardsAtomicReplacement() async throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }

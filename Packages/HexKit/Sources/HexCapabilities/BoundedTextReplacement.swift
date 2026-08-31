@@ -6,9 +6,10 @@ struct BoundedTextReplacement {
     expectedOccurrences: Int,
     maximumBytes: Int
   ) throws -> String {
-    let oldByteCount = oldText.utf8.count
+    let sourceByteCount = source.utf8.count
     let newByteCount = newText.utf8.count
     var occurrenceCount = 0
+    var removedByteCount = 0
     var searchStart = source.startIndex
 
     while searchStart < source.endIndex,
@@ -22,26 +23,31 @@ struct BoundedTextReplacement {
       guard occurrenceCount <= 10_000 else {
         throw WorkspaceFileSystemError.replacementCountMismatch
       }
+      let (candidateRemovedByteCount, removalOverflowed) =
+        removedByteCount.addingReportingOverflow(source[range].utf8.count)
+      guard
+        !removalOverflowed,
+        candidateRemovedByteCount <= sourceByteCount
+      else {
+        throw WorkspaceFileSystemError.fileTooLarge
+      }
+      removedByteCount = candidateRemovedByteCount
       searchStart = range.upperBound
     }
     guard occurrenceCount == expectedOccurrences else {
       throw WorkspaceFileSystemError.replacementCountMismatch
     }
 
-    let (removedByteCount, removalOverflowed) = oldByteCount.multipliedReportingOverflow(
-      by: occurrenceCount
-    )
     let (insertedByteCount, insertionOverflowed) = newByteCount.multipliedReportingOverflow(
       by: occurrenceCount
     )
     guard
-      !removalOverflowed,
       !insertionOverflowed,
-      removedByteCount <= source.utf8.count
+      removedByteCount <= sourceByteCount
     else {
       throw WorkspaceFileSystemError.fileTooLarge
     }
-    let retainedByteCount = source.utf8.count - removedByteCount
+    let retainedByteCount = sourceByteCount - removedByteCount
     let (resultByteCount, resultOverflowed) = retainedByteCount.addingReportingOverflow(
       insertedByteCount
     )
