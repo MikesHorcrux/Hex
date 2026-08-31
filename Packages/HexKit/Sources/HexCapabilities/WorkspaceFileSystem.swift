@@ -9,7 +9,9 @@ public actor WorkspaceFileSystem {
   let configuration: WorkspaceFileSystemConfiguration
   let replacementPublicationHook: (@Sendable () throws -> Void)?
   let replacementPostValidationHook: (@Sendable () throws -> Void)?
+  let replacementPostSwapHook: (@Sendable () throws -> Void)?
   let creationPublicationHook: (@Sendable () throws -> Void)?
+  let creationPostLinkHook: (@Sendable () throws -> Void)?
   let readDataPreflightHook: (@Sendable (Int) -> Void)?
 
   public init(
@@ -21,7 +23,9 @@ public actor WorkspaceFileSystem {
       configuration: configuration,
       replacementPublicationHook: nil,
       replacementPostValidationHook: nil,
+      replacementPostSwapHook: nil,
       creationPublicationHook: nil,
+      creationPostLinkHook: nil,
       readDataPreflightHook: nil
     )
   }
@@ -31,7 +35,9 @@ public actor WorkspaceFileSystem {
     configuration: WorkspaceFileSystemConfiguration = .standard,
     replacementPublicationHook: (@Sendable () throws -> Void)?,
     replacementPostValidationHook: (@Sendable () throws -> Void)? = nil,
+    replacementPostSwapHook: (@Sendable () throws -> Void)? = nil,
     creationPublicationHook: (@Sendable () throws -> Void)? = nil,
+    creationPostLinkHook: (@Sendable () throws -> Void)? = nil,
     readDataPreflightHook: (@Sendable (Int) -> Void)? = nil
   ) throws {
     guard root.isFileURL, root.path.hasPrefix("/"), !root.path.contains("\0") else {
@@ -60,7 +66,9 @@ public actor WorkspaceFileSystem {
     self.configuration = configuration
     self.replacementPublicationHook = replacementPublicationHook
     self.replacementPostValidationHook = replacementPostValidationHook
+    self.replacementPostSwapHook = replacementPostSwapHook
     self.creationPublicationHook = creationPublicationHook
+    self.creationPostLinkHook = creationPostLinkHook
     self.readDataPreflightHook = readDataPreflightHook
   }
 

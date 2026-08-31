@@ -170,6 +170,83 @@ struct WorkspaceFileSystemWriteTests {
   }
 
   @Test
+  func cancellationAfterCreationLinkRemovesPublishedFileAndTemporaryFileBeforeThrowing()
+    async throws
+  {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sources = root.appending(path: "Sources", directoryHint: .isDirectory)
+    let destination = sources.appending(path: "CancelledCreation.swift")
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      creationPostLinkHook: {
+        withUnsafeCurrentTask { currentTask in
+          currentTask?.cancel()
+        }
+      }
+    )
+
+    let task = Task {
+      try await fileSystem.writeTextFile(
+        "never committed",
+        at: "Sources/CancelledCreation.swift",
+        expectedRevision: nil,
+        relativeTo: nil
+      )
+    }
+
+    await #expect(throws: CancellationError.self) {
+      _ = try await task.value
+    }
+    let remainingEntries = try FileManager.default.contentsOfDirectory(atPath: sources.path)
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+    #expect(remainingEntries.isEmpty)
+    #expect(!remainingEntries.contains { $0.hasPrefix(".hex-write-") })
+  }
+
+  @Test
+  func cancellationAfterReplacementSwapRestoresOriginalAndRemovesTemporaryFileBeforeThrowing()
+    async throws
+  {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sources = root.appending(path: "Sources", directoryHint: .isDirectory)
+    let destination = sources.appending(path: "CancelledReplacement.swift")
+    try Data("original".utf8).write(to: destination)
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      replacementPostSwapHook: {
+        withUnsafeCurrentTask { currentTask in
+          currentTask?.cancel()
+        }
+      }
+    )
+    let initial = try await fileSystem.readTextFile(
+      at: "Sources/CancelledReplacement.swift",
+      relativeTo: nil
+    )
+
+    let task = Task {
+      try await fileSystem.writeTextFile(
+        "never committed",
+        at: "Sources/CancelledReplacement.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    await #expect(throws: CancellationError.self) {
+      _ = try await task.value
+    }
+    let remainingEntries = try FileManager.default.contentsOfDirectory(atPath: sources.path)
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "original")
+    #expect(remainingEntries == [destination.lastPathComponent])
+    #expect(!remainingEntries.contains { $0.hasPrefix(".hex-write-") })
+  }
+
+  @Test
   func concurrentCreatesPublishExactlyOneFile() async throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }

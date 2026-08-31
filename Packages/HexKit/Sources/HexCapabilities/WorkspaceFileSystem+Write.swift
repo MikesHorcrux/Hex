@@ -165,7 +165,8 @@ extension WorkspaceFileSystem {
     named name: String,
     in parent: Int32,
     expectedLinkCount: nlink_t,
-    maximumBytes: Int
+    maximumBytes: Int,
+    checksCancellation: Bool = true
   ) throws -> (metadata: WorkspaceFileMetadataSnapshot, data: Data) {
     let descriptor = try openRegularFileFromParentAllowingLinkCount(
       named: name,
@@ -174,7 +175,11 @@ extension WorkspaceFileSystem {
     )
     defer { Darwin.close(descriptor) }
     let metadataBeforeRead = try WorkspaceFileMetadataSnapshot(descriptor: descriptor)
-    let data = try readData(from: descriptor, maximumBytes: maximumBytes)
+    let data = try readData(
+      from: descriptor,
+      maximumBytes: maximumBytes,
+      checksCancellation: checksCancellation
+    )
     let metadataAfterRead = try WorkspaceFileMetadataSnapshot(descriptor: descriptor)
     guard
       metadataAfterRead.matches(
@@ -188,14 +193,20 @@ extension WorkspaceFileSystem {
     return (metadataAfterRead, data)
   }
 
-  private func readData(from descriptor: Int32, maximumBytes: Int) throws -> Data {
+  private func readData(
+    from descriptor: Int32,
+    maximumBytes: Int,
+    checksCancellation: Bool
+  ) throws -> Data {
     guard lseek(descriptor, 0, SEEK_SET) >= 0 else {
       throw WorkspaceFileSystemError.ioFailure
     }
     var data = Data()
     var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
     while true {
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       let bytesRead = buffer.withUnsafeMutableBytes { bytes in
         Darwin.read(descriptor, bytes.baseAddress, bytes.count)
       }
@@ -236,10 +247,18 @@ extension WorkspaceFileSystem {
     }
     var shouldRemoveTemporary = true
     defer {
-      Darwin.close(descriptor)
       if shouldRemoveTemporary {
-        _ = unlinkat(parentDescriptor, temporaryName, 0)
+        var descriptorStatus = stat()
+        var namedStatus = stat()
+        if fstat(descriptor, &descriptorStatus) == 0,
+          fstatat(parentDescriptor, temporaryName, &namedStatus, AT_SYMLINK_NOFOLLOW) == 0,
+          descriptorStatus.st_dev == namedStatus.st_dev,
+          descriptorStatus.st_ino == namedStatus.st_ino
+        {
+          _ = unlinkat(parentDescriptor, temporaryName, 0)
+        }
       }
+      Darwin.close(descriptor)
     }
 
     try writeAll(data, to: descriptor)
@@ -299,6 +318,7 @@ extension WorkspaceFileSystem {
       else {
         throw WorkspaceFileSystemError.revisionConflict
       }
+      try Task.checkCancellation()
       guard
         renameatx_np(
           parentDescriptor,
@@ -326,6 +346,7 @@ extension WorkspaceFileSystem {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
       do {
+        try replacementPostSwapHook?()
         try validateDirectoryDescriptor(
           parentDescriptor,
           components: parentComponents
@@ -371,11 +392,18 @@ extension WorkspaceFileSystem {
         }
         throw validationError
       }
-      guard unlinkat(parentDescriptor, temporaryName, 0) == 0 else {
+      let discardedStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
+      guard
+        discardedStatus.st_dev == displacedMetadata.device,
+        discardedStatus.st_ino == displacedMetadata.inode,
+        discardedStatus.st_nlink == 1,
+        unlinkat(parentDescriptor, temporaryName, 0) == 0
+      else {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
     } else {
       try creationPublicationHook?()
+      try Task.checkCancellation()
       guard linkat(parentDescriptor, temporaryName, parentDescriptor, name, 0) == 0 else {
         if errno == EEXIST {
           throw WorkspaceFileSystemError.destinationExists
@@ -384,6 +412,7 @@ extension WorkspaceFileSystem {
       }
       shouldRemoveTemporary = false
       do {
+        try creationPostLinkHook?()
         try validateDirectoryDescriptor(
           parentDescriptor,
           components: parentComponents
@@ -421,7 +450,13 @@ extension WorkspaceFileSystem {
         }
         throw validationError
       }
-      guard unlinkat(parentDescriptor, temporaryName, 0) == 0 else {
+      let temporaryStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
+      guard
+        temporaryStatus.st_dev == publishedMetadata.device,
+        temporaryStatus.st_ino == publishedMetadata.inode,
+        temporaryStatus.st_nlink == 2,
+        unlinkat(parentDescriptor, temporaryName, 0) == 0
+      else {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
     }
@@ -510,8 +545,10 @@ extension WorkspaceFileSystem {
       named: name,
       in: parentDescriptor,
       expectedLinkCount: 2,
-      maximumBytes: configuration.maximumWriteBytes
+      maximumBytes: configuration.maximumWriteBytes,
+      checksCancellation: false
     )
+    let currentStatus = try entryStatus(named: name, in: parentDescriptor)
     guard
       current.metadata.matches(
         publishedMetadata,
@@ -519,6 +556,9 @@ extension WorkspaceFileSystem {
         expectedLinkCount: 2
       ),
       current.data == publishedData,
+      currentStatus.st_dev == publishedMetadata.device,
+      currentStatus.st_ino == publishedMetadata.inode,
+      currentStatus.st_nlink == 2,
       unlinkat(parentDescriptor, name, 0) == 0
     else {
       throw WorkspaceFileSystemError.outcomeUncertain
@@ -527,14 +567,19 @@ extension WorkspaceFileSystem {
       named: temporaryName,
       in: parentDescriptor,
       expectedLinkCount: 1,
-      maximumBytes: configuration.maximumWriteBytes
+      maximumBytes: configuration.maximumWriteBytes,
+      checksCancellation: false
     )
+    let remainingStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
     guard
       remaining.metadata.matches(
         publishedMetadata,
         comparesChangeTime: false
       ),
       remaining.data == publishedData,
+      remainingStatus.st_dev == publishedMetadata.device,
+      remainingStatus.st_ino == publishedMetadata.inode,
+      remainingStatus.st_nlink == 1,
       unlinkat(parentDescriptor, temporaryName, 0) == 0,
       fsync(parentDescriptor) == 0
     else {
@@ -581,14 +626,19 @@ extension WorkspaceFileSystem {
       named: temporaryName,
       in: parentDescriptor,
       expectedLinkCount: 1,
-      maximumBytes: configuration.maximumWriteBytes
+      maximumBytes: configuration.maximumWriteBytes,
+      checksCancellation: false
     )
+    let rejectedStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
     guard
       rejected.metadata.matches(
         publishedMetadata,
         comparesChangeTime: false
       ),
       rejected.data == publishedData,
+      rejectedStatus.st_dev == publishedMetadata.device,
+      rejectedStatus.st_ino == publishedMetadata.inode,
+      rejectedStatus.st_nlink == 1,
       unlinkat(parentDescriptor, temporaryName, 0) == 0,
       fsync(parentDescriptor) == 0
     else {
