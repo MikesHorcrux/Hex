@@ -357,7 +357,7 @@ struct OpenAIResponsesContinuationTests {
       request: OpenAIResponsesTestFixture.request(messages: [firstUser])
     )
 
-    let assistant = Message(role: .assistant, content: [.text("First answer")])
+    let assistant = Message(role: .assistant, content: [.text("Hello")])
     let secondUser = Message(role: .user, content: [.text("Follow up")])
     _ = try await OpenAIResponsesTestFixture.collect(
       provider: provider,

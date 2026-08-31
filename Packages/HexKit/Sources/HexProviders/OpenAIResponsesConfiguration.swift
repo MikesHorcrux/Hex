@@ -25,6 +25,11 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
   public let maximumJSONDepth: Int
   public let maximumJSONNodes: Int
   public let maximumReplaySegments: Int
+  public let maximumIssuedResponseIDs: Int
+  public let maximumIssuedResponseIDBytes: Int
+  public let maximumServerStates: Int
+  public let maximumServerStateBytes: Int
+  public let maximumServerCacheBytes: Int
   public let maximumLocalStates: Int
   public let maximumLocalStateBytes: Int
   public let maximumLocalCacheBytes: Int
@@ -51,6 +56,11 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
     maximumJSONDepth: Int = 64,
     maximumJSONNodes: Int = 100_000,
     maximumReplaySegments: Int = 64,
+    maximumIssuedResponseIDs: Int = 16_384,
+    maximumIssuedResponseIDBytes: Int = 4 * 1_024 * 1_024,
+    maximumServerStates: Int = 64,
+    maximumServerStateBytes: Int = 16 * 1_024 * 1_024,
+    maximumServerCacheBytes: Int = 64 * 1_024 * 1_024,
     maximumLocalStates: Int = 16,
     maximumLocalStateBytes: Int = 16 * 1_024 * 1_024,
     maximumLocalCacheBytes: Int = 64 * 1_024 * 1_024
@@ -100,12 +110,18 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
       (1...128).contains(maximumJSONDepth),
       (1...1_000_000).contains(maximumJSONNodes),
       (1...256).contains(maximumReplaySegments),
+      (1...1_000_000).contains(maximumIssuedResponseIDs),
+      (1...64 * 1_024 * 1_024).contains(maximumIssuedResponseIDBytes),
+      (1...1_024).contains(maximumServerStates),
+      (1...64 * 1_024 * 1_024).contains(maximumServerStateBytes),
+      (1...256 * 1_024 * 1_024).contains(maximumServerCacheBytes),
       (1...256).contains(maximumLocalStates),
       (1...64 * 1_024 * 1_024).contains(maximumLocalStateBytes),
       (1...256 * 1_024 * 1_024).contains(maximumLocalCacheBytes),
       maximumSSELineBytes <= maximumSSEEventBytes,
       maximumSSEEventBytes <= maximumResponseBytes,
       maximumToolArgumentBytes <= maximumSSEEventBytes,
+      maximumServerStateBytes <= maximumServerCacheBytes,
       maximumLocalStateBytes <= maximumLocalCacheBytes
     else {
       throw OpenAIResponsesProviderError.invalidConfiguration
@@ -148,6 +164,11 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
     self.maximumJSONDepth = maximumJSONDepth
     self.maximumJSONNodes = maximumJSONNodes
     self.maximumReplaySegments = maximumReplaySegments
+    self.maximumIssuedResponseIDs = maximumIssuedResponseIDs
+    self.maximumIssuedResponseIDBytes = maximumIssuedResponseIDBytes
+    self.maximumServerStates = maximumServerStates
+    self.maximumServerStateBytes = maximumServerStateBytes
+    self.maximumServerCacheBytes = maximumServerCacheBytes
     self.maximumLocalStates = maximumLocalStates
     self.maximumLocalStateBytes = maximumLocalStateBytes
     self.maximumLocalCacheBytes = maximumLocalCacheBytes

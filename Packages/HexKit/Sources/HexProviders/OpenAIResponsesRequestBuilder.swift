@@ -10,6 +10,7 @@ struct OpenAIResponsesRequestBuilder {
 
   func build(
     _ request: InferenceRequest,
+    serverState: OpenAIServerContinuationState?,
     localState: OpenAILocalContinuationState?
   ) throws -> OpenAIResponsesRequestPlan {
     let model = try validatedModel(for: request)
@@ -28,11 +29,20 @@ struct OpenAIResponsesRequestBuilder {
         throw OpenAIResponsesProviderError.invalidRequest
       }
       if request.previousProviderResponseID == nil {
+        guard serverState == nil else {
+          throw OpenAIResponsesProviderError.invalidRequest
+        }
         input = try mapMessages(request.messages)
       } else {
-        input = try mapServerContinuation(request.messages)
+        guard let serverState else {
+          throw OpenAIResponsesProviderError.invalidRequest
+        }
+        input = try mapServerContinuation(request.messages, state: serverState)
       }
     case .localEphemeralReplay:
+      guard serverState == nil else {
+        throw OpenAIResponsesProviderError.invalidRequest
+      }
       if request.previousProviderResponseID == nil {
         guard localState == nil else {
           throw OpenAIResponsesProviderError.invalidRequest
@@ -118,6 +128,7 @@ struct OpenAIResponsesRequestBuilder {
 
     return OpenAIResponsesRequestPlan(
       body: bodyData,
+      priorServerState: serverState,
       priorLocalState: localState,
       currentMessageIDs: request.messages.map(\.id),
       currentMessageFingerprints: messageFingerprints
@@ -154,6 +165,7 @@ struct OpenAIResponsesRequestBuilder {
     var messageIDs = Set<MessageID>()
     var contentCount = 0
     var inputByteBudget = 0
+    var containsImage = false
     for message in request.messages {
       guard messageIDs.insert(message.id).inserted, !message.content.isEmpty else {
         throw OpenAIResponsesProviderError.invalidRequest
@@ -169,6 +181,7 @@ struct OpenAIResponsesRequestBuilder {
         case .text(let text):
           try addToInputBudget(text.utf8.count, total: &inputByteBudget)
         case .image(let image):
+          containsImage = true
           try addToInputBudget(image.sourceURL.absoluteString.utf8.count, total: &inputByteBudget)
           try addToInputBudget(image.mediaType.utf8.count, total: &inputByteBudget)
         case .toolCall(let call):
@@ -219,6 +232,7 @@ struct OpenAIResponsesRequestBuilder {
               }
               try addToInputBudget(text.utf8.count, total: &inputByteBudget)
             case .image(let image):
+              containsImage = true
               let imageURL = try validatedImageURL(image)
               try addToInputBudget(imageURL.utf8.count, total: &inputByteBudget)
               try addToInputBudget(image.mediaType.utf8.count, total: &inputByteBudget)
@@ -228,12 +242,7 @@ struct OpenAIResponsesRequestBuilder {
       }
     }
 
-    if request.messages.contains(where: { message in
-      message.content.contains(where: { content in
-        if case .image = content { return true }
-        return false
-      })
-    }) {
+    if containsImage {
       guard model.capabilities.contains(.imageInput) else {
         throw OpenAIResponsesProviderError.invalidRequest
       }
@@ -398,49 +407,42 @@ struct OpenAIResponsesRequestBuilder {
     try flushMessageContent()
   }
 
-  private func mapServerContinuation(_ messages: [Message]) throws -> [JSONValue] {
-    guard let lastMessage = messages.last else {
-      throw OpenAIResponsesProviderError.invalidRequest
-    }
-
-    if lastMessage.role == .user {
-      var mapped: [JSONValue] = []
-      try append(lastMessage, to: &mapped)
-      guard
-        mapped.allSatisfy({ item in
-          guard case .object(let object) = item else { return false }
-          return object["type"] == .string("message")
-        })
-      else {
-        throw OpenAIResponsesProviderError.invalidRequest
-      }
-      return mapped
-    }
-
-    var firstToolMessageIndex = messages.count
-    while firstToolMessageIndex > 0,
-      messages[firstToolMessageIndex - 1].role == .tool
-    {
-      firstToolMessageIndex -= 1
-    }
-    guard
-      firstToolMessageIndex > 0,
-      firstToolMessageIndex < messages.count
-    else {
-      throw OpenAIResponsesProviderError.invalidRequest
-    }
-
-    let assistantMessage = messages[firstToolMessageIndex - 1]
-    guard assistantMessage.role == .assistant else {
-      throw OpenAIResponsesProviderError.invalidRequest
-    }
-    let expectedCalls = try mirroredToolCalls(in: assistantMessage)
+  private func mapServerContinuation(
+    _ messages: [Message],
+    state: OpenAIServerContinuationState
+  ) throws -> [JSONValue] {
     do {
-      return try mapToolContinuation(
-        Array(messages[firstToolMessageIndex...]),
-        expectedCalls: expectedCalls
+      try validateKnownHistory(
+        messages,
+        knownMessageIDs: state.knownMessageIDs,
+        knownMessageFingerprints: state.knownMessageFingerprints
       )
-    } catch OpenAIResponsesProviderError.localContinuationMismatch {
+      let tail = Array(messages.dropFirst(state.knownMessageIDs.count))
+      let mirror = try assistantMirror(in: state.outputItems)
+      if mirror.calls.isEmpty {
+        guard
+          tail.count == 2,
+          tail[0].role == .assistant,
+          tail[1].role == .user
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        try validateAssistantMessage(tail[0], matches: mirror)
+        var mapped: [JSONValue] = []
+        try append(tail[1], to: &mapped)
+        guard
+          !mapped.isEmpty,
+          mapped.allSatisfy({ item in
+            guard case .object(let object) = item else { return false }
+            return object["type"] == .string("message")
+          })
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        return mapped
+      }
+      return try mapToolContinuation(tail, expectedMirror: mirror)
+    } catch {
       throw OpenAIResponsesProviderError.invalidRequest
     }
   }
@@ -450,25 +452,16 @@ struct OpenAIResponsesRequestBuilder {
     state: OpenAILocalContinuationState
   ) throws -> [JSONValue] {
     guard
-      messages.count >= state.knownMessageIDs.count,
       state.baseMessageCount <= state.knownMessageIDs.count,
-      state.replaySegments.count <= configuration.maximumReplaySegments,
-      Array(messages.prefix(state.knownMessageIDs.count).map(\.id)) == state.knownMessageIDs,
-      state.knownMessageFingerprints.count == state.knownMessageIDs.count
+      state.replaySegments.count <= configuration.maximumReplaySegments
     else {
       throw OpenAIResponsesProviderError.localContinuationMismatch
     }
-    let currentPrefixFingerprints: [OpenAIMessageFingerprint]
-    do {
-      currentPrefixFingerprints = try messages.prefix(state.knownMessageIDs.count).map(
-        OpenAIMessageFingerprint.make
-      )
-    } catch {
-      throw OpenAIResponsesProviderError.localContinuationMismatch
-    }
-    guard currentPrefixFingerprints == state.knownMessageFingerprints else {
-      throw OpenAIResponsesProviderError.localContinuationMismatch
-    }
+    try validateKnownHistory(
+      messages,
+      knownMessageIDs: state.knownMessageIDs,
+      knownMessageFingerprints: state.knownMessageFingerprints
+    )
 
     var input = try mapMessages(Array(messages.prefix(state.baseMessageCount)))
     var messageCursor = state.baseMessageCount
@@ -487,11 +480,11 @@ struct OpenAIResponsesRequestBuilder {
         guard let priorOutputItems else {
           throw OpenAIResponsesProviderError.localContinuationMismatch
         }
-        let expectedCalls = try toolCalls(in: priorOutputItems)
+        let expectedMirror = try assistantMirror(in: priorOutputItems)
         input.append(
           contentsOf: try mapToolContinuation(
             Array(messages[messageCursor..<segment.afterMessageCount]),
-            expectedCalls: expectedCalls
+            expectedMirror: expectedMirror
           )
         )
       }
@@ -504,11 +497,11 @@ struct OpenAIResponsesRequestBuilder {
     guard let priorOutputItems else {
       throw OpenAIResponsesProviderError.localContinuationMismatch
     }
-    let expectedCalls = try toolCalls(in: priorOutputItems)
+    let expectedMirror = try assistantMirror(in: priorOutputItems)
     input.append(
       contentsOf: try mapToolContinuation(
         Array(messages[messageCursor...]),
-        expectedCalls: expectedCalls
+        expectedMirror: expectedMirror
       )
     )
     return input
@@ -516,88 +509,154 @@ struct OpenAIResponsesRequestBuilder {
 
   private func mapToolContinuation(
     _ messages: [Message],
-    expectedCalls: [ToolCall]
+    expectedMirror: OpenAIAssistantMirror
   ) throws -> [JSONValue] {
-    guard !messages.isEmpty, !expectedCalls.isEmpty else {
+    guard
+      messages.count >= 2,
+      messages[0].role == .assistant,
+      !expectedMirror.calls.isEmpty
+    else {
       throw OpenAIResponsesProviderError.localContinuationMismatch
     }
+    try validateAssistantMessage(messages[0], matches: expectedMirror)
 
     var expectedByID: [ToolCallID: ToolCall] = [:]
-    for call in expectedCalls {
+    for call in expectedMirror.calls {
       guard expectedByID.updateValue(call, forKey: call.id) == nil else {
         throw OpenAIResponsesProviderError.localContinuationMismatch
       }
     }
 
-    var mirroredIDs = Set<ToolCallID>()
     var resultIDs = Set<ToolCallID>()
     var output: [JSONValue] = []
-    for message in messages {
-      switch message.role {
-      case .assistant:
-        let mirrored = try mirroredToolCalls(in: message)
-        for call in mirrored {
-          guard
-            expectedByID[call.id] == call,
-            mirroredIDs.insert(call.id).inserted
-          else {
-            throw OpenAIResponsesProviderError.localContinuationMismatch
-          }
-        }
-      case .tool:
-        guard !message.content.isEmpty else {
+    for message in messages.dropFirst() {
+      guard message.role == .tool, !message.content.isEmpty else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+      for content in message.content {
+        guard case .toolResult(let result) = content else {
           throw OpenAIResponsesProviderError.localContinuationMismatch
         }
-        for content in message.content {
-          guard case .toolResult(let result) = content else {
-            throw OpenAIResponsesProviderError.localContinuationMismatch
-          }
-          guard
-            expectedByID[result.toolCallID] != nil,
-            resultIDs.insert(result.toolCallID).inserted
-          else {
-            throw OpenAIResponsesProviderError.localContinuationMismatch
-          }
-          output.append(try mapToolResult(result))
+        guard
+          expectedByID[result.toolCallID] != nil,
+          resultIDs.insert(result.toolCallID).inserted
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
         }
-      case .system, .developer, .user:
-        throw OpenAIResponsesProviderError.localContinuationMismatch
+        output.append(try mapToolResult(result))
       }
     }
 
     let expectedIDs = Set(expectedByID.keys)
-    guard
-      resultIDs == expectedIDs,
-      mirroredIDs.isEmpty || mirroredIDs == expectedIDs
-    else {
+    guard resultIDs == expectedIDs else {
       throw OpenAIResponsesProviderError.localContinuationMismatch
     }
     return output
   }
 
-  private func mirroredToolCalls(in message: Message) throws -> [ToolCall] {
-    guard !message.content.isEmpty else {
+  private func validateAssistantMessage(
+    _ message: Message,
+    matches expected: OpenAIAssistantMirror
+  ) throws {
+    guard message.role == .assistant, !message.content.isEmpty else {
       throw OpenAIResponsesProviderError.localContinuationMismatch
     }
+    var text = ""
+    var textByteCount = 0
     var calls: [ToolCall] = []
     for content in message.content {
-      guard case .toolCall(let call) = content else {
+      switch content {
+      case .text(let value):
+        let (newByteCount, overflowed) = textByteCount.addingReportingOverflow(
+          value.utf8.count
+        )
+        guard !overflowed, newByteCount <= configuration.maximumInputValueBytes else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        text.append(value)
+        textByteCount = newByteCount
+      case .toolCall(let call):
+        try validateToolCall(call)
+        calls.append(call)
+      case .image, .toolResult:
         throw OpenAIResponsesProviderError.localContinuationMismatch
       }
-      try validateToolCall(call)
-      calls.append(call)
     }
-    return calls
+    guard text == expected.text else {
+      throw OpenAIResponsesProviderError.localContinuationMismatch
+    }
+    var actualByID: [ToolCallID: ToolCall] = [:]
+    for call in calls {
+      guard actualByID.updateValue(call, forKey: call.id) == nil else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+    }
+    var expectedByID: [ToolCallID: ToolCall] = [:]
+    for call in expected.calls {
+      guard expectedByID.updateValue(call, forKey: call.id) == nil else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+    }
+    guard actualByID == expectedByID else {
+      throw OpenAIResponsesProviderError.localContinuationMismatch
+    }
   }
 
-  private func toolCalls(in outputItems: [JSONValue]) throws -> [ToolCall] {
+  private func assistantMirror(in outputItems: [JSONValue]) throws -> OpenAIAssistantMirror {
+    var text = ""
+    var textByteCount = 0
     var calls: [ToolCall] = []
     for item in outputItems {
       guard case .object(let object) = item else {
         throw OpenAIResponsesProviderError.localContinuationMismatch
       }
-      guard object["type"] == .string("function_call") else {
+      let itemType: String
+      guard case .string(let resolvedType)? = object["type"] else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+      itemType = resolvedType
+      if itemType == "reasoning" {
         continue
+      }
+      if itemType == "message" {
+        guard
+          object["role"] == .string("assistant"),
+          case .array(let content)? = object["content"]
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        for value in content {
+          guard
+            case .object(let part) = value,
+            case .string(let partType)? = part["type"]
+          else {
+            throw OpenAIResponsesProviderError.localContinuationMismatch
+          }
+          let valueKey: String
+          switch partType {
+          case "output_text":
+            valueKey = "text"
+          case "refusal":
+            valueKey = "refusal"
+          default:
+            throw OpenAIResponsesProviderError.localContinuationMismatch
+          }
+          guard case .string(let value)? = part[valueKey] else {
+            throw OpenAIResponsesProviderError.localContinuationMismatch
+          }
+          let (newByteCount, overflowed) = textByteCount.addingReportingOverflow(
+            value.utf8.count
+          )
+          guard !overflowed, newByteCount <= configuration.maximumInputValueBytes else {
+            throw OpenAIResponsesProviderError.localContinuationMismatch
+          }
+          text.append(value)
+          textByteCount = newByteCount
+        }
+        continue
+      }
+      guard itemType == "function_call" else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
       }
       guard
         case .string(let callID)? = object["call_id"],
@@ -612,6 +671,11 @@ struct OpenAIResponsesRequestBuilder {
       }
       let decoded: JSONValue
       do {
+        try OpenAIJSONStructuralPreflight.validateObjectRoot(
+          argumentData,
+          maximumDepth: configuration.maximumJSONDepth,
+          maximumNodes: configuration.maximumJSONNodes
+        )
         decoded = try JSONDecoder().decode(JSONValue.self, from: argumentData)
       } catch {
         throw OpenAIResponsesProviderError.localContinuationMismatch
@@ -623,10 +687,35 @@ struct OpenAIResponsesRequestBuilder {
       try validateToolCall(call)
       calls.append(call)
     }
-    guard !calls.isEmpty else {
+    guard !text.isEmpty || !calls.isEmpty else {
       throw OpenAIResponsesProviderError.localContinuationMismatch
     }
-    return calls
+    return OpenAIAssistantMirror(text: text, calls: calls)
+  }
+
+  private func validateKnownHistory(
+    _ messages: [Message],
+    knownMessageIDs: [MessageID],
+    knownMessageFingerprints: [OpenAIMessageFingerprint]
+  ) throws {
+    guard
+      messages.count >= knownMessageIDs.count,
+      knownMessageFingerprints.count == knownMessageIDs.count,
+      Array(messages.prefix(knownMessageIDs.count).map(\.id)) == knownMessageIDs
+    else {
+      throw OpenAIResponsesProviderError.localContinuationMismatch
+    }
+    let fingerprints: [OpenAIMessageFingerprint]
+    do {
+      fingerprints = try messages.prefix(knownMessageIDs.count).map(
+        OpenAIMessageFingerprint.make
+      )
+    } catch {
+      throw OpenAIResponsesProviderError.localContinuationMismatch
+    }
+    guard fingerprints == knownMessageFingerprints else {
+      throw OpenAIResponsesProviderError.localContinuationMismatch
+    }
   }
 
   private func mapToolCall(_ call: ToolCall) throws -> JSONValue {

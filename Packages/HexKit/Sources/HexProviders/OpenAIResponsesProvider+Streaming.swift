@@ -6,34 +6,74 @@ extension OpenAIResponsesProvider {
     _ request: InferenceRequest
   ) async throws -> AsyncThrowingStream<InferenceStreamEvent, any Error> {
     try Task.checkCancellation()
+    try ensureResponseIdentifierTrackingAvailable()
 
     let continuationKey = request.previousProviderResponseID
+    let serverState: OpenAIServerContinuationState?
     let localState: OpenAILocalContinuationState?
-    if configuration.privacyMode == .localEphemeralReplay, let continuationKey {
-      guard
-        !localStatesInUse.contains(continuationKey),
-        let state = localStates[continuationKey]
-      else {
-        throw OpenAIResponsesProviderError.missingLocalContinuation
-      }
-      guard state.modelID == request.modelID else {
-        throw OpenAIResponsesProviderError.localContinuationMismatch
-      }
-      localStatesInUse.insert(continuationKey)
-      localState = state
-    } else {
+    switch configuration.privacyMode {
+    case .serverManagedContinuation:
       localState = nil
+      if let continuationKey {
+        guard
+          issuedResponseIDs.contains(continuationKey),
+          let state = serverStates[continuationKey],
+          state.modelID == request.modelID
+        else {
+          throw OpenAIResponsesProviderError.invalidRequest
+        }
+        serverState = state
+      } else {
+        serverState = nil
+      }
+    case .localEphemeralReplay:
+      serverState = nil
+      if let continuationKey {
+        guard issuedResponseIDs.contains(continuationKey) else {
+          throw OpenAIResponsesProviderError.missingLocalContinuation
+        }
+        guard let state = localStates[continuationKey] else {
+          throw OpenAIResponsesProviderError.missingLocalContinuation
+        }
+        guard state.modelID == request.modelID else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        localState = state
+      } else {
+        localState = nil
+      }
     }
 
     let plan: OpenAIResponsesRequestPlan
     do {
       plan = try OpenAIResponsesRequestBuilder(configuration: configuration).build(
         request,
+        serverState: serverState,
         localState: localState
       )
-    } catch {
-      releaseLocalState(continuationKey)
+    } catch let error as OpenAIResponsesProviderError {
+      if configuration.privacyMode == .serverManagedContinuation,
+        request.previousProviderResponseID != nil
+      {
+        throw OpenAIResponsesProviderError.invalidRequest
+      }
       throw error
+    } catch {
+      if configuration.privacyMode == .serverManagedContinuation,
+        request.previousProviderResponseID != nil
+      {
+        throw OpenAIResponsesProviderError.invalidRequest
+      }
+      throw error
+    }
+
+    if let continuationKey {
+      switch configuration.privacyMode {
+      case .serverManagedContinuation:
+        removeServerState(continuationKey)
+      case .localEphemeralReplay:
+        removeLocalState(continuationKey)
+      }
     }
 
     let apiKey: String
@@ -41,10 +81,8 @@ extension OpenAIResponsesProvider {
       apiKey = try await credentialProvider.apiKey()
       try Task.checkCancellation()
     } catch is CancellationError {
-      releaseLocalState(continuationKey)
       throw CancellationError()
     } catch {
-      releaseLocalState(continuationKey)
       if Task.isCancelled {
         throw CancellationError()
       }
@@ -52,7 +90,6 @@ extension OpenAIResponsesProvider {
     }
 
     guard isValidAPIKey(apiKey) else {
-      releaseLocalState(continuationKey)
       throw OpenAIResponsesProviderError.credentialUnavailable
     }
 
@@ -69,10 +106,8 @@ extension OpenAIResponsesProvider {
       response = try await transport.send(urlRequest)
       try Task.checkCancellation()
     } catch is CancellationError {
-      releaseLocalState(continuationKey)
       throw CancellationError()
     } catch {
-      releaseLocalState(continuationKey)
       if Task.isCancelled {
         throw CancellationError()
       }
@@ -80,7 +115,6 @@ extension OpenAIResponsesProvider {
     }
 
     guard (200...299).contains(response.statusCode) else {
-      releaseLocalState(continuationKey)
       throw OpenAIResponsesProviderError.httpFailure(statusCode: response.statusCode)
     }
     let mediaType = response.contentType?
@@ -89,11 +123,14 @@ extension OpenAIResponsesProvider {
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
     guard mediaType == "text/event-stream" else {
-      releaseLocalState(continuationKey)
       throw OpenAIResponsesProviderError.invalidContentType
     }
 
-    let bufferingLimit = min(configuration.maximumStreamEvents, 1_024)
+    let (bufferingLimit, bufferingOverflow) = configuration.maximumStreamEvents
+      .addingReportingOverflow(configuration.maximumOutputItems + 4)
+    guard !bufferingOverflow else {
+      throw OpenAIResponsesProviderError.invalidConfiguration
+    }
     return AsyncThrowingStream<InferenceStreamEvent, any Error>(
       bufferingPolicy: .bufferingOldest(bufferingLimit)
     ) { continuation in
@@ -102,7 +139,6 @@ extension OpenAIResponsesProvider {
           response.body,
           request: request,
           plan: plan,
-          continuationKey: continuationKey,
           continuation: continuation
         )
       }
@@ -116,13 +152,8 @@ extension OpenAIResponsesProvider {
     _ body: AsyncThrowingStream<Data, any Error>,
     request: InferenceRequest,
     plan: OpenAIResponsesRequestPlan,
-    continuationKey: String?,
     continuation: AsyncThrowingStream<InferenceStreamEvent, any Error>.Continuation
   ) async {
-    defer {
-      releaseLocalState(continuationKey)
-    }
-
     do {
       var parser = ServerSentEventParser(configuration: configuration)
       var processor = OpenAIResponsesStreamProcessor(configuration: configuration)
@@ -141,6 +172,7 @@ extension OpenAIResponsesProvider {
             pendingTerminal = processed
           } else {
             for event in processed.events {
+              try reserveIdentifierIfStarted(event)
               try yield(event, to: continuation)
             }
           }
@@ -159,6 +191,7 @@ extension OpenAIResponsesProvider {
           pendingTerminal = processed
         } else {
           for event in processed.events {
+            try reserveIdentifierIfStarted(event)
             try yield(event, to: continuation)
           }
         }
@@ -168,7 +201,7 @@ extension OpenAIResponsesProvider {
         throw OpenAIResponsesProviderError.truncatedStream
       }
       try Task.checkCancellation()
-      try commitLocalState(
+      let commit = try prepareContinuationCommit(
         request: request,
         plan: plan,
         result: result
@@ -176,6 +209,7 @@ extension OpenAIResponsesProvider {
       for event in pendingTerminal.events {
         try yield(event, to: continuation)
       }
+      installContinuationCommit(commit)
       continuation.finish()
     } catch is CancellationError {
       continuation.finish(throwing: CancellationError())
@@ -188,6 +222,14 @@ extension OpenAIResponsesProvider {
         continuation.finish(throwing: OpenAIResponsesProviderError.transportFailed)
       }
     }
+  }
+
+  func reserveIdentifierIfStarted(_ event: InferenceStreamEvent) throws {
+    guard case .started(let responseIdentifier) = event else { return }
+    guard let identifier = responseIdentifier else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+    try reserveResponseIdentifier(identifier)
   }
 
   func yield(

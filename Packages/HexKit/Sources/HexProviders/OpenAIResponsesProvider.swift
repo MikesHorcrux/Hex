@@ -5,10 +5,15 @@ public actor OpenAIResponsesProvider: InferenceProvider {
   let configuration: OpenAIResponsesConfiguration
   let credentialProvider: any OpenAICredentialProvider
   let transport: any OpenAIResponsesTransport
+  var issuedResponseIDs = Set<String>()
+  var issuedResponseIDBytes = 0
+  var responseIdentifierTrackingExhausted = false
+  var serverStates: [String: OpenAIServerContinuationState] = [:]
+  var serverStateOrder: [String] = []
+  var serverStateBytes = 0
   var localStates: [String: OpenAILocalContinuationState] = [:]
   var localStateOrder: [String] = []
   var localStateBytes = 0
-  var localStatesInUse = Set<String>()
 
   public init(
     configuration: OpenAIResponsesConfiguration,

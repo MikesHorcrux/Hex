@@ -16,6 +16,7 @@ public enum OpenAIResponsesProviderError: Error, Equatable, Sendable {
   case missingLocalContinuation
   case localContinuationMismatch
   case localStateLimitExceeded
+  case continuationStateLimitExceeded
   case encryptedReasoningUnavailable
 }
 
@@ -50,6 +51,8 @@ extension OpenAIResponsesProviderError: LocalizedError {
       "The local continuation history does not match the cached response state."
     case .localStateLimitExceeded:
       "The local continuation state exceeded a configured safety limit."
+    case .continuationStateLimitExceeded:
+      "The OpenAI continuation state exceeded a configured safety limit."
     case .encryptedReasoningUnavailable:
       "Encrypted reasoning required for local continuation was not returned."
     }

@@ -1,24 +1,113 @@
 import HexCore
 
 extension OpenAIResponsesProvider {
-  func commitLocalState(
+  func ensureResponseIdentifierTrackingAvailable() throws {
+    guard !responseIdentifierTrackingExhausted else {
+      throw OpenAIResponsesProviderError.continuationStateLimitExceeded
+    }
+  }
+
+  func reserveResponseIdentifier(_ identifier: String) throws {
+    try ensureResponseIdentifierTrackingAvailable()
+    guard !issuedResponseIDs.contains(identifier) else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+    let (projectedBytes, byteOverflow) = issuedResponseIDBytes.addingReportingOverflow(
+      identifier.utf8.count
+    )
+    guard
+      issuedResponseIDs.count < configuration.maximumIssuedResponseIDs,
+      !byteOverflow,
+      projectedBytes <= configuration.maximumIssuedResponseIDBytes
+    else {
+      responseIdentifierTrackingExhausted = true
+      throw OpenAIResponsesProviderError.continuationStateLimitExceeded
+    }
+    issuedResponseIDs.insert(identifier)
+    issuedResponseIDBytes = projectedBytes
+  }
+
+  func prepareContinuationCommit(
     request: InferenceRequest,
     plan: OpenAIResponsesRequestPlan,
     result: OpenAIResponsesStreamResult
-  ) throws {
-    guard configuration.privacyMode == .localEphemeralReplay else { return }
-    guard
-      result.responseID != plan.priorLocalState?.responseID,
-      localStates[result.responseID] == nil
-    else {
+  ) throws -> OpenAIContinuationCommit {
+    guard issuedResponseIDs.contains(result.responseID) else {
       throw OpenAIResponsesProviderError.malformedStream
     }
 
-    if result.stopReason != .toolCalls {
-      if let priorResponseID = plan.priorLocalState?.responseID {
-        removeLocalState(priorResponseID)
+    switch configuration.privacyMode {
+    case .serverManagedContinuation:
+      let state = try makeServerState(request: request, plan: plan, result: result)
+      return OpenAIContinuationCommit(
+        localState: nil,
+        localEvictions: [],
+        serverState: state,
+        serverEvictions: try serverEvictions(for: state)
+      )
+    case .localEphemeralReplay:
+      guard result.stopReason == .toolCalls else {
+        return OpenAIContinuationCommit(
+          localState: nil,
+          localEvictions: [],
+          serverState: nil,
+          serverEvictions: []
+        )
       }
-      return
+      let state = try makeLocalState(request: request, plan: plan, result: result)
+      return OpenAIContinuationCommit(
+        localState: state,
+        localEvictions: try localEvictions(for: state),
+        serverState: nil,
+        serverEvictions: []
+      )
+    }
+  }
+
+  func installContinuationCommit(_ commit: OpenAIContinuationCommit) {
+    for identifier in commit.localEvictions {
+      removeLocalState(identifier)
+    }
+    if let state = commit.localState {
+      localStates[state.responseID] = state
+      localStateOrder.append(state.responseID)
+      localStateBytes += state.encodedByteCount
+    }
+
+    for identifier in commit.serverEvictions {
+      removeServerState(identifier)
+    }
+    if let state = commit.serverState {
+      serverStates[state.responseID] = state
+      serverStateOrder.append(state.responseID)
+      serverStateBytes += state.encodedByteCount
+    }
+  }
+
+  func removeLocalState(_ identifier: String) {
+    if let state = localStates.removeValue(forKey: identifier) {
+      localStateBytes -= state.encodedByteCount
+    }
+    localStateOrder.removeAll(where: { $0 == identifier })
+  }
+
+  func removeServerState(_ identifier: String) {
+    if let state = serverStates.removeValue(forKey: identifier) {
+      serverStateBytes -= state.encodedByteCount
+    }
+    serverStateOrder.removeAll(where: { $0 == identifier })
+  }
+
+  private func makeLocalState(
+    request: InferenceRequest,
+    plan: OpenAIResponsesRequestPlan,
+    result: OpenAIResponsesStreamResult
+  ) throws -> OpenAILocalContinuationState {
+    guard
+      localStates[result.responseID] == nil,
+      result.responseID != plan.priorLocalState?.responseID
+    else {
+      throw OpenAIResponsesProviderError.malformedStream
     }
 
     let baseMessageCount = plan.priorLocalState?.baseMessageCount ?? plan.currentMessageIDs.count
@@ -34,37 +123,29 @@ extension OpenAIResponsesProvider {
       )
     )
 
-    var stateBytes = result.responseID.utf8.count + request.modelID.rawValue.utf8.count + 64
+    var outputBytes = 0
+    for segment in replaySegments {
+      let (withSegment, overflowed) = outputBytes.addingReportingOverflow(
+        segment.encodedByteCount + 16
+      )
+      guard !overflowed else {
+        throw OpenAIResponsesProviderError.localStateLimitExceeded
+      }
+      outputBytes = withSegment
+    }
+    let stateBytes = try measuredStateBytes(
+      responseID: result.responseID,
+      modelID: request.modelID,
+      messageCount: plan.currentMessageIDs.count,
+      outputBytes: outputBytes,
+      maximum: configuration.maximumLocalStateBytes,
+      error: .localStateLimitExceeded
+    )
     guard plan.currentMessageIDs.count == plan.currentMessageFingerprints.count else {
       throw OpenAIResponsesProviderError.localStateLimitExceeded
     }
-    for _ in plan.currentMessageIDs {
-      let (withIdentifier, identifierOverflow) = stateBytes.addingReportingOverflow(64)
-      guard
-        !identifierOverflow,
-        withIdentifier <= configuration.maximumLocalStateBytes
-      else {
-        throw OpenAIResponsesProviderError.localStateLimitExceeded
-      }
-      stateBytes = withIdentifier
-    }
-    for segment in replaySegments {
-      let (withSegment, segmentOverflow) = stateBytes.addingReportingOverflow(
-        segment.encodedByteCount + 16
-      )
-      guard !segmentOverflow, withSegment <= configuration.maximumLocalStateBytes else {
-        throw OpenAIResponsesProviderError.localStateLimitExceeded
-      }
-      stateBytes = withSegment
-    }
 
-    guard
-      stateBytes <= configuration.maximumLocalStateBytes
-    else {
-      throw OpenAIResponsesProviderError.localStateLimitExceeded
-    }
-
-    let state = OpenAILocalContinuationState(
+    return OpenAILocalContinuationState(
       responseID: result.responseID,
       modelID: request.modelID,
       baseMessageCount: baseMessageCount,
@@ -73,43 +154,108 @@ extension OpenAIResponsesProvider {
       replaySegments: replaySegments,
       encodedByteCount: stateBytes
     )
-
-    if let priorResponseID = plan.priorLocalState?.responseID {
-      removeLocalState(priorResponseID)
-    }
-    removeLocalState(result.responseID)
-    localStates[result.responseID] = state
-    localStateOrder.append(result.responseID)
-    localStateBytes += state.encodedByteCount
-
-    try evictLocalStatesIfNeeded(protecting: result.responseID)
   }
 
-  func evictLocalStatesIfNeeded(protecting protectedID: String) throws {
-    while localStates.count > configuration.maximumLocalStates
-      || localStateBytes > configuration.maximumLocalCacheBytes
-    {
+  private func makeServerState(
+    request: InferenceRequest,
+    plan: OpenAIResponsesRequestPlan,
+    result: OpenAIResponsesStreamResult
+  ) throws -> OpenAIServerContinuationState {
+    guard
+      serverStates[result.responseID] == nil,
+      result.responseID != plan.priorServerState?.responseID,
+      plan.currentMessageIDs.count == plan.currentMessageFingerprints.count
+    else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+    let stateBytes = try measuredStateBytes(
+      responseID: result.responseID,
+      modelID: request.modelID,
+      messageCount: plan.currentMessageIDs.count,
+      outputBytes: result.encodedOutputBytes,
+      maximum: configuration.maximumServerStateBytes,
+      error: .continuationStateLimitExceeded
+    )
+    return OpenAIServerContinuationState(
+      responseID: result.responseID,
+      modelID: request.modelID,
+      knownMessageIDs: plan.currentMessageIDs,
+      knownMessageFingerprints: plan.currentMessageFingerprints,
+      outputItems: result.outputItems,
+      encodedByteCount: stateBytes
+    )
+  }
+
+  private func measuredStateBytes(
+    responseID: String,
+    modelID: ModelID,
+    messageCount: Int,
+    outputBytes: Int,
+    maximum: Int,
+    error: OpenAIResponsesProviderError
+  ) throws -> Int {
+    let base = responseID.utf8.count + modelID.rawValue.utf8.count + 64
+    let (messageBytes, messageOverflow) = messageCount.multipliedReportingOverflow(by: 64)
+    let (withMessages, firstOverflow) = base.addingReportingOverflow(messageBytes)
+    let (total, secondOverflow) = withMessages.addingReportingOverflow(outputBytes)
+    guard
+      !messageOverflow,
+      !firstOverflow,
+      !secondOverflow,
+      total <= maximum
+    else {
+      throw error
+    }
+    return total
+  }
+
+  private func localEvictions(for state: OpenAILocalContinuationState) throws -> [String] {
+    var projectedCount = localStates.count + 1
+    var projectedBytes = localStateBytes + state.encodedByteCount
+    var evictions: [String] = []
+    for identifier in localStateOrder {
       guard
-        let candidate = localStateOrder.first(where: { identifier in
-          identifier != protectedID && !localStatesInUse.contains(identifier)
-        })
+        projectedCount > configuration.maximumLocalStates
+          || projectedBytes > configuration.maximumLocalCacheBytes
       else {
-        removeLocalState(protectedID)
-        throw OpenAIResponsesProviderError.localStateLimitExceeded
+        break
       }
-      removeLocalState(candidate)
+      guard let candidate = localStates[identifier] else { continue }
+      evictions.append(identifier)
+      projectedCount -= 1
+      projectedBytes -= candidate.encodedByteCount
     }
+    guard
+      projectedCount <= configuration.maximumLocalStates,
+      projectedBytes <= configuration.maximumLocalCacheBytes
+    else {
+      throw OpenAIResponsesProviderError.localStateLimitExceeded
+    }
+    return evictions
   }
 
-  func releaseLocalState(_ identifier: String?) {
-    guard configuration.privacyMode == .localEphemeralReplay, let identifier else { return }
-    localStatesInUse.remove(identifier)
-  }
-
-  func removeLocalState(_ identifier: String) {
-    if let state = localStates.removeValue(forKey: identifier) {
-      localStateBytes -= state.encodedByteCount
+  private func serverEvictions(for state: OpenAIServerContinuationState) throws -> [String] {
+    var projectedCount = serverStates.count + 1
+    var projectedBytes = serverStateBytes + state.encodedByteCount
+    var evictions: [String] = []
+    for identifier in serverStateOrder {
+      guard
+        projectedCount > configuration.maximumServerStates
+          || projectedBytes > configuration.maximumServerCacheBytes
+      else {
+        break
+      }
+      guard let candidate = serverStates[identifier] else { continue }
+      evictions.append(identifier)
+      projectedCount -= 1
+      projectedBytes -= candidate.encodedByteCount
     }
-    localStateOrder.removeAll(where: { $0 == identifier })
+    guard
+      projectedCount <= configuration.maximumServerStates,
+      projectedBytes <= configuration.maximumServerCacheBytes
+    else {
+      throw OpenAIResponsesProviderError.continuationStateLimitExceeded
+    }
+    return evictions
   }
 }
