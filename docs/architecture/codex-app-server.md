@@ -22,6 +22,10 @@ cancel and completion to the login identifier issued for its active flow, and it
 transition reserved until that request has actually returned even if a completion notification
 arrives first.
 
+Composition uses `CodexAppServerNotificationRouter` to bind exact notification methods to separate
+handlers. Unknown methods are ignored for forward compatibility; account, inference, and future
+approval payloads do not need to pass through unrelated consumers.
+
 Codex app-server is an agent-runtime integration, not a documented raw ChatGPT-subscription model
 endpoint. Any future Hex inference adapter built on it must be labeled as a Codex compatibility
 backend and must not claim that only model inference is being retained.
