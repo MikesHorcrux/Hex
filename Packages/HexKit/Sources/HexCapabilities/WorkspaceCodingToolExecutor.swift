@@ -13,6 +13,30 @@ public struct WorkspaceCodingToolExecutor: ToolExecutor, Sendable {
     ])
   }
 
+  public init(
+    fileSystem: WorkspaceFileSystem,
+    processExecutor: any ProcessExecuting,
+    processConfiguration: ProcessExecutionConfiguration = .standard,
+    /// Host-selected environment for the optional process tool.
+    processEnvironment: [String: String]? = nil,
+    /// Must match the configuration used by the injected capability authorization center.
+    processAuthorizationConfiguration: CapabilityAuthorizationCenterConfiguration = .standard
+  ) throws {
+    executor = try HostToolExecutor(tools: [
+      ProcessRunTool(
+        executor: processExecutor,
+        configuration: processConfiguration,
+        environment: processEnvironment,
+        authorizationConfiguration: processAuthorizationConfiguration
+      ),
+      WorkspaceListDirectoryTool(fileSystem: fileSystem),
+      WorkspaceReadTextFileTool(fileSystem: fileSystem),
+      WorkspaceReplaceTextTool(fileSystem: fileSystem),
+      WorkspaceSearchTextTool(fileSystem: fileSystem),
+      WorkspaceWriteTextFileTool(fileSystem: fileSystem),
+    ])
+  }
+
   public func availableTools() async throws -> [ToolDefinition] {
     try await executor.availableTools()
   }

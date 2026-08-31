@@ -27,6 +27,29 @@ struct WorkspaceCodingToolExecutorTests {
   }
 
   @Test
+  func optionallyComposesTheBoundedProcessTool() async throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.container) }
+    let executor = try WorkspaceCodingToolExecutor(
+      fileSystem: WorkspaceFileSystem(root: fixture.root),
+      processExecutor: NoopProcessExecutor()
+    )
+
+    let tools = try await executor.availableTools()
+
+    #expect(
+      tools.map(\.name) == [
+        "process_run",
+        "workspace_list_directory",
+        "workspace_read_text_file",
+        "workspace_replace_text",
+        "workspace_search_text",
+        "workspace_write_text_file",
+      ]
+    )
+  }
+
+  @Test
   func authorizationSeparatesReadAndWriteWithoutEchoingContent() async throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.container) }
@@ -313,5 +336,15 @@ struct WorkspaceCodingToolExecutorTests {
     let root = container.appending(path: "root", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     return (root, container)
+  }
+
+  struct NoopProcessExecutor: ProcessExecuting {
+    func execute(_ request: ProcessExecutionRequest) async throws -> ProcessExecutionResult {
+      ProcessExecutionResult(
+        termination: .exited(code: 0),
+        output: Data(),
+        durationMilliseconds: 0
+      )
+    }
   }
 }
