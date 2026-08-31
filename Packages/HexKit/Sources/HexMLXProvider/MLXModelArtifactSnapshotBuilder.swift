@@ -1,0 +1,333 @@
+import Darwin
+import Foundation
+import HexProviders
+
+struct MLXModelArtifactSnapshotBuilder {
+  func makeSnapshot(
+    for configuration: MLXLocalModelConfiguration
+  ) throws -> MLXModelArtifactSnapshot {
+    try Task.checkCancellation()
+    guard configuration.hasOriginalDirectoryIdentity() else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    let sourceDescriptor = configuration.directory.path.withCString {
+      open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard
+      sourceDescriptor >= 0,
+      configuration.hasOriginalDirectoryIdentity(fileDescriptor: sourceDescriptor)
+    else {
+      if sourceDescriptor >= 0 {
+        close(sourceDescriptor)
+      }
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { close(sourceDescriptor) }
+
+    let initialNames = try artifactNames(in: sourceDescriptor)
+    let artifacts = try openArtifacts(
+      named: initialNames,
+      in: sourceDescriptor,
+      policy: configuration.resourcePolicy
+    )
+    defer {
+      for artifact in artifacts {
+        close(artifact.fileDescriptor)
+      }
+    }
+    try validateManifest(artifacts)
+
+    let snapshotDirectory = FileManager.default.temporaryDirectory.appending(
+      path: "hex-mlx-model-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(
+      at: snapshotDirectory,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    var preserveSnapshot = false
+    defer {
+      if !preserveSnapshot {
+        try? FileManager.default.removeItem(at: snapshotDirectory)
+      }
+    }
+
+    let destinationDescriptor = snapshotDirectory.path.withCString {
+      open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard destinationDescriptor >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { close(destinationDescriptor) }
+
+    for artifact in artifacts {
+      try Task.checkCancellation()
+      try snapshot(artifact, into: destinationDescriptor)
+    }
+    try validateSourceStillMatches(
+      artifacts,
+      sourceDescriptor: sourceDescriptor,
+      initialNames: initialNames
+    )
+    guard fchmod(destinationDescriptor, 0o500) == 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    preserveSnapshot = true
+    return MLXModelArtifactSnapshot(directory: snapshotDirectory)
+  }
+
+  private func artifactNames(in directoryDescriptor: Int32) throws -> [String] {
+    let enumerationDescriptor = ".".withCString {
+      openat(directoryDescriptor, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard enumerationDescriptor >= 0, let directory = fdopendir(enumerationDescriptor) else {
+      if enumerationDescriptor >= 0 {
+        close(enumerationDescriptor)
+      }
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { closedir(directory) }
+
+    var names: [String] = []
+    errno = 0
+    while let entry = readdir(directory) {
+      let length = Int(entry.pointee.d_namlen)
+      var nameStorage = entry.pointee.d_name
+      let bytes = withUnsafeBytes(of: &nameStorage) { buffer in
+        Array(buffer.prefix(length))
+      }
+      guard let name = String(bytes: bytes, encoding: .utf8) else {
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
+      }
+      if name == "." || name == ".." {
+        continue
+      }
+      guard
+        !name.isEmpty,
+        name.utf8.count <= 255,
+        !name.contains("/"),
+        !name.contains("\0")
+      else {
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
+      }
+      names.append(name)
+    }
+    guard errno == 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    return names.sorted()
+  }
+
+  private func openArtifacts(
+    named names: [String],
+    in directoryDescriptor: Int32,
+    policy: MLXLocalModelResourcePolicy
+  ) throws -> [MLXModelArtifact] {
+    guard
+      names.count >= 3,
+      names.count <= policy.maximumArtifactCount
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    var artifacts: [MLXModelArtifact] = []
+    var totalBytes: UInt64 = 0
+    do {
+      for name in names {
+        try Task.checkCancellation()
+        guard Self.isAllowedArtifactName(name) else {
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
+        var pathStatus = stat()
+        let pathResult = name.withCString {
+          fstatat(directoryDescriptor, $0, &pathStatus, AT_SYMLINK_NOFOLLOW)
+        }
+        guard pathResult == 0, pathStatus.st_mode & S_IFMT == S_IFREG else {
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
+        let fileDescriptor = name.withCString {
+          openat(directoryDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard fileDescriptor >= 0 else {
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
+        var descriptorStatus = stat()
+        guard
+          fstat(fileDescriptor, &descriptorStatus) == 0,
+          descriptorStatus.st_mode & S_IFMT == S_IFREG,
+          descriptorStatus.st_dev == pathStatus.st_dev,
+          descriptorStatus.st_ino == pathStatus.st_ino
+        else {
+          close(fileDescriptor)
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
+        do {
+          let artifact = try MLXModelArtifact(
+            name: name,
+            fileDescriptor: fileDescriptor,
+            status: descriptorStatus
+          )
+          if name.hasSuffix(".json") || name.hasSuffix(".jinja") {
+            guard artifact.size <= policy.maximumControlFileBytes else {
+              throw MLXLocalInferenceProviderError.invalidModelConfiguration
+            }
+          }
+          let (candidateBytes, overflowed) = totalBytes.addingReportingOverflow(artifact.size)
+          guard !overflowed, candidateBytes <= policy.maximumArtifactBytes else {
+            throw MLXLocalInferenceProviderError.invalidModelConfiguration
+          }
+          totalBytes = candidateBytes
+          artifacts.append(artifact)
+        } catch {
+          close(fileDescriptor)
+          throw error
+        }
+      }
+      return artifacts
+    } catch {
+      for artifact in artifacts {
+        close(artifact.fileDescriptor)
+      }
+      throw error
+    }
+  }
+
+  private func validateManifest(_ artifacts: [MLXModelArtifact]) throws {
+    let names = Set(artifacts.map(\.name))
+    guard
+      names.contains("config.json"),
+      names.contains("tokenizer.json"),
+      names.contains(where: { $0.hasSuffix(".safetensors") })
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+  }
+
+  private func snapshot(
+    _ artifact: MLXModelArtifact,
+    into destinationDescriptor: Int32
+  ) throws {
+    try Task.checkCancellation()
+    let cloneResult = artifact.name.withCString {
+      fclonefileat(artifact.fileDescriptor, destinationDescriptor, $0, 0)
+    }
+    if cloneResult != 0 {
+      artifact.name.withCString {
+        _ = unlinkat(destinationDescriptor, $0, 0)
+      }
+      try copy(artifact, into: destinationDescriptor)
+    }
+    let destinationFileDescriptor = artifact.name.withCString {
+      openat(destinationDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard destinationFileDescriptor >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { close(destinationFileDescriptor) }
+    var destinationStatus = stat()
+    guard
+      fstat(destinationFileDescriptor, &destinationStatus) == 0,
+      destinationStatus.st_mode & S_IFMT == S_IFREG,
+      destinationStatus.st_size >= 0,
+      UInt64(destinationStatus.st_size) == artifact.size,
+      fchmod(destinationFileDescriptor, 0o400) == 0
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+  }
+
+  private func copy(
+    _ artifact: MLXModelArtifact,
+    into destinationDescriptor: Int32
+  ) throws {
+    guard lseek(artifact.fileDescriptor, 0, SEEK_SET) == 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    let destinationFileDescriptor = artifact.name.withCString {
+      openat(
+        destinationDescriptor,
+        $0,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+        S_IRUSR | S_IWUSR
+      )
+    }
+    guard destinationFileDescriptor >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { close(destinationFileDescriptor) }
+
+    var buffer = [UInt8](repeating: 0, count: 1_024 * 1_024)
+    var copiedBytes: UInt64 = 0
+    while copiedBytes < artifact.size {
+      try Task.checkCancellation()
+      let remaining = artifact.size - copiedBytes
+      let requested = min(buffer.count, Int(remaining))
+      let readCount = buffer.withUnsafeMutableBytes { bytes -> Int in
+        guard let baseAddress = bytes.baseAddress else {
+          return -1
+        }
+        return Darwin.read(artifact.fileDescriptor, baseAddress, requested)
+      }
+      guard readCount > 0 else {
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
+      }
+      var written = 0
+      while written < readCount {
+        let writeCount = buffer.withUnsafeBytes { bytes -> Int in
+          guard let baseAddress = bytes.baseAddress else {
+            return -1
+          }
+          return Darwin.write(
+            destinationFileDescriptor,
+            baseAddress.advanced(by: written),
+            readCount - written
+          )
+        }
+        guard writeCount > 0 else {
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
+        written += writeCount
+      }
+      copiedBytes += UInt64(readCount)
+    }
+    var extraByte: UInt8 = 0
+    guard
+      Darwin.read(artifact.fileDescriptor, &extraByte, 1) == 0,
+      fsync(destinationFileDescriptor) == 0
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+  }
+
+  private func validateSourceStillMatches(
+    _ artifacts: [MLXModelArtifact],
+    sourceDescriptor: Int32,
+    initialNames: [String]
+  ) throws {
+    guard try artifactNames(in: sourceDescriptor) == initialNames else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    for artifact in artifacts {
+      try Task.checkCancellation()
+      var descriptorStatus = stat()
+      var pathStatus = stat()
+      let pathResult = artifact.name.withCString {
+        fstatat(sourceDescriptor, $0, &pathStatus, AT_SYMLINK_NOFOLLOW)
+      }
+      guard
+        fstat(artifact.fileDescriptor, &descriptorStatus) == 0,
+        pathResult == 0,
+        artifact.matches(descriptorStatus),
+        artifact.matches(pathStatus)
+      else {
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
+      }
+    }
+  }
+
+  private static func isAllowedArtifactName(_ name: String) -> Bool {
+    name.hasSuffix(".safetensors")
+      || name.hasSuffix(".json")
+      || name.hasSuffix(".jinja")
+  }
+}

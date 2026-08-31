@@ -3,26 +3,60 @@ import HexProviders
 import MLXLMCommon
 
 struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
-  private let model: ModelContainer
   private let modelID: ModelID
   private let defaultMaximumOutputTokens: Int
   private let maximumBufferedEvents: Int
+  private let artifactSnapshot: MLXModelArtifactSnapshot?
+  private let generations:
+    @Sendable (InferenceRequest, Int) throws -> AsyncThrowingStream<Generation, any Error>
 
   init(
     model: ModelContainer,
     modelID: ModelID,
     defaultMaximumOutputTokens: Int,
+    artifactSnapshot: MLXModelArtifactSnapshot,
     maximumBufferedEvents: Int = 64
   ) {
-    self.model = model
+    self.modelID = modelID
+    self.defaultMaximumOutputTokens = defaultMaximumOutputTokens
+    self.artifactSnapshot = artifactSnapshot
+    self.maximumBufferedEvents = maximumBufferedEvents
+    generations = { request, maximumOutputTokens in
+      let messages = try MLXSwiftRequestMapper.messages(for: request)
+      let tools = try MLXSwiftRequestMapper.toolSpecifications(for: request)
+      let parameters = GenerateParameters(
+        maxTokens: maximumOutputTokens,
+        temperature: Float(request.options.temperature ?? 0.6)
+      )
+      let session = ChatSession(
+        model,
+        generateParameters: parameters,
+        tools: tools
+      )
+      return session.streamDetails(to: messages)
+    }
+  }
+
+  init(
+    modelID: ModelID,
+    defaultMaximumOutputTokens: Int,
+    maximumBufferedEvents: Int = 64,
+    generations:
+      @escaping @Sendable (
+        InferenceRequest,
+        Int
+      ) throws -> AsyncThrowingStream<Generation, any Error>
+  ) {
     self.modelID = modelID
     self.defaultMaximumOutputTokens = defaultMaximumOutputTokens
     self.maximumBufferedEvents = maximumBufferedEvents
+    artifactSnapshot = nil
+    self.generations = generations
   }
 
-  func stream(
+  func start(
     _ request: InferenceRequest
-  ) async throws -> AsyncThrowingStream<MLXInferenceEngineEvent, any Error> {
+  ) async throws -> MLXInferenceEngineRun {
     try Task.checkCancellation()
     let maximumOutputTokens = request.options.maxOutputTokens ?? defaultMaximumOutputTokens
     guard
@@ -42,23 +76,14 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     )
     let producer = Task {
       do {
-        let messages = try MLXSwiftRequestMapper.messages(for: request)
-        let tools = try MLXSwiftRequestMapper.toolSpecifications(for: request)
-        let parameters = GenerateParameters(
-          maxTokens: maximumOutputTokens,
-          temperature: Float(request.options.temperature ?? 0.6)
-        )
-        let session = ChatSession(
-          model,
-          generateParameters: parameters,
-          tools: tools
-        )
-        let generations = session.streamDetails(to: messages)
-        var completed = false
+        try Task.checkCancellation()
+        let generationStream = try generations(request, maximumOutputTokens)
+        try Task.checkCancellation()
+        var pendingTerminal: (InferenceUsage, InferenceStopReason)?
 
-        for try await generation in generations {
+        for try await generation in generationStream {
           try Task.checkCancellation()
-          guard !completed else {
+          guard pendingTerminal == nil else {
             throw MLXLocalInferenceProviderError.invalidStream
           }
           switch generation {
@@ -90,22 +115,22 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
             case .cancelled:
               throw CancellationError()
             }
-            try Self.yield(
-              .completed(
-                usage: InferenceUsage(
-                  inputTokens: inputTokens,
-                  outputTokens: outputTokens
-                ),
-                stopReason: stopReason
+            pendingTerminal = (
+              InferenceUsage(
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
               ),
-              to: continuation
+              stopReason
             )
-            completed = true
           }
         }
-        guard completed else {
+        guard let (usage, stopReason) = pendingTerminal else {
           throw MLXLocalInferenceProviderError.incompleteStream
         }
+        try Self.yield(
+          .completed(usage: usage, stopReason: stopReason),
+          to: continuation
+        )
         continuation.finish()
       } catch is CancellationError {
         continuation.finish(throwing: CancellationError())
@@ -118,7 +143,15 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     continuation.onTermination = { @Sendable _ in
       producer.cancel()
     }
-    return stream
+    return MLXInferenceEngineRun(
+      events: stream,
+      cancel: {
+        producer.cancel()
+      },
+      waitForTermination: {
+        await producer.value
+      }
+    )
   }
 
   private static func yield(

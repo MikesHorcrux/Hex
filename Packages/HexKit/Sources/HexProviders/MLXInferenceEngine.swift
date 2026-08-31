@@ -1,7 +1,9 @@
 import HexCore
 
 public protocol MLXInferenceEngine: Sendable {
-  func stream(
+  /// Starts one physical generation. The returned run must retain ownership of all underlying
+  /// generation work until `waitForTermination()` returns.
+  func start(
     _ request: InferenceRequest
-  ) async throws -> AsyncThrowingStream<MLXInferenceEngineEvent, any Error>
+  ) async throws -> MLXInferenceEngineRun
 }

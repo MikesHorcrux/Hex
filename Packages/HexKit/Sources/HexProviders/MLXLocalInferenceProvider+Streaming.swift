@@ -23,10 +23,9 @@ extension MLXLocalInferenceProvider {
       throw MLXLocalInferenceProviderError.modelLoadFailed
     }
 
-    let engineStream: AsyncThrowingStream<MLXInferenceEngineEvent, any Error>
+    let engineRun: MLXInferenceEngineRun
     do {
-      engineStream = try await engine.stream(request)
-      try Task.checkCancellation()
+      engineRun = try await engine.start(request)
     } catch is CancellationError {
       finishRequest(request.id)
       throw CancellationError()
@@ -34,11 +33,17 @@ extension MLXLocalInferenceProvider {
       finishRequest(request.id)
       throw MLXLocalInferenceProviderError.generationFailed
     }
+    if Task.isCancelled {
+      engineRun.cancel()
+      await engineRun.waitForTermination()
+      finishRequest(request.id)
+      throw CancellationError()
+    }
 
     return outputStream(
       for: request,
       model: model,
-      engineStream: engineStream
+      engineRun: engineRun
     )
   }
 
@@ -60,7 +65,7 @@ extension MLXLocalInferenceProvider {
   private func outputStream(
     for request: InferenceRequest,
     model: MLXLocalModelConfiguration,
-    engineStream: AsyncThrowingStream<MLXInferenceEngineEvent, any Error>
+    engineRun: MLXInferenceEngineRun
   ) -> AsyncThrowingStream<InferenceStreamEvent, any Error> {
     let (stream, continuation) = AsyncThrowingStream.makeStream(
       of: InferenceStreamEvent.self,
@@ -69,20 +74,23 @@ extension MLXLocalInferenceProvider {
     )
     let producer = Task {
       do {
+        try Task.checkCancellation()
         try Self.yield(.started(providerResponseID: nil), to: continuation)
-        var completed = false
+        var pendingTerminal: (InferenceUsage, InferenceStopReason)?
         var toolCallIDs = Set<ToolCallID>()
         var toolCallCount = 0
         var textBytes = 0
         var eventCount = 0
+        var remainingGeneratedBytes = MLXRequestContentValidator.maximumRequestBytes
+        var remainingGeneratedNodes = MLXRequestContentValidator.maximumJSONNodes
 
-        for try await event in engineStream {
+        for try await event in engineRun.events {
           try Task.checkCancellation()
-          guard !completed else {
+          guard pendingTerminal == nil else {
             throw MLXLocalInferenceProviderError.invalidStream
           }
           eventCount += 1
-          guard eventCount <= 1_000_000 else {
+          guard eventCount <= 65_536 else {
             throw MLXLocalInferenceProviderError.invalidStream
           }
           switch event {
@@ -101,13 +109,21 @@ extension MLXLocalInferenceProvider {
 
           case .toolCall(let call):
             guard
-              Self.isValidGeneratedToolCall(call, request: request),
+              Self.isValidGeneratedToolCall(
+                call,
+                request: request,
+                remainingBytes: &remainingGeneratedBytes,
+                remainingNodes: &remainingGeneratedNodes
+              ),
               toolCallIDs.insert(call.id).inserted
             else {
               throw MLXLocalInferenceProviderError.invalidStream
             }
             toolCallCount += 1
-            guard model.supportsParallelToolCalling || toolCallCount == 1 else {
+            guard
+              toolCallCount <= 4_096,
+              model.supportsParallelToolCalling || toolCallCount == 1
+            else {
               throw MLXLocalInferenceProviderError.parallelToolCallsUnsupported
             }
             try Self.yield(.toolCall(call), to: continuation)
@@ -121,34 +137,43 @@ extension MLXLocalInferenceProvider {
             case .automatic, .none:
               break
             }
-            guard engineStopReason != .toolCalls || toolCallCount > 0 else {
+            guard
+              Self.isValidUsage(usage, request: request, model: model),
+              let stopReason = Self.validatedStopReason(
+                engineStopReason,
+                textBytes: textBytes,
+                toolCallCount: toolCallCount
+              )
+            else {
               throw MLXLocalInferenceProviderError.invalidStream
             }
-            let stopReason: InferenceStopReason
-            if toolCallCount > 0, engineStopReason == .stop {
-              stopReason = .toolCalls
-            } else {
-              stopReason = engineStopReason
-            }
-            try Self.yield(.usage(usage), to: continuation)
-            try Self.yield(.completed(stopReason), to: continuation)
-            completed = true
+            pendingTerminal = (usage, stopReason)
           }
         }
-        guard completed else {
+        await engineRun.waitForTermination()
+        try Task.checkCancellation()
+        guard let (usage, stopReason) = pendingTerminal else {
           throw MLXLocalInferenceProviderError.incompleteStream
         }
+        try Self.yield(.usage(usage), to: continuation)
+        try Self.yield(.completed(stopReason), to: continuation)
         finishRequest(request.id)
         continuation.finish()
       } catch is CancellationError {
-        finishRequest(request.id)
+        engineRun.cancel()
         continuation.finish(throwing: CancellationError())
+        await engineRun.waitForTermination()
+        finishRequest(request.id)
       } catch let error as MLXLocalInferenceProviderError {
-        finishRequest(request.id)
+        engineRun.cancel()
         continuation.finish(throwing: error)
-      } catch {
+        await engineRun.waitForTermination()
         finishRequest(request.id)
+      } catch {
+        engineRun.cancel()
         continuation.finish(throwing: MLXLocalInferenceProviderError.generationFailed)
+        await engineRun.waitForTermination()
+        finishRequest(request.id)
       }
     }
     continuation.onTermination = { @Sendable _ in

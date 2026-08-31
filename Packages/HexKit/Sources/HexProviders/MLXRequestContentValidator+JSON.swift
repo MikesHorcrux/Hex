@@ -87,7 +87,7 @@ extension MLXRequestContentValidator {
     localBytes: inout Int,
     remainingBytes: inout Int
   ) -> Bool {
-    guard let bytes = encodedStringUpperBound(value) else {
+    guard !value.contains("\0"), let bytes = encodedStringUpperBound(value) else {
       return false
     }
     let (candidateLocalBytes, overflowed) = localBytes.addingReportingOverflow(bytes)

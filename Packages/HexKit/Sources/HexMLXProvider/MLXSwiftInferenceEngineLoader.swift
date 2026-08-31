@@ -1,30 +1,40 @@
+import Foundation
 import HexProviders
 import MLXLLM
 import MLXLMCommon
 
 public struct MLXSwiftInferenceEngineLoader: MLXInferenceEngineLoader, Sendable {
-  public init() {}
+  private let loadContainer: @Sendable (URL) async throws -> ModelContainer
+
+  public init(
+    loadContainer: @escaping @Sendable (URL) async throws -> ModelContainer
+  ) {
+    self.loadContainer = loadContainer
+  }
+
+  public init(factory: LLMModelFactory) {
+    loadContainer = { directory in
+      try await factory.loadContainer(
+        from: directory,
+        using: MLXSwiftTokenizerLoader()
+      )
+    }
+  }
 
   public func loadModel(
     _ configuration: MLXLocalModelConfiguration
   ) async throws -> any MLXInferenceEngine {
     try Task.checkCancellation()
     try validateDirectoryIdentity(configuration)
-    let factory = LLMModelFactory(
-      typeRegistry: LLMTypeRegistry.shared,
-      modelRegistry: LLMRegistry()
-    )
-    let tokenizerLoader = MLXSwiftTokenizerLoader()
-    let container = try await factory.loadContainer(
-      from: configuration.directory,
-      using: tokenizerLoader
-    )
+    let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(for: configuration)
     try Task.checkCancellation()
-    try validateDirectoryIdentity(configuration)
+    let container = try await loadContainer(snapshot.directory)
+    try Task.checkCancellation()
     return MLXSwiftInferenceEngine(
       model: container,
       modelID: configuration.modelID,
-      defaultMaximumOutputTokens: configuration.maximumOutputTokens
+      defaultMaximumOutputTokens: configuration.maximumOutputTokens,
+      artifactSnapshot: snapshot
     )
   }
 
