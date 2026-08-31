@@ -51,6 +51,34 @@ struct ToolExecutorContractTests {
   }
 
   @Test
+  func defaultAuthorizationDescriptionIsSafeAndCorrelated() async throws {
+    let executor = ToolExecutorStub(tools: [])
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "call-authorization"),
+      name: "read_file",
+      arguments: [
+        "path": .string("/private/secret.txt"),
+        "token": .string("must-not-be-copied"),
+      ]
+    )
+    let context = ToolExecutionContext(
+      runID: AgentRunID(),
+      workingDirectory: URL(fileURLWithPath: "/tmp/hex", isDirectory: true)
+    )
+
+    let request = try await executor.authorizationRequest(for: call, in: context)
+
+    #expect(request.runID == context.runID)
+    #expect(request.toolCallID == call.id)
+    #expect(request.capability == CapabilityID(rawValue: "tool.read_file"))
+    #expect(request.operation == "execute")
+    #expect(request.resource == nil)
+    #expect(request.details.isEmpty)
+    #expect(!request.explanation.contains("secret"))
+    #expect(!request.explanation.contains("token"))
+  }
+
+  @Test
   func executionPropagatesCancellation() async {
     let executor = ToolExecutorStub(tools: [], executionDelay: .seconds(30))
     let call = ToolCall(name: "wait", arguments: [:])
