@@ -7,4 +7,5 @@ struct OpenAIResponsesRequestPlan: Sendable {
   let priorLocalState: OpenAILocalContinuationState?
   let currentMessageIDs: [MessageID]
   let currentMessageFingerprints: [OpenAIMessageFingerprint]
+  let allowsParallelToolCalls: Bool
 }

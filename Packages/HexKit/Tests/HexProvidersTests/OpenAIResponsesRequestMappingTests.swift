@@ -45,7 +45,10 @@ struct OpenAIResponsesRequestMappingTests {
     ]
 
     for mode in OpenAIResponsesPrivacyMode.allCases {
-      let responseData = try OpenAIResponsesTestFixture.textStream(responseID: "resp_mapping")
+      let responseData = try OpenAIResponsesTestFixture.toolStream(
+        responseID: "resp_mapping",
+        callID: "call_mapping"
+      )
       let transport = TestOpenAIResponsesTransport(
         responses: [OpenAIResponsesTestFixture.response(data: responseData)]
       )
@@ -65,7 +68,7 @@ struct OpenAIResponsesRequestMappingTests {
       let events = try await OpenAIResponsesTestFixture.collect(
         provider: provider, request: request)
       #expect(events.first == .started(providerResponseID: "resp_mapping"))
-      #expect(events.last == .completed(.stop))
+      #expect(events.last == .completed(.toolCalls))
 
       let requests = await transport.requests()
       let sent = try #require(requests.first)

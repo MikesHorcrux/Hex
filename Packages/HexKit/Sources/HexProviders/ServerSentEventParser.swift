@@ -9,6 +9,7 @@ struct ServerSentEventParser {
   private var eventData = Data()
   private var eventName: String?
   private var hasDataField = false
+  private var shouldSkipLineFeed = false
   private var responseBytes = 0
   private var eventCount = 0
 
@@ -28,7 +29,19 @@ struct ServerSentEventParser {
 
     var events: [ServerSentEvent] = []
     for byte in data {
-      if byte == 0x0A {
+      if shouldSkipLineFeed {
+        shouldSkipLineFeed = false
+        if byte == 0x0A {
+          continue
+        }
+      }
+
+      if byte == 0x0D {
+        if let event = try processBufferedLine() {
+          events.append(event)
+        }
+        shouldSkipLineFeed = true
+      } else if byte == 0x0A {
         if let event = try processBufferedLine() {
           events.append(event)
         }
@@ -56,11 +69,8 @@ struct ServerSentEventParser {
   }
 
   private mutating func processBufferedLine() throws -> ServerSentEvent? {
-    var line = lineBuffer
+    let line = lineBuffer
     lineBuffer.removeAll(keepingCapacity: true)
-    if line.last == 0x0D {
-      line.removeLast()
-    }
 
     guard !line.isEmpty else {
       return try dispatchEvent()

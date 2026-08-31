@@ -131,7 +131,8 @@ struct OpenAIResponsesRequestBuilder {
       priorServerState: serverState,
       priorLocalState: localState,
       currentMessageIDs: request.messages.map(\.id),
-      currentMessageFingerprints: messageFingerprints
+      currentMessageFingerprints: messageFingerprints,
+      allowsParallelToolCalls: model.capabilities.contains(.parallelToolCalling)
     )
   }
 

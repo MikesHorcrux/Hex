@@ -4,6 +4,7 @@ import HexCore
 struct OpenAIResponsesStreamProcessor {
   private let configuration: OpenAIResponsesConfiguration
   private let toolChoice: ToolChoice
+  private let allowsParallelToolCalls: Bool
   private let declaredToolNames: Set<String>
   private var lifecycle = OpenAIResponseLifecycle.awaitingStart
   private var responseID: String?
@@ -22,10 +23,12 @@ struct OpenAIResponsesStreamProcessor {
   init(
     configuration: OpenAIResponsesConfiguration,
     tools: [ToolDefinition],
-    toolChoice: ToolChoice
+    toolChoice: ToolChoice,
+    allowsParallelToolCalls: Bool
   ) {
     self.configuration = configuration
     self.toolChoice = toolChoice
+    self.allowsParallelToolCalls = allowsParallelToolCalls
     declaredToolNames = Set(tools.map(\.name))
   }
 
@@ -1064,6 +1067,12 @@ struct OpenAIResponsesStreamProcessor {
     guard expectedStatus != "completed" || hasAssistantTurnContent() else {
       throw OpenAIResponsesProviderError.malformedStream
     }
+    if expectedStatus == "completed" {
+      try validateCompletedToolChoice()
+      guard allowsParallelToolCalls || completedToolCalls.count <= 1 else {
+        throw OpenAIResponsesProviderError.malformedStream
+      }
+    }
 
     let stopReason: InferenceStopReason
     if expectedStatus == "incomplete" {
@@ -1194,6 +1203,10 @@ struct OpenAIResponsesStreamProcessor {
         throw OpenAIResponsesProviderError.malformedStream
       }
       reasoningTokens = try optionalUnsigned("reasoning_tokens", in: details) ?? 0
+    }
+
+    guard cachedTokens <= inputTokens, reasoningTokens <= outputTokens else {
+      throw OpenAIResponsesProviderError.malformedStream
     }
 
     return InferenceUsage(
@@ -1417,6 +1430,21 @@ struct OpenAIResponsesStreamProcessor {
       false
     case .named(let name):
       value == name && declaredToolNames.contains(value)
+    }
+  }
+
+  private func validateCompletedToolChoice() throws {
+    switch toolChoice {
+    case .automatic, .none:
+      return
+    case .required:
+      guard !completedToolCalls.isEmpty else {
+        throw OpenAIResponsesProviderError.malformedStream
+      }
+    case .named(let name):
+      guard completedToolCalls.values.contains(where: { $0.name == name }) else {
+        throw OpenAIResponsesProviderError.malformedStream
+      }
     }
   }
 

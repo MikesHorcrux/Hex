@@ -159,7 +159,8 @@ extension OpenAIResponsesProvider {
       var processor = OpenAIResponsesStreamProcessor(
         configuration: configuration,
         tools: request.tools,
-        toolChoice: request.toolChoice
+        toolChoice: request.toolChoice,
+        allowsParallelToolCalls: plan.allowsParallelToolCalls
       )
       var pendingTerminal: OpenAIResponsesProcessedEvent?
 
