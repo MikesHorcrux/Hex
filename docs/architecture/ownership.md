@@ -13,6 +13,7 @@ HexCore
 ├── HexPersistence
 ├── HexProviders
 ├── HexCapabilities
+├── HexMCP
 ├── HexPersonality
 ├── HexRuntime
 └── HexIPC
@@ -29,6 +30,8 @@ Hex app         ──> foundational library products (interactive composition r
   import or link heavyweight local-model libraries. The app and gateway add this product only when
   their composition roots select local inference.
 - **HexCapabilities** owns tool/capability contracts and execution policy inputs.
+- **HexMCP** owns the bounded local MCP client, stdio process boundary, and dynamic tool adapter.
+  It depends only on `HexCore`; MCP servers never supply their own authorization policy.
 - **HexPersonality** owns personality and long-term-memory policy against injected core contracts.
 - **HexRuntime** owns the agent loop and orchestration against contracts from `HexCore`; it does not
   import concrete providers, capabilities, personality, persistence, UI, or transport.
