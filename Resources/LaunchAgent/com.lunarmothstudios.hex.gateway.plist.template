@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lunarmothstudios.hex.gateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HEX_GATEWAY_EXECUTABLE__</string>
+    </array>
+    <key>Disabled</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>__HEX_LOG_DIRECTORY__/gateway.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HEX_LOG_DIRECTORY__/gateway.stderr.log</string>
+</dict>
+</plist>
