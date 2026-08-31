@@ -266,6 +266,339 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(try openDescriptorCount() <= descriptorCountBefore)
   }
 
+  @Test("Preserves bundle-relative runtime dependencies in a private snapshot")
+  func launchesPrivateBundleSnapshotWithRuntimeDependency() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let bundle = try makeRuntimeDependencyBundle(in: fixtureDirectory)
+    let observedLaunchPath = Mutex<String?>(nil)
+    let stagedDependencyWasPresent = Mutex(false)
+    let configuration = try MCPServerConfiguration(
+      serverID: "bundle-fixture",
+      executableURL: bundle.executable,
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { configuration in
+        try MCPStdioProcessSpawner.spawn(
+          configuration,
+          beforeExecution: { _, launchPath in
+            observedLaunchPath.withLock { $0 = launchPath }
+            let snapshotRoot = URL(fileURLWithPath: launchPath)
+              .deletingLastPathComponent()
+              .deletingLastPathComponent()
+              .deletingLastPathComponent()
+            stagedDependencyWasPresent.withLock {
+              $0 = FileManager.default.fileExists(
+                atPath: snapshotRoot.appendingPathComponent(
+                  "Contents/SnapshotRuntime/MCPFixture.framework/MCPFixture"
+                ).path
+              )
+            }
+          }
+        )
+      }
+    )
+    let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+
+    try await session.connect()
+    await session.disconnect()
+
+    let launchPath = try #require(observedLaunchPath.withLock { $0 })
+    #expect(launchPath != bundle.executable.path)
+    #expect(launchPath.hasSuffix("/Contents/MacOS/server"))
+    #expect(stagedDependencyWasPresent.withLock { $0 })
+    #expect(!FileManager.default.fileExists(atPath: bundle.externalMarker.path))
+    let snapshotRoot = URL(fileURLWithPath: launchPath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+  }
+
+  @Test("Builds the installed Xcode bridge closure without launching it")
+  func snapshotsInstalledXcodeBridgeRuntimeClosure() throws {
+    let configuration = try MCPServerConfiguration.xcode(
+      sourceEnvironment: ["PATH": "/usr/bin:/bin"],
+      developerDirectory: URL(
+        fileURLWithPath: "/Applications/Xcode.app/Contents/Developer",
+        isDirectory: true
+      )
+    )
+    let sourceDescriptor = Darwin.open(
+      configuration.executableURL.path,
+      O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+    )
+    #expect(sourceDescriptor >= 0)
+    guard sourceDescriptor >= 0 else { return }
+    defer { Darwin.close(sourceDescriptor) }
+    var sourceStatus = stat()
+    #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
+
+    var snapshot: MCPExecutableSnapshot? = try MCPExecutableSnapshot.create(
+      from: sourceDescriptor,
+      initialStatus: sourceStatus,
+      sourcePath: configuration.executableURL.path,
+      afterSourceValidation: nil
+    )
+    let executablePath = try #require(snapshot?.executablePath)
+    let snapshotRoot = URL(fileURLWithPath: executablePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    #expect(executablePath.hasSuffix("/Contents/Developer/usr/bin/mcpbridge"))
+    #expect(snapshot?.isIntact() == true)
+    #expect(
+      FileManager.default.fileExists(
+        atPath: snapshotRoot.appendingPathComponent(
+          "Frameworks/PlugIns/IDEIntelligenceFoundation.framework/Versions/A/IDEIntelligenceFoundation"
+        ).path
+      )
+    )
+    #expect(
+      FileManager.default.fileExists(
+        atPath: snapshotRoot.appendingPathComponent(
+          "Frameworks/PlugIns/IDEIntelligenceMessaging.framework/Versions/A/IDEIntelligenceMessaging"
+        ).path
+      )
+    )
+
+    snapshot = nil
+
+    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+  }
+
+  @Test("Rejects an oversized bundle runtime dependency before launch")
+  func rejectsOversizedBundleRuntimeDependency() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let bundle = try makeRuntimeDependencyBundle(in: fixtureDirectory)
+    #expect(
+      Darwin.truncate(
+        bundle.dependency.path,
+        MCPExecutableSnapshot.maximumExecutableBytes + 1
+      ) == 0
+    )
+    let observedSnapshotPath = Mutex<String?>(nil)
+    let executionReached = Mutex(false)
+    let configuration = try MCPServerConfiguration(
+      serverID: "oversized-bundle-fixture",
+      executableURL: bundle.executable,
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { configuration in
+        try MCPStdioProcessSpawner.spawn(
+          configuration,
+          afterSourceValidation: { snapshotPath in
+            observedSnapshotPath.withLock { $0 = snapshotPath }
+          },
+          beforeExecution: { _, _ in
+            executionReached.withLock { $0 = true }
+          }
+        )
+      }
+    )
+    let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+
+    await #expect(throws: MCPClientSessionError.connectionClosed) {
+      try await session.connect()
+    }
+
+    let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+    let snapshotRoot = URL(fileURLWithPath: snapshotPath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    #expect(!executionReached.withLock { $0 })
+    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+  }
+
+  @Test("Rejects a bundle dependency tree beyond the snapshot depth bound")
+  func rejectsExcessiveBundleDependencyDepth() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let bundle = try makeRuntimeDependencyBundle(in: fixtureDirectory)
+    var deepDirectory = bundle.dependency.deletingLastPathComponent()
+      .appendingPathComponent("Resources", isDirectory: true)
+    for _ in 0..<MCPExecutableSnapshot.maximumSnapshotPathDepth {
+      deepDirectory.appendPathComponent("d", isDirectory: true)
+    }
+    try FileManager.default.createDirectory(
+      at: deepDirectory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let observedSnapshotPath = Mutex<String?>(nil)
+    let executionReached = Mutex(false)
+    let configuration = try MCPServerConfiguration(
+      serverID: "deep-bundle-fixture",
+      executableURL: bundle.executable,
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { configuration in
+        try MCPStdioProcessSpawner.spawn(
+          configuration,
+          afterSourceValidation: { snapshotPath in
+            observedSnapshotPath.withLock { $0 = snapshotPath }
+          },
+          beforeExecution: { _, _ in
+            executionReached.withLock { $0 = true }
+          }
+        )
+      }
+    )
+    let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+
+    await #expect(throws: MCPClientSessionError.connectionClosed) {
+      try await session.connect()
+    }
+
+    let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+    let snapshotRoot = URL(fileURLWithPath: snapshotPath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    #expect(!executionReached.withLock { $0 })
+    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+  }
+
+  @Test("Completed snapshot cleanup preserves a replacement directory")
+  func completedSnapshotCleanupPreservesReplacementDirectory() throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let source = fixtureDirectory.appendingPathComponent("server")
+    let renamedSnapshot = fixtureDirectory.appendingPathComponent("renamed-snapshot")
+    try writeLegitimateExecutable(to: source)
+    let sourceDescriptor = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    #expect(sourceDescriptor >= 0)
+    guard sourceDescriptor >= 0 else { return }
+    defer { Darwin.close(sourceDescriptor) }
+    var sourceStatus = stat()
+    #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
+
+    var snapshot: MCPExecutableSnapshot? = try MCPExecutableSnapshot.create(
+      from: sourceDescriptor,
+      initialStatus: sourceStatus,
+      afterSourceValidation: nil
+    )
+    let executablePath = try #require(snapshot?.executablePath)
+    let snapshotRoot = URL(fileURLWithPath: executablePath).deletingLastPathComponent()
+    defer {
+      try? FileManager.default.removeItem(at: snapshotRoot)
+      try? FileManager.default.removeItem(at: renamedSnapshot)
+    }
+    #expect(Darwin.rename(snapshotRoot.path, renamedSnapshot.path) == 0)
+    #expect(Darwin.mkdir(snapshotRoot.path, 0o700) == 0)
+
+    snapshot = nil
+
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: renamedSnapshot.path).isEmpty
+    )
+  }
+
+  @Test("Rejected snapshot cleanup preserves a replacement directory")
+  func rejectedSnapshotCleanupPreservesReplacementDirectory() throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let source = fixtureDirectory.appendingPathComponent("server")
+    let renamedSnapshot = fixtureDirectory.appendingPathComponent("renamed-rejected-snapshot")
+    try writeLegitimateExecutable(to: source)
+    let sourceDescriptor = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    #expect(sourceDescriptor >= 0)
+    guard sourceDescriptor >= 0 else { return }
+    defer { Darwin.close(sourceDescriptor) }
+    var sourceStatus = stat()
+    #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
+    let observedSnapshotRoot = Mutex<String?>(nil)
+    let mutationSucceeded = Mutex(false)
+
+    #expect(throws: MCPClientSessionError.connectionClosed) {
+      _ = try MCPExecutableSnapshot.create(
+        from: sourceDescriptor,
+        initialStatus: sourceStatus,
+        afterSourceValidation: { snapshotPath in
+          let snapshotRoot = URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
+          observedSnapshotRoot.withLock { $0 = snapshotRoot }
+          let renamed = Darwin.rename(snapshotRoot, renamedSnapshot.path) == 0
+          let replaced = Darwin.mkdir(snapshotRoot, 0o700) == 0
+          let truncated = Darwin.truncate(source.path, 1) == 0
+          mutationSucceeded.withLock { $0 = renamed && replaced && truncated }
+        }
+      )
+    }
+
+    let snapshotRoot = try #require(observedSnapshotRoot.withLock { $0 })
+    defer {
+      try? FileManager.default.removeItem(atPath: snapshotRoot)
+      try? FileManager.default.removeItem(at: renamedSnapshot)
+    }
+    #expect(mutationSucceeded.withLock { $0 })
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot))
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: renamedSnapshot.path).isEmpty
+    )
+  }
+
+  @Test("Rejected snapshot cleanup preserves a replacement entry")
+  func rejectedSnapshotCleanupPreservesReplacementEntry() throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let source = fixtureDirectory.appendingPathComponent("server")
+    try writeLegitimateExecutable(to: source)
+    let sourceDescriptor = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    #expect(sourceDescriptor >= 0)
+    guard sourceDescriptor >= 0 else { return }
+    defer { Darwin.close(sourceDescriptor) }
+    var sourceStatus = stat()
+    #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
+    let observedSnapshotPath = Mutex<String?>(nil)
+    let replacementBytes = Data("replacement".utf8)
+    let replacementSucceeded = Mutex(false)
+
+    #expect(throws: MCPClientSessionError.connectionClosed) {
+      _ = try MCPExecutableSnapshot.create(
+        from: sourceDescriptor,
+        initialStatus: sourceStatus,
+        afterSourceValidation: { snapshotPath in
+          observedSnapshotPath.withLock { $0 = snapshotPath }
+          replacementSucceeded.withLock {
+            $0 = Self.replaceFile(atPath: snapshotPath, with: replacementBytes)
+          }
+        }
+      )
+    }
+
+    let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+    let snapshotRoot = URL(fileURLWithPath: snapshotPath).deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
+    #expect(replacementSucceeded.withLock { $0 })
+    #expect(try Data(contentsOf: URL(fileURLWithPath: snapshotPath)) == replacementBytes)
+  }
+
   @Test("Cancellation releases a live executable snapshot after terminating the child")
   func cancellationCleansLiveSnapshot() async throws {
     let fixtureDirectory = try makeFixtureDirectory()
@@ -688,6 +1021,129 @@ struct MCPStdioJSONRPCConnectionTests {
     try makeExecutable(url)
   }
 
+  private func makeRuntimeDependencyBundle(in directory: URL) throws -> (
+    root: URL, executable: URL, dependency: URL, externalMarker: URL
+  ) {
+    let root = directory.appendingPathComponent("Fixture.app", isDirectory: true)
+    let executableDirectory = root.appendingPathComponent("Contents/MacOS", isDirectory: true)
+    let frameworkDirectory = root.appendingPathComponent("Contents/Frameworks", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: executableDirectory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    try FileManager.default.createDirectory(
+      at: frameworkDirectory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let dependencySource = directory.appendingPathComponent("dependency.c")
+    let externalDependencySource = directory.appendingPathComponent("external-dependency.c")
+    let serverSource = directory.appendingPathComponent("server.c")
+    let dependencyFramework = frameworkDirectory.appendingPathComponent(
+      "MCPFixture.framework",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+      at: dependencyFramework,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let dependency = dependencyFramework.appendingPathComponent("MCPFixture")
+    let externalFrameworkDirectory = directory.appendingPathComponent(
+      "External/MCPFixture.framework",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+      at: externalFrameworkDirectory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let externalDependency = externalFrameworkDirectory.appendingPathComponent("MCPFixture")
+    let externalMarker = directory.appendingPathComponent("external-runtime-loaded")
+    let executable = executableDirectory.appendingPathComponent("server")
+    let response =
+      #"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"Bundle Fixture\",\"version\":\"1\"}}}"#
+    let dependencyProgram = """
+      const char *mcp_fixture_initialize_response(void) {
+        return "\(response)";
+      }
+      """
+    let externalDependencyProgram = """
+      #include <stdio.h>
+      const char *mcp_fixture_initialize_response(void) {
+        FILE *marker = fopen("\(externalMarker.path)", "w");
+        if (marker != NULL) {
+          fputs("external", marker);
+          fclose(marker);
+        }
+        return "\(response)";
+      }
+      """
+    let serverProgram = """
+      #include <stdio.h>
+      #include <string.h>
+      extern const char *mcp_fixture_initialize_response(void);
+      int main(void) {
+        char line[8192];
+        while (fgets(line, sizeof(line), stdin) != NULL) {
+          if (strstr(line, "\\\"method\\\":\\\"initialize\\\"") != NULL) {
+            fputs(mcp_fixture_initialize_response(), stdout);
+            fputc('\\n', stdout);
+            fflush(stdout);
+          }
+        }
+        return 0;
+      }
+      """
+    try Data(dependencyProgram.utf8).write(to: dependencySource, options: .withoutOverwriting)
+    try Data(externalDependencyProgram.utf8).write(
+      to: externalDependencySource,
+      options: .withoutOverwriting
+    )
+    try Data(serverProgram.utf8).write(to: serverSource, options: .withoutOverwriting)
+    try runFixtureCompiler(
+      arguments: [
+        "--sdk", "macosx", "clang", "-dynamiclib", dependencySource.path,
+        "-Wl,-install_name,@rpath/MCPFixture.framework/MCPFixture", "-o", dependency.path,
+      ]
+    )
+    try runFixtureCompiler(
+      arguments: [
+        "--sdk", "macosx", "clang", "-dynamiclib", externalDependencySource.path,
+        "-Wl,-install_name,@rpath/MCPFixture.framework/MCPFixture", "-o",
+        externalDependency.path,
+      ]
+    )
+    try runFixtureCompiler(
+      arguments: [
+        "--sdk", "macosx", "clang", serverSource.path,
+        "-F", frameworkDirectory.path, "-framework", "MCPFixture",
+        "-Wl,-rpath,@executable_path/../SnapshotRuntime",
+        "-Wl,-rpath,\(externalFrameworkDirectory.deletingLastPathComponent().path)",
+        "-Wl,-rpath,@executable_path/../Frameworks", "-o", executable.path,
+      ]
+    )
+    return (root, executable, dependency, externalMarker)
+  }
+
+  private func runFixtureCompiler(arguments: [String]) throws {
+    let process = Process()
+    let errors = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = errors
+    try process.run()
+    process.waitUntilExit()
+    let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+    let errorText = String(decoding: errorData.prefix(4_096), as: UTF8.self)
+    try #require(
+      process.terminationReason == .exit && process.terminationStatus == 0,
+      "Fixture compiler failed: \(errorText)"
+    )
+  }
+
   private func attackerScript(marker: URL) -> String {
     "#!/bin/sh\nprintf attacker > '\(marker.path)'\n"
   }
@@ -718,6 +1174,31 @@ struct MCPStdioJSONRPCConnectionTests {
     defer { Darwin.close(descriptor) }
     var byte = UInt8(ascii: "x")
     return Darwin.write(descriptor, &byte, 1) == 1 && fsync(descriptor) == 0
+  }
+
+  nonisolated private static func replaceFile(atPath path: String, with data: Data) -> Bool {
+    guard Darwin.unlink(path) == 0 else { return false }
+    let descriptor = Darwin.open(
+      path,
+      O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+      0o600
+    )
+    guard descriptor >= 0 else { return false }
+    defer { Darwin.close(descriptor) }
+    var offset = 0
+    while offset < data.count {
+      let written = data.withUnsafeBytes { bytes in
+        Darwin.write(
+          descriptor,
+          bytes.baseAddress?.advanced(by: offset),
+          data.count - offset
+        )
+      }
+      if written < 0, errno == EINTR { continue }
+      guard written > 0 else { return false }
+      offset += written
+    }
+    return fsync(descriptor) == 0
   }
 
   private func openDescriptorCount() throws -> Int {

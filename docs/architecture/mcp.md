@@ -15,6 +15,12 @@ of silently changing the local legacy handshake.
 ## Boundary rules
 
 - Launch an exact executable and argument vector without a shell.
+- Snapshot an untrusted standalone executable into a descriptor-owned private directory. When that
+  executable lives inside an app bundle, preserve its bundle-relative path and copy its descriptor-
+  resolved Mach-O dependency closure instead. Each file is limited to 256 MiB; the complete closure
+  is limited to 768 MiB, 32,768 entries, and 512 linked images. A linked framework is copied with its
+  resources and relative symlinks so bundle lookups remain local to the snapshot. Paths are limited
+  to 4,096 bytes, 255-byte components, and 64 components.
 - Give the child an explicit allowlisted environment; never inherit credentials implicitly.
 - Put the child in its own process group and terminate/reap the group on timeout, cancellation, or
   protocol failure.
@@ -30,4 +36,10 @@ of silently changing the local legacy handshake.
 `MCPServerConfiguration.xcode()` creates an inert configuration for the exact `mcpbridge` executable
 inside an explicit, inherited, or standard Xcode developer directory. It does not start Xcode,
 request macOS privacy access, or connect until the owning composition root explicitly starts the
-session.
+session. The private snapshot follows Mach-O load commands and the executable's bounded runpath
+closure. Required `@rpath` images are staged at the first private bundle-relative candidate that the
+snapshot process will search, ahead of any later external runpath; a required image whose external
+runpath precedes every private candidate fails closed. Runtime-loaded plug-ins and absent weak-linked
+images are outside this transport's compatibility boundary. Non-system absolute dependency install
+names and required dependencies outside the app bundle also fail closed rather than reading code from
+an original mutable path.

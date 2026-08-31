@@ -65,6 +65,7 @@ enum MCPStdioProcessSpawner {
       let snapshot = try MCPExecutableSnapshot.create(
         from: executableDescriptor,
         initialStatus: executableStatus,
+        sourcePath: configuration.executableURL.path,
         afterSourceValidation: afterSourceValidation
       )
       executableSnapshot = snapshot
@@ -115,7 +116,7 @@ enum MCPStdioProcessSpawner {
       throw MCPClientSessionError.connectionClosed
     }
 
-    let arguments = [configuration.executableURL.path] + configuration.arguments
+    let arguments = [launchPath] + configuration.arguments
     let environment = configuration.environment
       .sorted { $0.key < $1.key }
       .map { "\($0.key)=\($0.value)" }
