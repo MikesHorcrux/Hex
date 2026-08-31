@@ -84,6 +84,9 @@ extension MCPExecutableSnapshot {
       && status.st_mode & (S_IWGRP | S_IWOTH) == 0
   }
 
+  static let xcodeCodeSigningRequirement =
+    #"anchor apple and identifier "com.apple.dt.Xcode""#
+
   /// Xcode's signed app bundles may contain root-owned hard-linked resources. Permit
   /// those aliases only after anchoring the complete bundle path and nested signature to
   /// Apple's Xcode requirement; all other snapshot sources retain the nlink == 1 rule.
@@ -113,7 +116,7 @@ extension MCPExecutableSnapshot {
     var requirement: SecRequirement?
     guard
       SecRequirementCreateWithString(
-        "anchor apple generic and identifier \"com.apple.dt.Xcode\"" as CFString,
+        xcodeCodeSigningRequirement as CFString,
         SecCSFlags(rawValue: kSecCSDefaultFlags),
         &requirement
       ) == errSecSuccess,

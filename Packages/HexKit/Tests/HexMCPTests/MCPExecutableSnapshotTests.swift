@@ -6,6 +6,13 @@ import Testing
 
 @Suite("MCP executable snapshot bounds", .serialized)
 struct MCPExecutableSnapshotTests {
+  @Test("Uses a non-generic Apple anchor for the Xcode hard-link exception")
+  func xcodeCodeSigningRequirementIsAppleOwned() {
+    let requirement = MCPExecutableSnapshot.xcodeCodeSigningRequirement
+    #expect(requirement == #"anchor apple and identifier "com.apple.dt.Xcode""#)
+    #expect(!requirement.contains("generic"))
+  }
+
   @Test("Parses and merges bounded fat Mach-O dependency graphs")
   func parsesFatMachODependencyGraph() throws {
     let firstSlice = thinImage(
