@@ -21,6 +21,7 @@ struct InferenceRequestTests {
       id: requestID,
       providerID: ProviderID(rawValue: "provider"),
       modelID: ModelID(rawValue: "model"),
+      previousProviderResponseID: "response-previous",
       messages: [Message(role: .developer, content: [.text("Be precise.")])],
       tools: [tool],
       toolChoice: .named("search"),
@@ -31,6 +32,7 @@ struct InferenceRequestTests {
 
     #expect(decoded == request)
     #expect(decoded.id == requestID)
+    #expect(decoded.previousProviderResponseID == "response-previous")
     #expect(decoded.messages.first?.role == .developer)
   }
 
@@ -43,9 +45,30 @@ struct InferenceRequestTests {
     )
 
     #expect(request.tools.isEmpty)
+    #expect(request.previousProviderResponseID == nil)
     #expect(request.toolChoice == .automatic)
     #expect(request.options.maxOutputTokens == nil)
     #expect(request.options.temperature == nil)
+  }
+
+  @Test
+  func decodesJournaledRequestsThatPredateProviderContinuation() throws {
+    let request = InferenceRequest(
+      providerID: ProviderID(rawValue: "provider"),
+      modelID: ModelID(rawValue: "model"),
+      messages: []
+    )
+    var object = try #require(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
+    )
+    object.removeValue(forKey: "previousProviderResponseID")
+
+    let decoded = try JSONDecoder().decode(
+      InferenceRequest.self,
+      from: JSONSerialization.data(withJSONObject: object)
+    )
+
+    #expect(decoded.previousProviderResponseID == nil)
   }
 
   private func roundTrip(_ value: InferenceRequest) throws -> InferenceRequest {
