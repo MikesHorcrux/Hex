@@ -8,6 +8,7 @@ public actor CodexAppServerConnection: CodexAppServerTransport {
   var notificationHandler: (any CodexAppServerNotificationHandler)?
   var state = CodexAppServerConnectionState.disconnected
   var generation = UInt64(0)
+  var establishmentGeneration: UInt64?
   var nextRequestID = Int64(1)
   var pendingRequests: [Int64: CodexAppServerPendingRequest] = [:]
   var outputBuffer = Data()

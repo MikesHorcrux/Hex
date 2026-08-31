@@ -98,7 +98,10 @@ extension CodexAppServerConnection {
       throw CodexAppServerConnectionError.protocolViolation
     }
 
-    if case .string(let method)? = object["method"] {
+    if let methodValue = object["method"] {
+      guard case .string(let method) = methodValue else {
+        throw CodexAppServerConnectionError.protocolViolation
+      }
       guard Self.validMethod(method), object["result"] == nil, object["error"] == nil else {
         throw CodexAppServerConnectionError.protocolViolation
       }
@@ -178,18 +181,8 @@ extension CodexAppServerConnection {
 
   private func validServerRequestID(_ value: JSONValue) -> Bool {
     switch value {
-    case .integer(let identifier):
-      identifier >= 0
-    case .string(let identifier):
-      !identifier.isEmpty && identifier.utf8.count <= 128
-        && !identifier.unicodeScalars.contains { scalar in
-          switch scalar.properties.generalCategory {
-          case .control, .format, .lineSeparator, .paragraphSeparator:
-            true
-          default:
-            false
-          }
-        }
+    case .integer, .string:
+      true
     default:
       false
     }

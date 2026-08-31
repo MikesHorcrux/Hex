@@ -504,6 +504,107 @@ struct CodexAccountClientTests {
   }
 
   @Test
+  func acceptsOneExactCompletionAfterSuccessfulCancellationResponse() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let client = CodexAccountClient(transport: transport)
+    let starting = Task { try await client.startLogin(.browser) }
+    await transport.waitForRequest()
+    await transport.succeed(
+      with: .object([
+        "type": .string("chatgpt"),
+        "loginId": .string("login-late-completion"),
+        "authUrl": .string("https://auth.openai.com/authorize"),
+      ])
+    )
+    let challenge = try await starting.value
+    let cancelling = Task { try await client.cancelLogin(challenge.loginID) }
+    await transport.waitForRequest(count: 2)
+    await transport.succeed(with: .object(["status": .string("canceled")]))
+    #expect(try await cancelling.value == .cancelled)
+
+    let unrelated = try CodexLoginCompletion(
+      appServerParameters: .object([
+        "loginId": .string("login-unrelated"),
+        "success": .boolean(true),
+      ])
+    )
+    await #expect(throws: CodexAccountClientError.loginIdentifierMismatch) {
+      try await client.acceptLoginCompletion(unrelated)
+    }
+
+    let completion = try CodexLoginCompletion(
+      appServerParameters: .object([
+        "loginId": .string(challenge.loginID.rawValue),
+        "success": .boolean(false),
+        "error": .string("provider-secret-that-must-not-be-retained"),
+      ])
+    )
+    try await client.acceptLoginCompletion(completion)
+    #expect(await client.loginCompletion(for: challenge.loginID) == completion)
+    #expect(!String(describing: completion).contains("provider-secret"))
+    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+      try await client.acceptLoginCompletion(completion)
+    }
+  }
+
+  @Test
+  func lateCancelledCompletionCannotPoisonAReplacementLoginRace() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let client = CodexAccountClient(transport: transport)
+    let firstStart = Task { try await client.startLogin(.browser) }
+    await transport.waitForRequest()
+    await transport.succeed(
+      with: .object([
+        "type": .string("chatgpt"),
+        "loginId": .string("login-retired"),
+        "authUrl": .string("https://auth.openai.com/authorize"),
+      ])
+    )
+    let firstChallenge = try await firstStart.value
+    let cancelling = Task { try await client.cancelLogin(firstChallenge.loginID) }
+    await transport.waitForRequest(count: 2)
+    await transport.succeed(with: .object(["status": .string("canceled")]))
+    _ = try await cancelling.value
+
+    let replacementStart = Task { try await client.startLogin(.browser) }
+    await transport.waitForRequest(count: 3)
+    let retiredCompletion = try CodexLoginCompletion(
+      appServerParameters: .object([
+        "loginId": .string(firstChallenge.loginID.rawValue),
+        "success": .boolean(false),
+        "error": .string("provider-secret"),
+      ])
+    )
+    try await client.acceptLoginCompletion(retiredCompletion)
+    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+      try await client.acceptLoginCompletion(retiredCompletion)
+    }
+
+    let replacementID = try CodexLoginID(rawValue: "login-replacement")
+    let replacementCompletion = try CodexLoginCompletion(
+      appServerParameters: .object([
+        "loginId": .string(replacementID.rawValue),
+        "success": .boolean(true),
+      ])
+    )
+    try await client.acceptLoginCompletion(replacementCompletion)
+    await transport.succeed(
+      with: .object([
+        "type": .string("chatgpt"),
+        "loginId": .string(replacementID.rawValue),
+        "authUrl": .string("https://auth.openai.com/authorize"),
+      ])
+    )
+
+    let replacementChallenge = try await replacementStart.value
+    #expect(replacementChallenge.loginID == replacementID)
+    #expect(await client.loginCompletion(for: replacementID) == replacementCompletion)
+    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+      try await client.acceptLoginCompletion(retiredCompletion)
+    }
+  }
+
+  @Test
   func redactsTransportFailuresAndPreservesCancellation() async throws {
     let failingClient = CodexAccountClient(
       transport: TestCodexAppServerTransport(outcomes: [.failure])

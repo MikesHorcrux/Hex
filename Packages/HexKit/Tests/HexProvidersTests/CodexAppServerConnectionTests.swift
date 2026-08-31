@@ -60,6 +60,141 @@ struct CodexAppServerConnectionTests {
   }
 
   @Test
+  func cancellationDuringOpenStartsAndAwaitsPhysicalClose() async throws {
+    let channel = TestCodexAppServerChannel()
+    await channel.blockOpen()
+    await channel.blockClose()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    let completionProbe = TestTaskCompletionProbe()
+    let connecting = Task {
+      do {
+        try await connection.connect()
+        await completionProbe.recordCompletion()
+      } catch {
+        await completionProbe.recordCompletion()
+        throw error
+      }
+    }
+    await channel.waitUntilOpenStarts()
+
+    connecting.cancel()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(await channel.hasCloseStarted())
+    #expect(!(await completionProbe.hasCompleted()))
+
+    await channel.releaseOpen()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await completionProbe.hasCompleted()))
+    await channel.releaseClose()
+    await #expect(throws: CancellationError.self) {
+      try await connecting.value
+    }
+    #expect(await completionProbe.hasCompleted())
+    #expect(await channel.closeCount() == 1)
+    #expect(!(await channel.isOpen()))
+  }
+
+  @Test
+  func cancelledSuspendedOpenMustUnwindBeforeAReplacementCanConnect() async throws {
+    let channel = TestCodexAppServerChannel()
+    await channel.blockOpen()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    let firstConnect = Task { try await connection.connect() }
+    await channel.waitUntilOpenStarts()
+    firstConnect.cancel()
+    await channel.waitUntilCloseStarts()
+    #expect(await channel.closeCount() == 1)
+
+    await #expect(throws: CodexAppServerConnectionError.alreadyConnected) {
+      try await connection.connect()
+    }
+
+    await channel.releaseOpen()
+    await #expect(throws: CancellationError.self) {
+      try await firstConnect.value
+    }
+    #expect(await channel.closeCount() == 1)
+    #expect(!(await channel.isOpen()))
+
+    let replacementConnect = Task { try await connection.connect() }
+    _ = await channel.frame(at: 0)
+    await channel.yield(
+      try encodedLine(
+        .object([
+          "id": .integer(1),
+          "result": initializationResult(),
+        ])
+      )
+    )
+    _ = await channel.frame(at: 1)
+    try await replacementConnect.value
+    #expect(await channel.closeCount() == 1)
+    #expect(await channel.isOpen())
+    await connection.disconnect()
+    #expect(await channel.closeCount() == 2)
+  }
+
+  @Test
+  func cancellationDuringInitializedWriteWinsAndAwaitsPhysicalClose() async throws {
+    let channel = TestCodexAppServerChannel()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    await channel.blockClose()
+    let completionProbe = TestTaskCompletionProbe()
+    let connecting = Task {
+      do {
+        try await connection.connect()
+        await completionProbe.recordCompletion()
+      } catch {
+        await completionProbe.recordCompletion()
+        throw error
+      }
+    }
+    _ = await channel.frame(at: 0)
+    await channel.blockNextWrite(failing: true)
+    await channel.yield(
+      try encodedLine(
+        .object([
+          "id": .integer(1),
+          "result": initializationResult(),
+        ])
+      )
+    )
+    let initialized = try decodeFrame(await channel.waitUntilWriteBlocks())
+    guard case .object(let initializedObject) = initialized else {
+      Issue.record("Expected the initialized notification.")
+      await channel.releaseBlockedWrite()
+      await channel.releaseClose()
+      return
+    }
+    #expect(initializedObject["method"] == .string("initialized"))
+
+    connecting.cancel()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(await channel.hasCloseStarted())
+    #expect(!(await completionProbe.hasCompleted()))
+
+    await channel.releaseBlockedWrite()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await completionProbe.hasCompleted()))
+    await channel.releaseClose()
+    await #expect(throws: CancellationError.self) {
+      try await connecting.value
+    }
+    #expect(await completionProbe.hasCompleted())
+    #expect(await channel.closeCount() == 1)
+    #expect(!(await channel.isOpen()))
+  }
+
+  @Test
   func carriesAccountRequestsWithoutExposingTokens() async throws {
     let channel = TestCodexAppServerChannel()
     let connection = CodexAppServerConnection(
@@ -250,6 +385,55 @@ struct CodexAppServerConnectionTests {
     }
     #expect(await completionProbe.hasCompleted())
     #expect(await channel.closeCount() == 1)
+  }
+
+  @Test
+  func cancellationWinsAConcurrentResponseAndWriteFailureAfterPhysicalClose() async throws {
+    let channel = TestCodexAppServerChannel()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    try await finishHandshake(connection: connection, channel: channel)
+    await channel.blockNextWrite(failing: true)
+    await channel.blockClose()
+    let completionProbe = TestTaskCompletionProbe()
+    let request = Task {
+      do {
+        let value = try await connection.send(
+          CodexAppServerRequest(method: "account/read", parameters: .object([:]))
+        )
+        await completionProbe.recordCompletion()
+        return value
+      } catch {
+        await completionProbe.recordCompletion()
+        throw error
+      }
+    }
+    let frame = try decodeFrame(await channel.waitUntilWriteBlocks())
+    guard case .object(let object) = frame, case .integer(let requestID)? = object["id"] else {
+      Issue.record("Expected a request identifier.")
+      await channel.releaseBlockedWrite()
+      await channel.releaseClose()
+      return
+    }
+    await channel.yield(
+      try encodedLine(.object(["id": .integer(requestID), "result": .object([:])]))
+    )
+
+    request.cancel()
+    await channel.waitUntilCloseStarts()
+    await channel.releaseBlockedWrite()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await completionProbe.hasCompleted()))
+    await channel.releaseClose()
+
+    await #expect(throws: CancellationError.self) {
+      try await request.value
+    }
+    #expect(await completionProbe.hasCompleted())
+    #expect(await channel.closeCount() == 1)
+    #expect(!(await channel.isOpen()))
   }
 
   @Test
@@ -512,6 +696,92 @@ struct CodexAppServerConnectionTests {
           ]),
         ])
     )
+    await connection.disconnect()
+  }
+
+  @Test
+  func rejectsEveryPresentNonStringMethodInsteadOfTreatingItAsAResponse() async throws {
+    let invalidMethods: [JSONValue] = [
+      .null,
+      .boolean(false),
+      .integer(7),
+      .number(1.5),
+      .array([]),
+      .object([:]),
+    ]
+
+    for invalidMethod in invalidMethods {
+      let channel = TestCodexAppServerChannel()
+      let connection = CodexAppServerConnection(
+        configuration: try configuration(),
+        channel: channel
+      )
+      try await finishHandshake(connection: connection, channel: channel)
+      let request = Task {
+        try await connection.send(
+          CodexAppServerRequest(method: "account/read", parameters: .object([:]))
+        )
+      }
+      let frame = try decodeFrame(await channel.frame(at: 2))
+      guard case .object(let object) = frame, let requestID = object["id"] else {
+        Issue.record("Expected a request identifier.")
+        await connection.disconnect()
+        continue
+      }
+      await channel.yield(
+        try encodedLine(
+          .object([
+            "id": requestID,
+            "method": invalidMethod,
+            "result": .object([:]),
+          ])
+        )
+      )
+      await #expect(throws: CodexAppServerConnectionError.self) {
+        try await request.value
+      }
+      #expect(await channel.closeCount() == 1)
+    }
+  }
+
+  @Test
+  func echoesOpaqueBoundedServerRequestIdentifiersWithoutConversion() async throws {
+    let channel = TestCodexAppServerChannel()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    try await finishHandshake(connection: connection, channel: channel)
+    let identifiers: [JSONValue] = [
+      .integer(Int64.min),
+      .integer(-1),
+      .integer(Int64.max),
+      .string(""),
+      .string(String(repeating: "opaque-", count: 1_024)),
+      .string("control-\u{0000}-bidi-\u{202E}"),
+    ]
+
+    for (offset, identifier) in identifiers.enumerated() {
+      await channel.yield(
+        try encodedLine(
+          .object([
+            "id": identifier,
+            "method": .string("commandExecution/requestApproval"),
+            "params": .object([:]),
+          ])
+        )
+      )
+      let response = try decodeFrame(await channel.frame(at: offset + 2))
+      guard case .object(let responseObject) = response,
+        case .object(let errorObject)? = responseObject["error"]
+      else {
+        Issue.record("Expected a method-not-found response.")
+        continue
+      }
+      #expect(responseObject["id"] == identifier)
+      #expect(errorObject["code"] == .integer(-32_601))
+    }
+    #expect(await channel.closeCount() == 0)
     await connection.disconnect()
   }
 

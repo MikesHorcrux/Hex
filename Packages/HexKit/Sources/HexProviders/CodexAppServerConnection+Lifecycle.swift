@@ -17,52 +17,90 @@ extension CodexAppServerConnection {
 
     generation += 1
     let openingGeneration = generation
+    establishmentGeneration = openingGeneration
     state = .opening
     do {
-      let output = try await channel.open(
-        maximumReadBytes: configuration.maximumReadBytes
-      )
-      try Task.checkCancellation()
-      guard generation == openingGeneration, state == .opening else {
-        await channel.close()
-        throw CodexAppServerConnectionError.connectionClosed
+      try await withTaskCancellationHandler {
+        try await establishConnection(generation: openingGeneration)
+      } onCancel: { [weak self] in
+        Task {
+          await self?.cancelConnectionEstablishment(generation: openingGeneration)
+        }
       }
-
-      outputBuffer = Data()
-      nextRequestID = 1
-      state = .handshaking
-      readerTask = Self.makeReaderTask(
-        output: output,
-        generation: openingGeneration,
-        connection: self
-      )
-
-      let result = try await requestResult(
-        method: "initialize",
-        parameters: configuration.initializeParameters,
-        generation: openingGeneration,
-        permittedState: .handshaking
-      )
-      try validateInitialization(result)
-      try await writeNotification(
-        method: "initialized",
-        parameters: .object([:]),
-        generation: openingGeneration,
-        permittedState: .handshaking
-      )
       try Task.checkCancellation()
-      guard generation == openingGeneration, state == .handshaking else {
+      guard generation == openingGeneration, state == .ready else {
         throw CodexAppServerConnectionError.handshakeFailed
       }
-      state = .ready
+      finishConnectionEstablishment(generation: openingGeneration)
     } catch {
       await closeConnection(error: sanitized(error))
+      finishConnectionEstablishment(generation: openingGeneration)
       throw sanitized(error, duringHandshake: true)
     }
   }
 
   public func disconnect() async {
     await closeConnection(error: CodexAppServerConnectionError.connectionClosed)
+  }
+
+  private func establishConnection(generation openingGeneration: UInt64) async throws {
+    let output = try await channel.open(
+      maximumReadBytes: configuration.maximumReadBytes
+    )
+    guard generation == openingGeneration, state == .opening else {
+      let activeShutdown = shutdown
+      if let activeShutdown {
+        await activeShutdown.completion.value
+      }
+      await channel.close()
+      try Task.checkCancellation()
+      throw CodexAppServerConnectionError.connectionClosed
+    }
+    try Task.checkCancellation()
+
+    outputBuffer = Data()
+    nextRequestID = 1
+    state = .handshaking
+    readerTask = Self.makeReaderTask(
+      output: output,
+      generation: openingGeneration,
+      connection: self
+    )
+
+    let result = try await requestResult(
+      method: "initialize",
+      parameters: configuration.initializeParameters,
+      generation: openingGeneration,
+      permittedState: .handshaking
+    )
+    try validateInitialization(result)
+    try await writeNotification(
+      method: "initialized",
+      parameters: .object([:]),
+      generation: openingGeneration,
+      permittedState: .handshaking
+    )
+    try Task.checkCancellation()
+    guard generation == openingGeneration, state == .handshaking else {
+      throw CodexAppServerConnectionError.handshakeFailed
+    }
+    state = .ready
+    try Task.checkCancellation()
+  }
+
+  private func cancelConnectionEstablishment(generation cancelledGeneration: UInt64) async {
+    guard generation == cancelledGeneration else { return }
+    if let shutdown = beginShutdown(error: CancellationError()) {
+      await shutdown.completion.value
+    }
+  }
+
+  private func finishConnectionEstablishment(generation finishedGeneration: UInt64) {
+    guard establishmentGeneration == finishedGeneration else { return }
+    establishmentGeneration = nil
+    guard state == .closing, shutdown?.generation == finishedGeneration else { return }
+    shutdown = nil
+    state = .disconnected
   }
 
   static func makeReaderTask(

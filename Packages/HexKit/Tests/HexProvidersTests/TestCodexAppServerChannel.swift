@@ -7,6 +7,10 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
   private var recordedFrames: [Data] = []
   private var frameWaiters: [Int: [CheckedContinuation<Data, Never>]] = [:]
   private var openState = false
+  private var shouldBlockOpen = false
+  private var openStarted = false
+  private var openStartWaiters: [CheckedContinuation<Void, Never>] = []
+  private var openReleaseWaiters: [CheckedContinuation<Void, Never>] = []
   private var physicalCloseCount = 0
   private var failWrites = false
   private var shouldBlockClose = false
@@ -33,6 +37,17 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
     outputContinuation = continuation
     self.maximumReadBytes = maximumReadBytes
     openState = true
+    openStarted = true
+    let startWaiters = openStartWaiters
+    openStartWaiters = []
+    for waiter in startWaiters {
+      waiter.resume()
+    }
+    if shouldBlockOpen {
+      await withCheckedContinuation { continuation in
+        openReleaseWaiters.append(continuation)
+      }
+    }
     return stream
   }
 
@@ -102,6 +117,10 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
     physicalCloseCount
   }
 
+  func isOpen() -> Bool {
+    openState
+  }
+
   func yield(_ data: Data) {
     guard data.count <= maximumReadBytes else {
       outputContinuation?.finish(throwing: TestCodexAppServerChannelError.failed("read-secret"))
@@ -120,6 +139,26 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
 
   func setFailWrites(_ enabled: Bool) {
     failWrites = enabled
+  }
+
+  func blockOpen() {
+    shouldBlockOpen = true
+  }
+
+  func waitUntilOpenStarts() async {
+    guard !openStarted else { return }
+    await withCheckedContinuation { continuation in
+      openStartWaiters.append(continuation)
+    }
+  }
+
+  func releaseOpen() {
+    shouldBlockOpen = false
+    let waiters = openReleaseWaiters
+    openReleaseWaiters = []
+    for waiter in waiters {
+      waiter.resume()
+    }
   }
 
   func blockNextWrite(failing: Bool = false) {
@@ -154,6 +193,10 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
     await withCheckedContinuation { continuation in
       closeStartWaiters.append(continuation)
     }
+  }
+
+  func hasCloseStarted() -> Bool {
+    closeStarted
   }
 
   func releaseClose() {

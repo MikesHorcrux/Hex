@@ -50,7 +50,11 @@ extension CodexAppServerConnection {
       return
     }
     outputBuffer = Data()
-    state = .disconnected
-    shutdown = nil
+    if establishmentGeneration == shutdownGeneration {
+      state = .closing
+    } else {
+      state = .disconnected
+      shutdown = nil
+    }
   }
 }

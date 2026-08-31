@@ -8,6 +8,8 @@ public actor CodexAccountClient {
   private let transport: any CodexAppServerTransport
   private var state = CodexAccountClientState.idle
   private var latestLoginCompletion: CodexLoginCompletion?
+  private var cancelledLoginCompletionID: CodexLoginID?
+  private var hasAcceptedCancelledLoginCompletion = false
 
   public init(transport: any CodexAppServerTransport) {
     self.transport = transport
@@ -92,9 +94,11 @@ public actor CodexAccountClient {
       )
       try Task.checkCancellation()
       let status = try decodeCancellationStatus(result)
-      guard case .cancelling(let activeID, _) = state, activeID == loginID else {
+      guard case .cancelling(let activeID, let completion) = state, activeID == loginID else {
         throw CodexAccountClientError.transitionInProgress
       }
+      cancelledLoginCompletionID = loginID
+      hasAcceptedCancelledLoginCompletion = completion != nil
       state = .idle
       return status
     } catch {
@@ -111,24 +115,52 @@ public actor CodexAccountClient {
     }
 
     switch state {
-    case .starting(let mode, nil):
-      state = .starting(mode, completion)
-    case .starting(_, .some):
-      throw CodexAccountClientError.unexpectedLoginCompletion
+    case .starting(let mode, let earlyCompletion):
+      if cancelledLoginCompletionID == loginID {
+        guard !hasAcceptedCancelledLoginCompletion else {
+          throw CodexAccountClientError.unexpectedLoginCompletion
+        }
+        hasAcceptedCancelledLoginCompletion = true
+      } else if earlyCompletion == nil {
+        state = .starting(mode, completion)
+      } else {
+        throw CodexAccountClientError.unexpectedLoginCompletion
+      }
     case .awaiting(let pendingID):
-      guard pendingID == loginID else {
+      if pendingID == loginID {
+        state = .idle
+      } else if cancelledLoginCompletionID == loginID {
+        guard !hasAcceptedCancelledLoginCompletion else {
+          throw CodexAccountClientError.unexpectedLoginCompletion
+        }
+        hasAcceptedCancelledLoginCompletion = true
+      } else {
         throw CodexAccountClientError.loginIdentifierMismatch
       }
-      state = .idle
-    case .cancelling(let pendingID, nil):
-      guard pendingID == loginID else {
+    case .cancelling(let pendingID, let cancellationCompletion):
+      if pendingID == loginID, cancellationCompletion == nil {
+        state = .cancelling(pendingID, completion)
+      } else if pendingID == loginID {
+        throw CodexAccountClientError.unexpectedLoginCompletion
+      } else if cancelledLoginCompletionID == loginID {
+        guard !hasAcceptedCancelledLoginCompletion else {
+          throw CodexAccountClientError.unexpectedLoginCompletion
+        }
+        hasAcceptedCancelledLoginCompletion = true
+      } else {
         throw CodexAccountClientError.loginIdentifierMismatch
       }
-      state = .cancelling(pendingID, completion)
-    case .cancelling(_, .some):
-      throw CodexAccountClientError.unexpectedLoginCompletion
     case .idle, .loggingOut:
-      throw CodexAccountClientError.unexpectedLoginCompletion
+      if cancelledLoginCompletionID == loginID {
+        guard !hasAcceptedCancelledLoginCompletion else {
+          throw CodexAccountClientError.unexpectedLoginCompletion
+        }
+        hasAcceptedCancelledLoginCompletion = true
+      } else if cancelledLoginCompletionID == nil {
+        throw CodexAccountClientError.unexpectedLoginCompletion
+      } else {
+        throw CodexAccountClientError.loginIdentifierMismatch
+      }
     }
     latestLoginCompletion = completion
   }
