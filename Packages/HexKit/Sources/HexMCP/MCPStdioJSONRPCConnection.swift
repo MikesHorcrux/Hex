@@ -14,10 +14,14 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
   var writeQueue: [MCPWriteOperation] = []
   var activeWriterGeneration: UInt64?
   var shutdown: MCPConnectionShutdown?
+  let spawnProcess: @Sendable (MCPServerConfiguration) throws -> MCPSpawnedProcess
   let terminateProcess: @Sendable (MCPSpawnedProcess) async -> Void
 
   init(configuration: MCPServerConfiguration) {
     self.configuration = configuration
+    self.spawnProcess = { configuration in
+      try MCPStdioProcessSpawner.spawn(configuration)
+    }
     let shutdownGraceMilliseconds = configuration.shutdownGraceMilliseconds
     self.terminateProcess = { spawned in
       await MCPStdioJSONRPCConnection.terminate(
@@ -32,7 +36,25 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
     terminateProcess: @escaping @Sendable (MCPSpawnedProcess) async -> Void
   ) {
     self.configuration = configuration
+    self.spawnProcess = { configuration in
+      try MCPStdioProcessSpawner.spawn(configuration)
+    }
     self.terminateProcess = terminateProcess
+  }
+
+  init(
+    configuration: MCPServerConfiguration,
+    spawnProcess: @escaping @Sendable (MCPServerConfiguration) throws -> MCPSpawnedProcess
+  ) {
+    self.configuration = configuration
+    self.spawnProcess = spawnProcess
+    let shutdownGraceMilliseconds = configuration.shutdownGraceMilliseconds
+    self.terminateProcess = { spawned in
+      await MCPStdioJSONRPCConnection.terminate(
+        spawned,
+        shutdownGraceMilliseconds: shutdownGraceMilliseconds
+      )
+    }
   }
 
   func connect() async throws {
@@ -47,7 +69,7 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
     guard generation < UInt64.max else {
       throw MCPClientSessionError.limitExceeded
     }
-    let spawned = try MCPStdioProcessSpawner.spawn(configuration)
+    let spawned = try spawnProcess(configuration)
     generation += 1
     let connectedGeneration = generation
     process = spawned

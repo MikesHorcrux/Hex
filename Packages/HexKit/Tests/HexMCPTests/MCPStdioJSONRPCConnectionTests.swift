@@ -1,12 +1,316 @@
 import Darwin
 import Foundation
 import HexCore
+import Synchronization
 import Testing
 
 @testable import HexMCP
 
 @Suite("MCP stdio JSON-RPC connection", .serialized)
 struct MCPStdioJSONRPCConnectionTests {
+  @Test("Executes a private snapshot when the configured path is replaced before spawn")
+  func configuredExecutableReplacementNeverRuns() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let configuredExecutable = fixtureDirectory.appendingPathComponent("server")
+    let replacementExecutable = fixtureDirectory.appendingPathComponent("replacement")
+    let marker = fixtureDirectory.appendingPathComponent("attacker-ran")
+    try writeLegitimateExecutable(to: configuredExecutable)
+    try writeAttackerExecutable(to: replacementExecutable, marker: marker)
+    let configuration = try mutableExecutableConfiguration(
+      executableURL: configuredExecutable
+    )
+    let observedLaunchPath = Mutex<String?>(nil)
+    let replacementResult = Mutex<Int32?>(nil)
+    let configuredPath = configuredExecutable.path
+    let replacementPath = replacementExecutable.path
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { configuration in
+        try MCPStdioProcessSpawner.spawn(
+          configuration,
+          beforeExecution: { configuredPath, launchPath in
+            observedLaunchPath.withLock { $0 = launchPath }
+            replacementResult.withLock { result in
+              result = Darwin.rename(replacementPath, configuredPath)
+            }
+          }
+        )
+      }
+    )
+    let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+
+    try await session.connect()
+    await session.disconnect()
+
+    #expect(replacementResult.withLock { $0 } == 0)
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    let launchPath = try #require(observedLaunchPath.withLock { $0 })
+    #expect(launchPath != configuredPath)
+    #expect(!FileManager.default.fileExists(atPath: launchPath))
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: URL(fileURLWithPath: launchPath).deletingLastPathComponent().path))
+  }
+
+  @Test("Rejects in-place executable mutation after validation without running mutated bytes")
+  func inPlaceExecutableMutationNeverRuns() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let configuredExecutable = fixtureDirectory.appendingPathComponent("server")
+    let marker = fixtureDirectory.appendingPathComponent("attacker-ran")
+    try writeLegitimateExecutable(to: configuredExecutable)
+    let legitimateByteCount = try Data(contentsOf: configuredExecutable).count
+    var paddedMaliciousBytes = Data(attackerScript(marker: marker).utf8)
+    #expect(paddedMaliciousBytes.count < legitimateByteCount)
+    paddedMaliciousBytes.append(
+      Data(repeating: 32, count: legitimateByteCount - paddedMaliciousBytes.count)
+    )
+    let maliciousBytes = paddedMaliciousBytes
+    let mutationResult = Mutex<Bool?>(nil)
+    let observedSnapshotPath = Mutex<String?>(nil)
+    let configuration = try mutableExecutableConfiguration(
+      executableURL: configuredExecutable
+    )
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { configuration in
+        try MCPStdioProcessSpawner.spawn(
+          configuration,
+          afterSourceValidation: { snapshotPath in
+            observedSnapshotPath.withLock { $0 = snapshotPath }
+            mutationResult.withLock { result in
+              result = Self.overwriteFile(
+                atPath: configuredExecutable.path,
+                with: maliciousBytes
+              )
+            }
+          }
+        )
+      }
+    )
+    let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+
+    await #expect(throws: MCPClientSessionError.connectionClosed) {
+      try await session.connect()
+    }
+
+    #expect(mutationResult.withLock { $0 } == true)
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+    #expect(!FileManager.default.fileExists(atPath: snapshotPath))
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
+      )
+    )
+  }
+
+  @Test("Rejects oversized and hard-linked executable sources before launch")
+  func rejectsUnsafeExecutableSources() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let oversizedExecutable = fixtureDirectory.appendingPathComponent("oversized")
+    let oversizedDescriptor = Darwin.open(
+      oversizedExecutable.path,
+      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+      0o700
+    )
+    #expect(oversizedDescriptor >= 0)
+    guard oversizedDescriptor >= 0 else { return }
+    #expect(
+      ftruncate(
+        oversizedDescriptor,
+        MCPExecutableSnapshot.maximumExecutableBytes + 1
+      ) == 0
+    )
+    Darwin.close(oversizedDescriptor)
+
+    let hardLinkedExecutable = fixtureDirectory.appendingPathComponent("hard-linked")
+    let secondLink = fixtureDirectory.appendingPathComponent("second-link")
+    try writeLegitimateExecutable(to: hardLinkedExecutable)
+    #expect(Darwin.link(hardLinkedExecutable.path, secondLink.path) == 0)
+
+    for executable in [oversizedExecutable, hardLinkedExecutable] {
+      let configuration = try mutableExecutableConfiguration(executableURL: executable)
+      let session = LocalMCPClientSession(configuration: configuration)
+      await #expect(throws: MCPClientSessionError.connectionClosed) {
+        try await session.connect()
+      }
+    }
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: fixtureDirectory.appendingPathComponent("attacker-ran").path))
+  }
+
+  @Test("Rejects symlinked, nonregular, and unsafely permissioned executable sources")
+  func rejectsInvalidExecutableFileKindsAndPermissions() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let validExecutable = fixtureDirectory.appendingPathComponent("valid")
+    let symlinkedExecutable = fixtureDirectory.appendingPathComponent("symlink")
+    let nonregularExecutable = fixtureDirectory.appendingPathComponent(
+      "directory", isDirectory: true)
+    let fifoExecutable = fixtureDirectory.appendingPathComponent("fifo")
+    let writableExecutable = fixtureDirectory.appendingPathComponent("group-writable")
+    let nonexecutableFile = fixtureDirectory.appendingPathComponent("nonexecutable")
+    let setIDExecutable = fixtureDirectory.appendingPathComponent("set-id")
+    try writeLegitimateExecutable(to: validExecutable)
+    #expect(Darwin.symlink(validExecutable.path, symlinkedExecutable.path) == 0)
+    try FileManager.default.createDirectory(
+      at: nonregularExecutable, withIntermediateDirectories: false)
+    #expect(Darwin.mkfifo(fifoExecutable.path, 0o700) == 0)
+    try writeLegitimateExecutable(to: writableExecutable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o720],
+      ofItemAtPath: writableExecutable.path
+    )
+    try Data("not executable".utf8).write(to: nonexecutableFile, options: .withoutOverwriting)
+    try writeLegitimateExecutable(to: setIDExecutable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o4_700],
+      ofItemAtPath: setIDExecutable.path
+    )
+
+    let invalidExecutables = [
+      symlinkedExecutable,
+      nonregularExecutable,
+      fifoExecutable,
+      writableExecutable,
+      nonexecutableFile,
+      setIDExecutable,
+    ]
+    for executable in invalidExecutables {
+      let configuration = try mutableExecutableConfiguration(executableURL: executable)
+      let session = LocalMCPClientSession(configuration: configuration)
+      await #expect(throws: MCPClientSessionError.connectionClosed) {
+        try await session.connect()
+      }
+    }
+  }
+
+  @Test("Rejects source growth and short reads while building the private snapshot")
+  func rejectsSourceSizeChangesDuringSnapshot() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+
+    for mutation in ["growth", "short-read"] {
+      let executable = fixtureDirectory.appendingPathComponent(mutation)
+      try writeLegitimateExecutable(to: executable)
+      let configuration = try mutableExecutableConfiguration(executableURL: executable)
+      let observedSnapshotPath = Mutex<String?>(nil)
+      let connection = MCPStdioJSONRPCConnection(
+        configuration: configuration,
+        spawnProcess: { configuration in
+          try MCPStdioProcessSpawner.spawn(
+            configuration,
+            afterSourceValidation: { snapshotPath in
+              observedSnapshotPath.withLock { $0 = snapshotPath }
+              switch mutation {
+              case "growth":
+                #expect(Self.appendByte(atPath: executable.path))
+              default:
+                #expect(Darwin.truncate(executable.path, 1) == 0)
+              }
+            }
+          )
+        }
+      )
+      let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+
+      await #expect(throws: MCPClientSessionError.connectionClosed) {
+        try await session.connect()
+      }
+
+      let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+      #expect(!FileManager.default.fileExists(atPath: snapshotPath))
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
+        )
+      )
+    }
+  }
+
+  @Test("Repeated rejected snapshots release their private files and descriptors")
+  func repeatedRejectedSnapshotsDoNotLeakResources() throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let descriptorCountBefore = try openDescriptorCount()
+
+    for index in 0..<32 {
+      let executable = fixtureDirectory.appendingPathComponent("server-\(index)")
+      try writeLegitimateExecutable(to: executable)
+      let configuration = try mutableExecutableConfiguration(executableURL: executable)
+      let observedSnapshotPath = Mutex<String?>(nil)
+
+      #expect(throws: MCPClientSessionError.connectionClosed) {
+        _ = try MCPStdioProcessSpawner.spawn(
+          configuration,
+          afterSourceValidation: { snapshotPath in
+            observedSnapshotPath.withLock { $0 = snapshotPath }
+            #expect(Darwin.truncate(executable.path, 1) == 0)
+          }
+        )
+      }
+
+      let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+      #expect(!FileManager.default.fileExists(atPath: snapshotPath))
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
+        )
+      )
+    }
+
+    #expect(try openDescriptorCount() <= descriptorCountBefore)
+  }
+
+  @Test("Cancellation releases a live executable snapshot after terminating the child")
+  func cancellationCleansLiveSnapshot() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let executable = fixtureDirectory.appendingPathComponent("silent-server")
+    try writeSilentExecutable(to: executable)
+    let configuration = try mutableExecutableConfiguration(executableURL: executable)
+    let spawnReached = AsyncStream<Void>.makeStream(
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    let observedSnapshotPath = Mutex<String?>(nil)
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { configuration in
+        try MCPStdioProcessSpawner.spawn(
+          configuration,
+          beforeExecution: { _, launchPath in
+            observedSnapshotPath.withLock { $0 = launchPath }
+            spawnReached.continuation.yield()
+          }
+        )
+      }
+    )
+    let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+    let connectTask = Task {
+      try await session.connect()
+    }
+
+    var spawnEvents = spawnReached.stream.makeAsyncIterator()
+    await #expect(spawnEvents.next() != nil)
+    connectTask.cancel()
+    await #expect(throws: CancellationError.self) {
+      try await connectTask.value
+    }
+    await session.disconnect()
+
+    let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+    #expect(!FileManager.default.fileExists(atPath: snapshotPath))
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
+      )
+    )
+  }
+
   @Test("Does not inherit unrelated parent file descriptors")
   func doesNotInheritUnrelatedDescriptors() async throws {
     let sourceDescriptor = Darwin.open("/dev/null", O_RDONLY)
@@ -314,6 +618,110 @@ struct MCPStdioJSONRPCConnectionTests {
       maximumMessageBytes: 1_024,
       maximumStderrBytes: 1_024
     )
+  }
+
+  private func mutableExecutableConfiguration(
+    executableURL: URL
+  ) throws -> MCPServerConfiguration {
+    let program =
+      #"index($0, "\"method\":\"initialize\"") { print "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"Fixture\",\"version\":\"1\"}}}"; fflush(); next }"#
+    return try MCPServerConfiguration(
+      serverID: "fixture",
+      executableURL: executableURL,
+      arguments: [program],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+  }
+
+  private func makeFixtureDirectory() throws -> URL {
+    let directory = URL(
+      fileURLWithPath: "/private/tmp/hex-mcp-executable-tests-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    return directory
+  }
+
+  private func makeExecutable(_ url: URL) throws {
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: url.path
+    )
+  }
+
+  private func writeAttackerExecutable(to url: URL, marker: URL) throws {
+    try Data(attackerScript(marker: marker).utf8).write(to: url, options: .withoutOverwriting)
+    try makeExecutable(url)
+  }
+
+  private func writeLegitimateExecutable(to url: URL) throws {
+    let script = """
+      #!/bin/sh
+      while IFS= read -r request; do
+        case "$request" in
+          *'"method":"initialize"'*)
+            printf '%s\\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"Fixture","version":"1"}}}'
+            ;;
+        esac
+      done
+      """
+    try Data(script.utf8).write(to: url, options: .withoutOverwriting)
+    try makeExecutable(url)
+  }
+
+  private func writeSilentExecutable(to url: URL) throws {
+    let script = """
+      #!/bin/sh
+      while IFS= read -r request; do
+        :
+      done
+      """
+    try Data(script.utf8).write(to: url, options: .withoutOverwriting)
+    try makeExecutable(url)
+  }
+
+  private func attackerScript(marker: URL) -> String {
+    "#!/bin/sh\nprintf attacker > '\(marker.path)'\n"
+  }
+
+  nonisolated private static func overwriteFile(atPath path: String, with data: Data) -> Bool {
+    let descriptor = Darwin.open(path, O_WRONLY | O_TRUNC | O_CLOEXEC)
+    guard descriptor >= 0 else { return false }
+    defer { Darwin.close(descriptor) }
+    var offset = 0
+    while offset < data.count {
+      let written = data.withUnsafeBytes { bytes in
+        Darwin.write(
+          descriptor,
+          bytes.baseAddress?.advanced(by: offset),
+          data.count - offset
+        )
+      }
+      if written < 0, errno == EINTR { continue }
+      guard written > 0 else { return false }
+      offset += written
+    }
+    return fsync(descriptor) == 0
+  }
+
+  nonisolated private static func appendByte(atPath path: String) -> Bool {
+    let descriptor = Darwin.open(path, O_WRONLY | O_APPEND | O_CLOEXEC)
+    guard descriptor >= 0 else { return false }
+    defer { Darwin.close(descriptor) }
+    var byte = UInt8(ascii: "x")
+    return Darwin.write(descriptor, &byte, 1) == 1 && fsync(descriptor) == 0
+  }
+
+  private func openDescriptorCount() throws -> Int {
+    try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
   }
 
   private func catConfiguration() throws -> MCPServerConfiguration {
