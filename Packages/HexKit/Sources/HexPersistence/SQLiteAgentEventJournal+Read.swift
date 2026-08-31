@@ -15,9 +15,14 @@ extension SQLiteAgentEventJournal {
       )
     }
     let connection = try requireConnection()
-    return try connection.withDeferredTransaction {
+    return try withDeferredOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
-      guard let integrity = try runIntegrityState(for: runID, connection: connection) else {
+      try SQLiteJournalMigrator.validateSchemaDefinition(
+        connection: connection,
+        maximumTextBytes: configuration.maximumTextBytes
+      )
+      try validateWholeJournalIntegrity(connection: connection)
+      guard let metadata = try runIntegrityMetadata(for: runID, connection: connection) else {
         return []
       }
       let afterSequence: Int64
@@ -32,6 +37,15 @@ extension SQLiteAgentEventJournal {
         limit: limit,
         connection: connection
       )
+      let integrity = SQLiteRunIntegrityState(
+        nextSequence: metadata.nextSequence,
+        terminalSequence: metadata.terminalSequence,
+        recordCount: snapshot.recordCount,
+        minimumSequence: snapshot.minimumSequence,
+        maximumSequence: snapshot.maximumSequence,
+        runStartedKindCount: snapshot.runStartedEventCount,
+        terminalKindCount: snapshot.terminalEventCount
+      )
       try validateRunIntegrity(integrity, snapshot: snapshot)
       try validatePage(
         snapshot.pageRecords,
@@ -44,51 +58,25 @@ extension SQLiteAgentEventJournal {
     }
   }
 
-  private func runIntegrityState(
+  private func runIntegrityMetadata(
     for runID: AgentRunID,
     connection: SQLiteConnection
-  ) throws -> SQLiteRunIntegrityState? {
+  ) throws -> (nextSequence: Int64, terminalSequence: Int64?)? {
     let statement = try connection.prepare(
       """
-      SELECT r.next_sequence,
-             r.terminal_sequence,
-             COUNT(e.sequence),
-             MIN(e.sequence),
-             MAX(e.sequence),
-             COALESCE(SUM(CASE WHEN e.kind = 'run_started' THEN 1 ELSE 0 END), 0),
-             COALESCE(SUM(CASE WHEN e.kind IN (
-               'run_completed', 'run_cancelled', 'run_failed'
-             ) THEN 1 ELSE 0 END), 0)
-      FROM runs AS r
-      LEFT JOIN event_records AS e ON e.run_id = r.run_id
-      WHERE r.run_id = ?
-      GROUP BY r.run_id, r.next_sequence, r.terminal_sequence
+      SELECT next_sequence, terminal_sequence
+      FROM runs
+      WHERE run_id = ?
+      LIMIT 1
       """
     )
     try statement.bind(runID.description, at: 1)
     guard try statement.step() == .row else {
-      let orphanStatement = try connection.prepare(
-        "SELECT COUNT(*) FROM event_records WHERE run_id = ?"
-      )
-      try orphanStatement.bind(runID.description, at: 1)
-      guard
-        try orphanStatement.step() == .row,
-        try orphanStatement.columnInt64(at: 0) == 0
-      else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "Event records exist without their run metadata."
-        )
-      }
       return nil
     }
-    return SQLiteRunIntegrityState(
+    return (
       nextSequence: try statement.columnInt64(at: 0),
-      terminalSequence: try statement.columnOptionalInt64(at: 1),
-      recordCount: try statement.columnInt64(at: 2),
-      minimumSequence: try statement.columnOptionalInt64(at: 3),
-      maximumSequence: try statement.columnOptionalInt64(at: 4),
-      runStartedKindCount: try statement.columnInt64(at: 5),
-      terminalKindCount: try statement.columnInt64(at: 6)
+      terminalSequence: try statement.columnOptionalInt64(at: 1)
     )
   }
 

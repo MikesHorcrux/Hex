@@ -7,17 +7,6 @@ extension SQLiteJournalMigrator {
       connection: connection,
       maximumTextBytes: maximumTextBytes
     )
-
-    try validateForeignKeyData(connection: connection)
-  }
-
-  static func validateForeignKeyData(connection: SQLiteConnection) throws {
-    let foreignKeyCheck = try connection.prepare("PRAGMA foreign_key_check")
-    guard try foreignKeyCheck.step() == .done else {
-      throw SQLiteAgentEventJournalError.corruptSchema(
-        "The database contains a foreign-key violation."
-      )
-    }
   }
 
   static func validateSchemaDefinition(
@@ -162,7 +151,6 @@ extension SQLiteJournalMigrator {
       connection: connection,
       maximumTextBytes: maximumTextBytes
     )
-    try validateForeignKeyData(connection: connection)
   }
 
   private static func validateColumns(
@@ -206,10 +194,15 @@ extension SQLiteJournalMigrator {
     maximumTextBytes: Int
   ) throws {
     let statement = try connection.prepare(
-      "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name"
+      "SELECT type, name, tbl_name, sql FROM sqlite_schema"
     )
     var actual: [String] = []
     while try statement.step() == .row {
+      guard actual.count < 8 else {
+        throw SQLiteAgentEventJournalError.corruptSchema(
+          "sqlite_schema contains unexpected or behaviorally modified objects."
+        )
+      }
       let type = try statement.columnText(at: 0, maximumBytes: maximumTextBytes)
       let name = try statement.columnText(at: 1, maximumBytes: maximumTextBytes)
       let table = try statement.columnText(at: 2, maximumBytes: maximumTextBytes)
@@ -219,6 +212,7 @@ extension SQLiteJournalMigrator {
       )
       actual.append(schemaObjectKey(type: type, name: name, table: table, sql: sql))
     }
+    actual.sort()
 
     let expected = [
       schemaObjectKey(

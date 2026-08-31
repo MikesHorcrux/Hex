@@ -66,8 +66,15 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
       connection = openedConnection
       try SQLiteJournalMigrator.prepare(
         connection: openedConnection,
-        busyTimeoutMilliseconds: configuration.busyTimeoutMilliseconds,
-        maximumTextBytes: configuration.maximumTextBytes
+        configuration: configuration,
+        beforeCommit: {
+          try secureDirectory.hardenSQLiteFiles()
+          try fileLock.validateIdentities(in: secureDirectory)
+        },
+        afterCommit: {
+          try secureDirectory.hardenSQLiteFiles()
+          try fileLock.validateIdentities(in: secureDirectory)
+        }
       )
       try secureDirectory.hardenSQLiteFiles()
       try fileLock.validateIdentities(in: secureDirectory)

@@ -16,7 +16,7 @@ extension SQLiteAgentEventJournal {
     }
 
     let connection = try requireConnection()
-    return try connection.withImmediateTransaction {
+    return try withImmediateOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
       try SQLiteJournalMigrator.validateSchemaDefinition(
         connection: connection,
@@ -85,35 +85,13 @@ extension SQLiteAgentEventJournal {
   ) async throws -> AgentJournalCheckpoint? {
     try Task.checkCancellation()
     let connection = try requireConnection()
-    return try connection.withDeferredTransaction {
+    return try withDeferredOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
       try SQLiteJournalMigrator.validateSchemaDefinition(
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
-      let counts = try checkpointIntegrityCounts(for: runID, connection: connection)
-      guard counts.runCount == 1 else {
-        guard
-          counts.runCount == 0,
-          counts.eventCount == 0,
-          counts.checkpointCount == 0
-        else {
-          throw SQLiteAgentEventJournalError.corruptRecord(
-            "Checkpoint or event state exists without exactly one run record."
-          )
-        }
-        try validateWholeJournalIntegrity(connection: connection)
-        return nil
-      }
-      guard counts.eventCount > 0, counts.orphanCheckpointCount == 0 else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "The run or one of its checkpoints references missing event state."
-        )
-      }
       try validateWholeJournalIntegrity(connection: connection)
-      guard counts.checkpointCount > 0 else {
-        return nil
-      }
 
       let statement = try connection.prepare(
         """
@@ -126,9 +104,7 @@ extension SQLiteAgentEventJournal {
       )
       try statement.bind(runID.description, at: 1)
       guard try statement.step() == .row else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "Checkpoint rows disappeared inside a stable read snapshot."
-        )
+        return nil
       }
       let checkpoint = try decodeCheckpoint(from: statement, expectedRunID: runID)
       guard
@@ -145,44 +121,6 @@ extension SQLiteAgentEventJournal {
       try Task.checkCancellation()
       return checkpoint
     }
-  }
-
-  private func checkpointIntegrityCounts(
-    for runID: AgentRunID,
-    connection: SQLiteConnection
-  ) throws -> (
-    runCount: Int64,
-    eventCount: Int64,
-    checkpointCount: Int64,
-    orphanCheckpointCount: Int64
-  ) {
-    let statement = try connection.prepare(
-      """
-      SELECT
-        (SELECT COUNT(*) FROM runs WHERE run_id = ?),
-        (SELECT COUNT(*) FROM event_records WHERE run_id = ?),
-        (SELECT COUNT(*) FROM journal_checkpoints WHERE run_id = ?),
-        (SELECT COUNT(*)
-         FROM journal_checkpoints AS c
-         LEFT JOIN event_records AS e
-           ON e.run_id = c.run_id AND e.sequence = c.through_sequence
-         WHERE c.run_id = ? AND e.run_id IS NULL)
-      """
-    )
-    for index in 1...4 {
-      try statement.bind(runID.description, at: Int32(index))
-    }
-    guard try statement.step() == .row else {
-      throw SQLiteAgentEventJournalError.corruptRecord(
-        "Checkpoint integrity accounting returned no row."
-      )
-    }
-    return (
-      runCount: try statement.columnInt64(at: 0),
-      eventCount: try statement.columnInt64(at: 1),
-      checkpointCount: try statement.columnInt64(at: 2),
-      orphanCheckpointCount: try statement.columnInt64(at: 3)
-    )
   }
 
   private func eventExists(

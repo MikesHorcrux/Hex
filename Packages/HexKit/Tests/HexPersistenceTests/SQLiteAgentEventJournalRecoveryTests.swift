@@ -223,10 +223,20 @@ struct SQLiteAgentEventJournalRecoveryTests {
       let configuration = JournalTestSupport.configuration(in: directory)
       let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
       let runID = AgentRunID()
-      for event in fixture.events {
+      for event in fixture.events.dropLast() {
         _ = try await journal.append(event, to: runID)
       }
       try await journal.close()
+      guard let hostileEvent = fixture.events.last else {
+        Issue.record("Expected a hostile terminal fixture event.")
+        continue
+      }
+      try injectHostileEvent(
+        hostileEvent,
+        sequence: fixture.events.count,
+        runID: runID,
+        databaseURL: configuration.databaseURL
+      )
 
       do {
         let recovered = try await SQLiteAgentEventJournal.open(configuration: configuration)
@@ -251,6 +261,47 @@ struct SQLiteAgentEventJournalRecoveryTests {
           at: configuration.databaseURL
         ) == 0
       )
+    }
+  }
+
+  private func injectHostileEvent(
+    _ event: AgentEvent,
+    sequence: Int,
+    runID: AgentRunID,
+    databaseURL: URL
+  ) throws {
+    try JournalTestSupport.withConnection(at: databaseURL) { connection in
+      try connection.withImmediateTransaction {
+        let insert = try connection.prepare(
+          """
+          INSERT INTO event_records (
+            event_id, run_id, sequence, timestamp_us, record_schema_version, kind, tool_call_id,
+            payload
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          """
+        )
+        try insert.bind(AgentEventID().description, at: 1)
+        try insert.bind(runID.description, at: 2)
+        try insert.bind(Int64(sequence), at: 3)
+        try insert.bind(Int64(sequence), at: 4)
+        try insert.bind(Int64(AgentEventCodec.recordSchemaVersion), at: 5)
+        try insert.bind(event.journalKind, at: 6)
+        if let toolCallID = event.journalToolCallID {
+          try insert.bind(toolCallID.rawValue, at: 7)
+        } else {
+          try insert.bindNull(at: 7)
+        }
+        try insert.bind(try AgentEventCodec.encode(event: event), at: 8)
+        _ = try insert.step()
+
+        let update = try connection.prepare(
+          "UPDATE runs SET next_sequence = ?, updated_at_us = ? WHERE run_id = ?"
+        )
+        try update.bind(Int64(sequence + 1), at: 1)
+        try update.bind(Int64(sequence), at: 2)
+        try update.bind(runID.description, at: 3)
+        _ = try update.step()
+      }
     }
   }
 

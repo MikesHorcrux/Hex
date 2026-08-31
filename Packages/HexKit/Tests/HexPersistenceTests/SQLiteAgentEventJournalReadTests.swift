@@ -51,14 +51,13 @@ struct SQLiteAgentEventJournalReadTests {
       at: configuration.databaseURL
     )
 
-    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await journal.records(for: runID, after: nil, limit: 10)
-      Issue.record("Expected corrupt payload to fail closed.")
+      let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await journal.close()
+      Issue.record("Expected corrupt payload to fail during open admission.")
     } catch is SQLiteAgentEventJournalError {
       // A typed journal error is the fail-closed boundary.
     }
-    try await journal.close()
   }
 
   @Test
@@ -82,10 +81,10 @@ struct SQLiteAgentEventJournalReadTests {
       """,
       at: configuration.databaseURL
     )
-    let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await reopened.records(for: runID, after: nil, limit: 10)
-      Issue.record("Expected mismatched metadata to fail closed.")
+      let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await reopened.close()
+      Issue.record("Expected mismatched metadata to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       if case .corruptRecord = error {
         // Expected.
@@ -93,7 +92,6 @@ struct SQLiteAgentEventJournalReadTests {
         Issue.record("Expected corruptRecord, received \(error).")
       }
     }
-    try await reopened.close()
   }
 
   @Test
@@ -117,10 +115,10 @@ struct SQLiteAgentEventJournalReadTests {
       at: configuration.databaseURL
     )
 
-    let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await reopened.records(for: runID, after: nil, limit: 10)
-      Issue.record("Expected mismatched tool metadata to fail closed.")
+      let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await reopened.close()
+      Issue.record("Expected mismatched tool metadata to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       if case .corruptRecord = error {
         // Expected.
@@ -128,7 +126,6 @@ struct SQLiteAgentEventJournalReadTests {
         Issue.record("Expected corruptRecord, received \(error).")
       }
     }
-    try await reopened.close()
   }
 
   @Test
@@ -142,14 +139,13 @@ struct SQLiteAgentEventJournalReadTests {
       at: configuration.databaseURL
     )
 
-    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await journal.records(for: runID, after: nil, limit: 10)
-      Issue.record("Expected a future record schema to fail closed.")
+      let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await journal.close()
+      Issue.record("Expected a future record schema to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .unsupportedRecordSchemaVersion(2))
     }
-    try await journal.close()
   }
 
   @Test
@@ -166,14 +162,13 @@ struct SQLiteAgentEventJournalReadTests {
       at: configuration.databaseURL
     )
 
-    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await journal.records(for: runID, after: nil, limit: 10)
-      Issue.record("Expected oversized stored payload to fail.")
+      let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await journal.close()
+      Issue.record("Expected oversized stored payload to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .payloadTooLarge(actual: 65, maximum: 64))
     }
-    try await journal.close()
   }
 
   @Test
@@ -239,14 +234,13 @@ struct SQLiteAgentEventJournalReadTests {
       at: configuration.databaseURL
     )
 
-    let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await reopened.records(for: runID, after: nil, limit: 3)
-      Issue.record("Expected oversized stored text to fail before allocation.")
+      let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await reopened.close()
+      Issue.record("Expected oversized stored text to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .textTooLarge(actual: 41, maximum: 40))
     }
-    try await reopened.close()
   }
 
   private func makeTerminalRun(

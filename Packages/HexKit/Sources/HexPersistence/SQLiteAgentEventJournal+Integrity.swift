@@ -3,12 +3,11 @@ import HexCore
 
 extension SQLiteAgentEventJournal {
   func validateWholeJournalIntegrity(connection: SQLiteConnection) throws {
-    try SQLiteJournalMigrator.validateForeignKeyData(connection: connection)
+    try validateBoundedForeignKeyData(connection: connection)
     let runStatement = try connection.prepare(
       """
       SELECT run_id, next_sequence, terminal_sequence
       FROM runs
-      ORDER BY run_id COLLATE NOCASE
       LIMIT ?
       """
     )
@@ -43,6 +42,8 @@ extension SQLiteAgentEventJournal {
         nextSequence: try runStatement.columnInt64(at: 1),
         terminalSequence: try runStatement.columnOptionalInt64(at: 2),
         connection: connection,
+        maximumRecordCount: configuration.maximumRecoveryRecordCount,
+        maximumBytes: configuration.maximumRecoveryBytes,
         recordCount: &recordCount,
         byteCount: &byteCount
       )
@@ -56,11 +57,54 @@ extension SQLiteAgentEventJournal {
     )
   }
 
+  func validateAppendedRunLifecycle(
+    for runID: AgentRunID,
+    connection: SQLiteConnection
+  ) throws {
+    let runStatement = try connection.prepare(
+      "SELECT next_sequence, terminal_sequence FROM runs WHERE run_id = ? LIMIT 1"
+    )
+    try runStatement.bind(runID.description, at: 1)
+    guard try runStatement.step() == .row else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "An appended event has no durable run metadata."
+      )
+    }
+    let (maximumRecordCount, recordOverflowed) =
+      configuration.maximumRecoveryRecordCount.addingReportingOverflow(1)
+    let perRecordAllowance =
+      configuration.maximumPayloadBytes
+      + (configuration.maximumTextBytes * 4)
+    let (maximumBytes, byteOverflowed) =
+      configuration.maximumRecoveryBytes.addingReportingOverflow(perRecordAllowance)
+    guard !recordOverflowed, !byteOverflowed else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "Append validation bounds overflowed."
+      )
+    }
+    var recordCount = 0
+    var byteCount = 0
+    try validateRunEvents(
+      for: runID,
+      nextSequence: try runStatement.columnInt64(at: 0),
+      terminalSequence: try runStatement.columnOptionalInt64(at: 1),
+      connection: connection,
+      maximumRecordCount: maximumRecordCount,
+      maximumBytes: maximumBytes,
+      checksCancellation: false,
+      recordCount: &recordCount,
+      byteCount: &byteCount
+    )
+  }
+
   private func validateRunEvents(
     for runID: AgentRunID,
     nextSequence: Int64,
     terminalSequence: Int64?,
     connection: SQLiteConnection,
+    maximumRecordCount: Int,
+    maximumBytes: Int,
+    checksCancellation: Bool = true,
     recordCount: inout Int,
     byteCount: inout Int
   ) throws {
@@ -75,7 +119,7 @@ extension SQLiteAgentEventJournal {
       """
     )
     try statement.bind(runID.description, at: 1)
-    let remainingRecordCount = configuration.maximumRecoveryRecordCount - recordCount
+    let remainingRecordCount = maximumRecordCount - recordCount
     try statement.bind(Int64(remainingRecordCount + 1), at: 2)
     var expectedSequence: Int64 = 1
     var sawRecord = false
@@ -90,15 +134,19 @@ extension SQLiteAgentEventJournal {
     var deniedToolCallIDs: Set<ToolCallID> = []
 
     while true {
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       let stepResult = try statement.step()
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       guard stepResult == .row else {
         break
       }
-      guard recordCount < configuration.maximumRecoveryRecordCount else {
+      guard recordCount < maximumRecordCount else {
         throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
-          maximum: configuration.maximumRecoveryRecordCount
+          maximum: maximumRecordCount
         )
       }
       guard expectedSequence > 0 else {
@@ -107,7 +155,7 @@ extension SQLiteAgentEventJournal {
         )
       }
       let decoded = try decodeRecord(from: statement, expectedRunID: runID)
-      try addIntegrityBytes(decoded.byteCount, to: &byteCount)
+      try addIntegrityBytes(decoded.byteCount, maximum: maximumBytes, to: &byteCount)
       let record = decoded.record
       guard record.sequence == UInt64(expectedSequence) else {
         throw SQLiteAgentEventJournalError.corruptRecord(
@@ -251,7 +299,6 @@ extension SQLiteAgentEventJournal {
       FROM journal_checkpoints AS c
       LEFT JOIN event_records AS e
         ON e.run_id = c.run_id AND e.sequence = c.through_sequence
-      ORDER BY c.run_id COLLATE NOCASE, c.through_sequence ASC
       LIMIT ?
       """
     )
@@ -282,7 +329,11 @@ extension SQLiteAgentEventJournal {
         from: statement,
         expectedRunID: AgentRunID(rawValue: runUUID)
       )
-      try addIntegrityBytes(decoded.byteCount, to: &byteCount)
+      try addIntegrityBytes(
+        decoded.byteCount,
+        maximum: configuration.maximumRecoveryBytes,
+        to: &byteCount
+      )
       guard
         let referencedSequence = try statement.columnOptionalInt64(at: 5),
         referencedSequence > 0,
@@ -296,12 +347,17 @@ extension SQLiteAgentEventJournal {
     }
   }
 
-  private func addIntegrityBytes(_ additionalBytes: Int, to byteCount: inout Int) throws {
+  private func addIntegrityBytes(
+    _ additionalBytes: Int,
+    maximum: Int = -1,
+    to byteCount: inout Int
+  ) throws {
+    let effectiveMaximum = maximum < 0 ? configuration.maximumRecoveryBytes : maximum
     let (nextByteCount, overflowed) = byteCount.addingReportingOverflow(additionalBytes)
-    guard !overflowed, nextByteCount <= configuration.maximumRecoveryBytes else {
+    guard !overflowed, nextByteCount <= effectiveMaximum else {
       throw SQLiteAgentEventJournalError.integrityByteLimitExceeded(
         actual: overflowed ? Int.max : nextByteCount,
-        maximum: configuration.maximumRecoveryBytes
+        maximum: effectiveMaximum
       )
     }
     byteCount = nextByteCount

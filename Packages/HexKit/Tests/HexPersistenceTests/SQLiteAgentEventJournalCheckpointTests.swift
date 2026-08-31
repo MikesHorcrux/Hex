@@ -89,14 +89,13 @@ struct SQLiteAgentEventJournalCheckpointTests {
       at: configuration.databaseURL
     )
 
-    let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await reopened.latestCheckpoint(for: runID)
-      Issue.record("Expected oversized checkpoint to fail.")
+      let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await reopened.close()
+      Issue.record("Expected oversized checkpoint to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .payloadTooLarge(actual: 65, maximum: 64))
     }
-    try await reopened.close()
   }
 
   @Test
@@ -115,10 +114,10 @@ struct SQLiteAgentEventJournalCheckpointTests {
       at: configuration.databaseURL
     )
 
-    let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
     do {
-      _ = try await reopened.latestCheckpoint(for: runID)
-      Issue.record("Expected dangling checkpoint to fail closed.")
+      let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await reopened.close()
+      Issue.record("Expected dangling checkpoint to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       if case .corruptRecord = error {
         // Expected.
@@ -126,7 +125,6 @@ struct SQLiteAgentEventJournalCheckpointTests {
         Issue.record("Expected corruptRecord, received \(error).")
       }
     }
-    try await reopened.close()
   }
 
   @Test
@@ -172,9 +170,11 @@ struct SQLiteAgentEventJournalCheckpointTests {
       _ = try await journal.latestCheckpoint(for: runID)
       Issue.record("Expected inconsistent checkpoint state to fail closed.")
     } catch let error as SQLiteAgentEventJournalError {
-      guard case .corruptRecord = error else {
-        Issue.record("Expected corruptRecord, received \(error).")
-        return
+      switch error {
+      case .corruptRecord, .corruptSchema:
+        break
+      default:
+        Issue.record("Expected durable corruption, received \(error).")
       }
     } catch {
       Issue.record("Expected a journal error, received \(error).")

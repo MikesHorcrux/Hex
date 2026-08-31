@@ -4,13 +4,12 @@ import HexCore
 extension SQLiteAgentEventJournal {
   func recoverInterruptedRuns() throws -> [InterruptedAgentRun] {
     let connection = try requireConnection()
-    return try connection.withImmediateTransaction {
+    return try withImmediateOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
       try SQLiteJournalMigrator.validateSchemaDefinition(
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
-      try SQLiteJournalMigrator.validateForeignKeyData(connection: connection)
       let interruptedRuns = try interruptedRunIDs(connection: connection)
       var reports: [InterruptedAgentRun] = []
       reports.reserveCapacity(interruptedRuns.runIDs.count)
@@ -35,9 +34,7 @@ extension SQLiteAgentEventJournal {
         )
       }
 
-      if !reports.isEmpty {
-        try validateWholeJournalIntegrity(connection: connection)
-      }
+      try validateWholeJournalIntegrity(connection: connection)
       try Task.checkCancellation()
       for report in reports {
         try Task.checkCancellation()
@@ -52,6 +49,7 @@ extension SQLiteAgentEventJournal {
           connection: connection
         )
       }
+      try validateWholeJournalIntegrity(connection: connection)
       try Task.checkCancellation()
       return reports
     }
@@ -65,7 +63,6 @@ extension SQLiteAgentEventJournal {
       SELECT run_id
       FROM runs
       WHERE terminal_sequence IS NULL
-      ORDER BY run_id ASC
       LIMIT ?
       """
     )

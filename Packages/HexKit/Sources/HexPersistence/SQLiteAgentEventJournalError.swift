@@ -5,6 +5,7 @@ public enum SQLiteAgentEventJournalError: Error, Equatable, LocalizedError, Send
   case invalidConfiguration(String)
   case ownershipUnavailable
   case closed
+  case commitOutcomeUncertain
   case database(code: Int32, message: String)
   case futureSchemaVersion(found: Int, supported: Int)
   case corruptSchema(String)
@@ -35,6 +36,8 @@ public enum SQLiteAgentEventJournalError: Error, Equatable, LocalizedError, Send
       "Another process already owns this journal."
     case .closed:
       "The journal is closed."
+    case .commitOutcomeUncertain:
+      "The journal lost its durable ownership boundary while committing; the outcome is uncertain."
     case .database(let code, let message):
       "SQLite error \(code): \(message)"
     case .futureSchemaVersion(let found, let supported):

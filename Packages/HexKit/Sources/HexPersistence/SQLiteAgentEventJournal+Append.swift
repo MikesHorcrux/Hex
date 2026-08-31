@@ -7,14 +7,16 @@ extension SQLiteAgentEventJournal {
   ) async throws -> AgentEventRecord {
     try Task.checkCancellation()
     let connection = try requireConnection()
-    return try connection.withImmediateTransaction {
+    return try withImmediateOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
       try SQLiteJournalMigrator.validateSchemaDefinition(
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
       try validateWholeJournalIntegrity(connection: connection)
-      return try appendInTransaction(event, to: runID, connection: connection)
+      let record = try appendInTransaction(event, to: runID, connection: connection)
+      try validateAppendedRunLifecycle(for: runID, connection: connection)
+      return record
     }
   }
 

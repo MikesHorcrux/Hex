@@ -101,23 +101,43 @@ final class SQLiteConnection {
     Int(sqlite3_changes(try rawHandle()))
   }
 
-  func withImmediateTransaction<Value>(_ body: () throws -> Value) throws -> Value {
-    try withTransaction(beginStatement: "BEGIN IMMEDIATE", body)
+  func withImmediateTransaction<Value>(
+    beforeCommit: () throws -> Void = {},
+    afterCommit: () throws -> Void = {},
+    _ body: () throws -> Value
+  ) throws -> Value {
+    try withTransaction(
+      beginStatement: "BEGIN IMMEDIATE",
+      beforeCommit: beforeCommit,
+      afterCommit: afterCommit,
+      body
+    )
   }
 
-  func withDeferredTransaction<Value>(_ body: () throws -> Value) throws -> Value {
-    try withTransaction(beginStatement: "BEGIN", body)
+  func withDeferredTransaction<Value>(
+    beforeCommit: () throws -> Void = {},
+    afterCommit: () throws -> Void = {},
+    _ body: () throws -> Value
+  ) throws -> Value {
+    try withTransaction(
+      beginStatement: "BEGIN",
+      beforeCommit: beforeCommit,
+      afterCommit: afterCommit,
+      body
+    )
   }
 
   private func withTransaction<Value>(
     beginStatement: String,
+    beforeCommit: () throws -> Void,
+    afterCommit: () throws -> Void,
     _ body: () throws -> Value
   ) throws -> Value {
     try execute(beginStatement)
+    let value: Value
     do {
-      let value = try body()
-      try execute("COMMIT")
-      return value
+      value = try body()
+      try beforeCommit()
     } catch {
       do {
         try execute("ROLLBACK")
@@ -127,6 +147,21 @@ final class SQLiteConnection {
       }
       throw error
     }
+
+    do {
+      try execute("COMMIT")
+    } catch {
+      invalidate()
+      throw SQLiteAgentEventJournalError.commitOutcomeUncertain
+    }
+
+    do {
+      try afterCommit()
+    } catch {
+      invalidate()
+      throw SQLiteAgentEventJournalError.commitOutcomeUncertain
+    }
+    return value
   }
 
   func rawHandle() throws -> OpaquePointer {
@@ -148,7 +183,7 @@ final class SQLiteConnection {
     return .database(code: result, message: message)
   }
 
-  private func invalidate() {
+  func invalidate() {
     if let handle {
       sqlite3_close_v2(handle)
       self.handle = nil

@@ -503,29 +503,28 @@ struct SQLiteJournalMutationIntegrityAuditTests {
       at: databaseURL
     )
 
-    let recordBounded = try await SQLiteAgentEventJournal.open(
-      configuration: SQLiteAgentEventJournalConfiguration(
-        databaseURL: databaseURL,
-        maximumRecoveryRecordCount: 2
-      )
-    )
     do {
-      _ = try await recordBounded.latestCheckpoint(for: runID)
-      Issue.record("Expected the whole-journal record bound to fail closed.")
+      let recordBounded = try await SQLiteAgentEventJournal.open(
+        configuration: SQLiteAgentEventJournalConfiguration(
+          databaseURL: databaseURL,
+          maximumRecoveryRecordCount: 2
+        )
+      )
+      try await recordBounded.close()
+      Issue.record("Expected the whole-journal record bound to fail open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .integrityRecordLimitExceeded(maximum: 2))
     }
-    try await recordBounded.close()
 
-    let byteBounded = try await SQLiteAgentEventJournal.open(
-      configuration: SQLiteAgentEventJournalConfiguration(
-        databaseURL: databaseURL,
-        maximumRecoveryBytes: Int(decodedBytes) - 1
-      )
-    )
     do {
-      _ = try await byteBounded.latestCheckpoint(for: runID)
-      Issue.record("Expected the whole-journal byte bound to fail closed.")
+      let byteBounded = try await SQLiteAgentEventJournal.open(
+        configuration: SQLiteAgentEventJournalConfiguration(
+          databaseURL: databaseURL,
+          maximumRecoveryBytes: Int(decodedBytes) - 1
+        )
+      )
+      try await byteBounded.close()
+      Issue.record("Expected the whole-journal byte bound to fail open admission.")
     } catch let error as SQLiteAgentEventJournalError {
       guard case .integrityByteLimitExceeded(_, let maximum) = error else {
         Issue.record("Expected integrityByteLimitExceeded, received \(error).")
@@ -533,7 +532,6 @@ struct SQLiteJournalMutationIntegrityAuditTests {
       }
       #expect(maximum == Int(decodedBytes) - 1)
     }
-    try await byteBounded.close()
   }
 
   private func makeOpenRun() async throws -> (

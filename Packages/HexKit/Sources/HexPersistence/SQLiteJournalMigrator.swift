@@ -108,8 +108,9 @@ enum SQLiteJournalMigrator {
 
   static func prepare(
     connection: SQLiteConnection,
-    busyTimeoutMilliseconds: Int,
-    maximumTextBytes: Int
+    configuration: SQLiteAgentEventJournalConfiguration,
+    beforeCommit: () throws -> Void,
+    afterCommit: () throws -> Void
   ) throws {
     let foundVersion = try schemaVersion(connection: connection)
     guard foundVersion <= currentSchemaVersion else {
@@ -121,21 +122,20 @@ enum SQLiteJournalMigrator {
 
     try configure(
       connection: connection,
-      busyTimeoutMilliseconds: busyTimeoutMilliseconds,
-      maximumTextBytes: maximumTextBytes
+      busyTimeoutMilliseconds: configuration.busyTimeoutMilliseconds,
+      maximumTextBytes: configuration.maximumTextBytes
     )
-    try migrate(connection: connection, from: foundVersion, maximumTextBytes: maximumTextBytes)
-    try validateSchema(connection: connection, maximumTextBytes: maximumTextBytes)
-
-    let quickCheck = try connection.scalarText(
-      "PRAGMA quick_check",
-      maximumBytes: maximumTextBytes
+    try migrate(
+      connection: connection,
+      from: foundVersion,
+      configuration: configuration,
+      beforeCommit: beforeCommit,
+      afterCommit: afterCommit
     )
-    guard quickCheck == "ok" else {
-      throw SQLiteAgentEventJournalError.corruptSchema(
-        "SQLite quick_check returned \(quickCheck)."
-      )
-    }
+    try validateSchema(
+      connection: connection,
+      maximumTextBytes: configuration.maximumTextBytes
+    )
   }
 
   static func schemaVersion(connection: SQLiteConnection) throws -> Int {
@@ -184,45 +184,66 @@ enum SQLiteJournalMigrator {
   private static func migrate(
     connection: SQLiteConnection,
     from version: Int,
-    maximumTextBytes: Int
+    configuration: SQLiteAgentEventJournalConfiguration,
+    beforeCommit: () throws -> Void,
+    afterCommit: () throws -> Void
   ) throws {
     switch version {
     case currentSchemaVersion:
       return
     case 0:
-      let userTableCount = try connection.scalarInt64(
+      let userTable = try connection.prepare(
         """
-        SELECT COUNT(*) FROM sqlite_master
+        SELECT 1 FROM sqlite_master
         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+        LIMIT 1
         """
       )
-      guard userTableCount == 0 else {
+      guard try userTable.step() == .done else {
         throw SQLiteAgentEventJournalError.corruptSchema(
           "A version-zero database already contains application tables."
         )
       }
-      try connection.withImmediateTransaction {
+      try connection.withImmediateTransaction(
+        beforeCommit: beforeCommit,
+        afterCommit: afterCommit
+      ) {
         try createVersionOne(connection: connection)
         try connection.execute("PRAGMA user_version = 1")
         try createVersionTwo(connection: connection)
         try connection.execute("PRAGMA user_version = 2")
-        try createVersionThree(connection: connection, maximumTextBytes: maximumTextBytes)
+        try createVersionThree(connection: connection, configuration: configuration)
         try connection.execute("PRAGMA user_version = 3")
-        try validateSchema(connection: connection, maximumTextBytes: maximumTextBytes)
+        try validateSchema(
+          connection: connection,
+          maximumTextBytes: configuration.maximumTextBytes
+        )
       }
     case 1:
-      try connection.withImmediateTransaction {
+      try connection.withImmediateTransaction(
+        beforeCommit: beforeCommit,
+        afterCommit: afterCommit
+      ) {
         try createVersionTwo(connection: connection)
         try connection.execute("PRAGMA user_version = 2")
-        try createVersionThree(connection: connection, maximumTextBytes: maximumTextBytes)
+        try createVersionThree(connection: connection, configuration: configuration)
         try connection.execute("PRAGMA user_version = 3")
-        try validateSchema(connection: connection, maximumTextBytes: maximumTextBytes)
+        try validateSchema(
+          connection: connection,
+          maximumTextBytes: configuration.maximumTextBytes
+        )
       }
     case 2:
-      try connection.withImmediateTransaction {
-        try createVersionThree(connection: connection, maximumTextBytes: maximumTextBytes)
+      try connection.withImmediateTransaction(
+        beforeCommit: beforeCommit,
+        afterCommit: afterCommit
+      ) {
+        try createVersionThree(connection: connection, configuration: configuration)
         try connection.execute("PRAGMA user_version = 3")
-        try validateSchema(connection: connection, maximumTextBytes: maximumTextBytes)
+        try validateSchema(
+          connection: connection,
+          maximumTextBytes: configuration.maximumTextBytes
+        )
       }
     default:
       throw SQLiteAgentEventJournalError.corruptSchema(
@@ -243,15 +264,15 @@ enum SQLiteJournalMigrator {
 
   private static func createVersionThree(
     connection: SQLiteConnection,
-    maximumTextBytes: Int
+    configuration: SQLiteAgentEventJournalConfiguration
   ) throws {
     try validateVersionTwoSchema(
       connection: connection,
-      maximumTextBytes: maximumTextBytes
+      maximumTextBytes: configuration.maximumTextBytes
     )
-    try validateUUIDNormalizationInput(
+    try SQLiteJournalMigrationValidator.validateVersionTwoData(
       connection: connection,
-      maximumTextBytes: maximumTextBytes
+      configuration: configuration
     )
 
     try connection.execute("DROP INDEX event_records_run_kind_tool_call_idx")
@@ -291,65 +312,6 @@ enum SQLiteJournalMigrator {
     try connection.execute("DROP TABLE journal_checkpoints_v2")
     try connection.execute("DROP TABLE event_records_v2")
     try connection.execute("DROP TABLE runs_v2")
-  }
-
-  private static func validateUUIDNormalizationInput(
-    connection: SQLiteConnection,
-    maximumTextBytes: Int
-  ) throws {
-    try validateUUIDColumn(
-      query: "SELECT run_id FROM runs ORDER BY run_id COLLATE NOCASE, run_id COLLATE BINARY",
-      label: "runs.run_id",
-      rejectsLogicalDuplicates: true,
-      connection: connection,
-      maximumTextBytes: maximumTextBytes
-    )
-    try validateUUIDColumn(
-      query:
-        "SELECT event_id FROM event_records ORDER BY event_id COLLATE NOCASE, event_id COLLATE BINARY",
-      label: "event_records.event_id",
-      rejectsLogicalDuplicates: true,
-      connection: connection,
-      maximumTextBytes: maximumTextBytes
-    )
-    for (query, label) in [
-      ("SELECT run_id FROM event_records ORDER BY run_id", "event_records.run_id"),
-      ("SELECT run_id FROM journal_checkpoints ORDER BY run_id", "journal_checkpoints.run_id"),
-    ] {
-      try validateUUIDColumn(
-        query: query,
-        label: label,
-        rejectsLogicalDuplicates: false,
-        connection: connection,
-        maximumTextBytes: maximumTextBytes
-      )
-    }
-  }
-
-  private static func validateUUIDColumn(
-    query: String,
-    label: String,
-    rejectsLogicalDuplicates: Bool,
-    connection: SQLiteConnection,
-    maximumTextBytes: Int
-  ) throws {
-    let statement = try connection.prepare(query)
-    var previousCanonicalValue: String?
-    while try statement.step() == .row {
-      let value = try statement.columnText(at: 0, maximumBytes: maximumTextBytes)
-      guard let uuid = UUID(uuidString: value) else {
-        throw SQLiteAgentEventJournalError.corruptSchema(
-          "\(label) contains text that is not a UUID."
-        )
-      }
-      let canonicalValue = uuid.uuidString
-      if rejectsLogicalDuplicates, canonicalValue == previousCanonicalValue {
-        throw SQLiteAgentEventJournalError.corruptSchema(
-          "\(label) contains a case-insensitive UUID collision."
-        )
-      }
-      previousCanonicalValue = canonicalValue
-    }
   }
 
 }
