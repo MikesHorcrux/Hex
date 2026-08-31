@@ -33,4 +33,20 @@ enum WorkspaceToolSchema {
       "maximum": .integer(Int64(maximum)),
     ])
   }
+
+  static func stringArray(
+    _ description: String,
+    maximumItems: Int,
+    maximumItemLength: Int
+  ) -> JSONValue {
+    .object([
+      "type": .string("array"),
+      "description": .string(description),
+      "maxItems": .integer(Int64(maximumItems)),
+      "items": .object([
+        "type": .string("string"),
+        "maxLength": .integer(Int64(maximumItemLength)),
+      ]),
+    ])
+  }
 }

@@ -63,4 +63,45 @@ struct ToolCallArguments: Sendable {
     }
     return value
   }
+
+  func optionalInteger(
+    named name: String,
+    range: ClosedRange<Int>
+  ) throws -> Int? {
+    guard let rawValue = values[name] else {
+      return nil
+    }
+    guard case .integer(let rawInteger) = rawValue,
+      let value = Int(exactly: rawInteger),
+      range.contains(value)
+    else {
+      throw ToolCallArgumentsError.invalidArguments
+    }
+    return value
+  }
+
+  func requiredStringArray(
+    named name: String,
+    maximumCount: Int,
+    maximumBytes: Int
+  ) throws -> [String] {
+    guard case .array(let rawValues) = values[name], rawValues.count <= maximumCount else {
+      throw ToolCallArgumentsError.invalidArguments
+    }
+    var values: [String] = []
+    values.reserveCapacity(rawValues.count)
+    var byteCount = 0
+    for rawValue in rawValues {
+      guard case .string(let value) = rawValue, !value.contains("\0") else {
+        throw ToolCallArgumentsError.invalidArguments
+      }
+      let (candidateBytes, overflowed) = byteCount.addingReportingOverflow(value.utf8.count)
+      guard !overflowed, candidateBytes <= maximumBytes else {
+        throw ToolCallArgumentsError.invalidArguments
+      }
+      byteCount = candidateBytes
+      values.append(value)
+    }
+    return values
+  }
 }

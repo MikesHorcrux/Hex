@@ -13,6 +13,24 @@ public struct WorkspaceCodingToolExecutor: ToolExecutor, Sendable {
     ])
   }
 
+  public init(
+    fileSystem: WorkspaceFileSystem,
+    processExecutor: any ProcessExecuting,
+    processConfiguration: ProcessExecutionConfiguration = .standard
+  ) throws {
+    executor = try HostToolExecutor(tools: [
+      ProcessRunTool(
+        executor: processExecutor,
+        configuration: processConfiguration
+      ),
+      WorkspaceListDirectoryTool(fileSystem: fileSystem),
+      WorkspaceReadTextFileTool(fileSystem: fileSystem),
+      WorkspaceReplaceTextTool(fileSystem: fileSystem),
+      WorkspaceSearchTextTool(fileSystem: fileSystem),
+      WorkspaceWriteTextFileTool(fileSystem: fileSystem),
+    ])
+  }
+
   public func availableTools() async throws -> [ToolDefinition] {
     try await executor.availableTools()
   }
