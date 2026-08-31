@@ -67,7 +67,17 @@ extension WorkspaceFileSystem {
     return data
   }
 
-  func directoryEntries(components: [String]) throws -> [WorkspaceDirectoryEntry] {
+  func directoryEntries(
+    components: [String],
+    maximumEntries: Int? = nil
+  ) throws -> [WorkspaceDirectoryEntry] {
+    let entryLimit = min(
+      maximumEntries ?? configuration.maximumDirectoryEntries,
+      configuration.maximumDirectoryEntries
+    )
+    guard entryLimit >= 0 else {
+      throw WorkspaceFileSystemError.capacityExceeded
+    }
     let descriptor = try openDirectory(components: components)
     guard let directory = fdopendir(descriptor) else {
       Darwin.close(descriptor)
@@ -97,7 +107,7 @@ extension WorkspaceFileSystem {
       guard name != ".", name != ".." else {
         continue
       }
-      guard entries.count < configuration.maximumDirectoryEntries else {
+      guard entries.count < entryLimit else {
         throw WorkspaceFileSystemError.capacityExceeded
       }
       let entryComponents = components + [name]

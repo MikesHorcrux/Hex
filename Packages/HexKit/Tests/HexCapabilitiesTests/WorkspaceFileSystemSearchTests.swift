@@ -67,4 +67,24 @@ struct WorkspaceFileSystemSearchTests {
     #expect(matches[0].isTruncated)
     #expect(matches[0].text.utf8.count <= 1_024)
   }
+
+  @Test
+  func boundsGlobalTraversalAcrossDirectoryOnlyTrees() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "hex-workspace-search-traversal-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    var directory = root
+    for index in 0..<8 {
+      directory.append(path: "level-\(index)", directoryHint: .isDirectory)
+    }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let configuration = try WorkspaceFileSystemConfiguration(maximumSearchEntries: 4)
+    let fileSystem = try WorkspaceFileSystem(root: root, configuration: configuration)
+
+    await #expect(throws: WorkspaceFileSystemError.capacityExceeded) {
+      _ = try await fileSystem.searchText("needle", under: ".", relativeTo: nil)
+    }
+  }
 }

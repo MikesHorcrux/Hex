@@ -7,10 +7,23 @@ public actor WorkspaceFileSystem {
   let rootDevice: UInt64
   let rootInode: UInt64
   let configuration: WorkspaceFileSystemConfiguration
+  let replacementPublicationHook: (@Sendable () throws -> Void)?
 
   public init(
     root: URL,
     configuration: WorkspaceFileSystemConfiguration = .standard
+  ) throws {
+    try self.init(
+      root: root,
+      configuration: configuration,
+      replacementPublicationHook: nil
+    )
+  }
+
+  init(
+    root: URL,
+    configuration: WorkspaceFileSystemConfiguration = .standard,
+    replacementPublicationHook: (@Sendable () throws -> Void)?
   ) throws {
     guard root.isFileURL, root.path.hasPrefix("/"), !root.path.contains("\0") else {
       throw WorkspaceFileSystemError.invalidRoot
@@ -33,6 +46,7 @@ public actor WorkspaceFileSystem {
     rootDevice = UInt64(status.st_dev)
     rootInode = UInt64(status.st_ino)
     self.configuration = configuration
+    self.replacementPublicationHook = replacementPublicationHook
   }
 
   deinit {

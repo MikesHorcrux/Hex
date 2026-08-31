@@ -1,9 +1,26 @@
 import Foundation
-import HexCapabilities
 import Testing
+
+@testable import HexCapabilities
 
 @Suite("Workspace file-system writes")
 struct WorkspaceFileSystemWriteTests {
+  @Test
+  func rejectsHighExpansionBeforeConstructingTheReplacement() throws {
+    let source = String(repeating: "x", count: 10_000)
+    let replacement = String(repeating: "y", count: 1 * 1_024 * 1_024)
+
+    #expect(throws: WorkspaceFileSystemError.fileTooLarge) {
+      _ = try BoundedTextReplacement.build(
+        source: source,
+        replacing: "x",
+        with: replacement,
+        expectedOccurrences: 10_000,
+        maximumBytes: 1 * 1_024 * 1_024
+      )
+    }
+  }
+
   @Test
   func createsThenRevisionGuardsAtomicReplacement() async throws {
     let root = try makeRoot()
@@ -214,6 +231,71 @@ struct WorkspaceFileSystemWriteTests {
       encoding: .utf8
     )
     #expect(content == "first replacement" || content == "second replacement")
+  }
+
+  @Test
+  func externalReplacementAtPublicationBoundaryIsPreserved() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Race.swift")
+    let externalContent = "external replacement"
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: {
+        try Data(externalContent.utf8).write(to: destination, options: .atomic)
+      }
+    )
+    let initial = try await fileSystem.writeTextFile(
+      "initial",
+      at: "Sources/Race.swift",
+      expectedRevision: nil,
+      relativeTo: nil
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.revisionConflict) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/Race.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == externalContent)
+  }
+
+  @Test
+  func externalInPlaceMutationAtPublicationBoundaryIsPreserved() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Race.swift")
+    let externalContent = "external in-place mutation"
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: {
+        let handle = try FileHandle(forWritingTo: destination)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: Data(externalContent.utf8))
+        try handle.close()
+      }
+    )
+    let initial = try await fileSystem.writeTextFile(
+      "initial",
+      at: "Sources/Race.swift",
+      expectedRevision: nil,
+      relativeTo: nil
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.revisionConflict) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/Race.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == externalContent)
   }
 
   private func makeRoot() throws -> URL {

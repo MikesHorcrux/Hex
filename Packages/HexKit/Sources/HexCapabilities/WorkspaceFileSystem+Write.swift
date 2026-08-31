@@ -57,7 +57,8 @@ extension WorkspaceFileSystem {
       named: name,
       in: parentDescriptor,
       parentComponents: Array(components.dropLast()),
-      replacing: replacedStatus
+      replacing: replacedStatus,
+      expectedRevision: expectedRevision
     )
     return WorkspaceTextFile(
       path: displayPath(components),
@@ -87,24 +88,13 @@ extension WorkspaceFileSystem {
     guard current.revision == expectedRevision else {
       throw WorkspaceFileSystemError.revisionConflict
     }
-    var count = 0
-    var searchStart = current.content.startIndex
-    while searchStart < current.content.endIndex,
-      let range = current.content.range(
-        of: oldText,
-        range: searchStart..<current.content.endIndex
-      )
-    {
-      count += 1
-      guard count <= 10_000 else {
-        throw WorkspaceFileSystemError.replacementCountMismatch
-      }
-      searchStart = range.upperBound
-    }
-    guard count == expectedOccurrences else {
-      throw WorkspaceFileSystemError.replacementCountMismatch
-    }
-    let replacement = current.content.replacingOccurrences(of: oldText, with: newText)
+    let replacement = try BoundedTextReplacement.build(
+      source: current.content,
+      replacing: oldText,
+      with: newText,
+      expectedOccurrences: expectedOccurrences,
+      maximumBytes: configuration.maximumWriteBytes
+    )
     return try writeTextFile(
       replacement,
       at: path,
@@ -175,7 +165,8 @@ extension WorkspaceFileSystem {
     named name: String,
     in parentDescriptor: Int32,
     parentComponents: [String],
-    replacing replacedStatus: stat?
+    replacing replacedStatus: stat?,
+    expectedRevision: String?
   ) throws {
     let temporaryName = ".hex-write-\(UUID().uuidString.lowercased()).tmp"
     let descriptor = openat(
@@ -230,10 +221,59 @@ extension WorkspaceFileSystem {
       else {
         throw WorkspaceFileSystemError.revisionConflict
       }
-      guard renameat(parentDescriptor, temporaryName, parentDescriptor, name) == 0 else {
+      try replacementPublicationHook?()
+      guard
+        renameatx_np(
+          parentDescriptor,
+          temporaryName,
+          parentDescriptor,
+          name,
+          UInt32(RENAME_SWAP)
+        ) == 0
+      else {
+        if errno == ENOENT {
+          throw WorkspaceFileSystemError.revisionConflict
+        }
         throw WorkspaceFileSystemError.ioFailure
       }
       shouldRemoveTemporary = false
+
+      let displacedStatus: stat
+      do {
+        displacedStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
+      } catch {
+        throw WorkspaceFileSystemError.outcomeUncertain
+      }
+      do {
+        try validatePublishedReplacement(
+          named: name,
+          temporaryName: temporaryName,
+          in: parentDescriptor,
+          expectedStatus: replacedStatus,
+          expectedRevision: expectedRevision,
+          publishedStatus: publishedStatus
+        )
+      } catch let validationError {
+        do {
+          try restoreRejectedReplacement(
+            named: name,
+            temporaryName: temporaryName,
+            in: parentDescriptor,
+            displacedStatus: displacedStatus,
+            publishedStatus: publishedStatus
+          )
+          shouldRemoveTemporary = true
+        } catch {
+          throw WorkspaceFileSystemError.outcomeUncertain
+        }
+        if validationError is CancellationError {
+          throw validationError
+        }
+        throw WorkspaceFileSystemError.revisionConflict
+      }
+      guard unlinkat(parentDescriptor, temporaryName, 0) == 0 else {
+        throw WorkspaceFileSystemError.outcomeUncertain
+      }
     } else {
       guard linkat(parentDescriptor, temporaryName, parentDescriptor, name, 0) == 0 else {
         if errno == EEXIST {
@@ -264,7 +304,103 @@ extension WorkspaceFileSystem {
       else {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
+      let finalDescriptor = try openRegularFileFromParent(
+        named: name,
+        parent: parentDescriptor
+      )
+      defer { Darwin.close(finalDescriptor) }
+      let finalData = try readData(
+        from: finalDescriptor,
+        maximumBytes: configuration.maximumWriteBytes
+      )
+      guard finalData == data else {
+        throw WorkspaceFileSystemError.outcomeUncertain
+      }
     } catch {
+      throw WorkspaceFileSystemError.outcomeUncertain
+    }
+  }
+
+  private func validatePublishedReplacement(
+    named name: String,
+    temporaryName: String,
+    in parentDescriptor: Int32,
+    expectedStatus: stat,
+    expectedRevision: String?,
+    publishedStatus: stat
+  ) throws {
+    guard let expectedRevision else {
+      throw WorkspaceFileSystemError.revisionConflict
+    }
+    let currentPublishedStatus = try entryStatus(named: name, in: parentDescriptor)
+    guard
+      currentPublishedStatus.st_mode & S_IFMT == S_IFREG,
+      currentPublishedStatus.st_dev == publishedStatus.st_dev,
+      currentPublishedStatus.st_ino == publishedStatus.st_ino,
+      currentPublishedStatus.st_size == publishedStatus.st_size,
+      currentPublishedStatus.st_nlink == 1
+    else {
+      throw WorkspaceFileSystemError.revisionConflict
+    }
+
+    let displacedDescriptor = try openRegularFileFromParent(
+      named: temporaryName,
+      parent: parentDescriptor
+    )
+    defer { Darwin.close(displacedDescriptor) }
+    var displacedStatus = stat()
+    guard
+      fstat(displacedDescriptor, &displacedStatus) == 0,
+      displacedStatus.st_dev == expectedStatus.st_dev,
+      displacedStatus.st_ino == expectedStatus.st_ino,
+      displacedStatus.st_size == expectedStatus.st_size,
+      displacedStatus.st_nlink == 1,
+      displacedStatus.st_mtimespec.tv_sec == expectedStatus.st_mtimespec.tv_sec,
+      displacedStatus.st_mtimespec.tv_nsec == expectedStatus.st_mtimespec.tv_nsec
+    else {
+      throw WorkspaceFileSystemError.revisionConflict
+    }
+    let displacedData = try readData(
+      from: displacedDescriptor,
+      maximumBytes: configuration.maximumWriteBytes
+    )
+    guard revision(for: displacedData) == expectedRevision else {
+      throw WorkspaceFileSystemError.revisionConflict
+    }
+  }
+
+  private func restoreRejectedReplacement(
+    named name: String,
+    temporaryName: String,
+    in parentDescriptor: Int32,
+    displacedStatus: stat,
+    publishedStatus: stat
+  ) throws {
+    let currentPublishedStatus = try entryStatus(named: name, in: parentDescriptor)
+    let currentDisplacedStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
+    guard
+      currentPublishedStatus.st_dev == publishedStatus.st_dev,
+      currentPublishedStatus.st_ino == publishedStatus.st_ino,
+      currentPublishedStatus.st_nlink == 1,
+      currentDisplacedStatus.st_dev == displacedStatus.st_dev,
+      currentDisplacedStatus.st_ino == displacedStatus.st_ino,
+      currentDisplacedStatus.st_nlink == 1,
+      renameatx_np(
+        parentDescriptor,
+        temporaryName,
+        parentDescriptor,
+        name,
+        UInt32(RENAME_SWAP)
+      ) == 0
+    else {
+      throw WorkspaceFileSystemError.outcomeUncertain
+    }
+    let restoredStatus = try entryStatus(named: name, in: parentDescriptor)
+    guard
+      restoredStatus.st_dev == displacedStatus.st_dev,
+      restoredStatus.st_ino == displacedStatus.st_ino,
+      restoredStatus.st_nlink == 1
+    else {
       throw WorkspaceFileSystemError.outcomeUncertain
     }
   }
