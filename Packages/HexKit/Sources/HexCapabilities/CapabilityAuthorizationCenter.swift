@@ -77,7 +77,7 @@ public actor CapabilityAuthorizationCenter: AuthorizationProvider {
     }
   }
 
-  public func endRun(_ runID: AgentRunID) {
+  public func endRun(_ runID: AgentRunID) async {
     runGrants = runGrants.filter { $0.runID != runID }
   }
 
