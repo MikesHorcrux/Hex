@@ -1,7 +1,10 @@
 import HexCore
 
 extension HexGatewayService {
-  public func handshake(_ request: GatewayHandshakeRequest) throws -> GatewayHandshakeResponse {
+  public func handshake(
+    _ untrustedRequest: GatewayHandshakeRequest
+  ) throws -> GatewayHandshakeResponse {
+    let request = try codec.roundTrip(untrustedRequest)
     guard request.minimumVersion <= request.maximumVersion else {
       throw GatewayFailure(
         code: .malformedVersionRange,
@@ -34,20 +37,25 @@ extension HexGatewayService {
     }
 
     let sessionID = GatewaySessionID()
+    let response = try codec.roundTrip(
+      GatewayHandshakeResponse(
+        sessionID: sessionID,
+        gatewayInstanceID: gatewayInstanceID,
+        selectedVersion: upperBound,
+        activeRun: activeRunSnapshot()
+      )
+    )
     sessions[sessionID] = GatewaySessionState(
       clientID: request.clientID,
       selectedVersion: upperBound
     )
-
-    return GatewayHandshakeResponse(
-      sessionID: sessionID,
-      gatewayInstanceID: gatewayInstanceID,
-      selectedVersion: upperBound,
-      activeRun: activeRunSnapshot()
-    )
+    return response
   }
 
-  public func disconnect(sessionID: GatewaySessionID) {
+  public func disconnect(sessionID untrustedSessionID: GatewaySessionID) {
+    guard let sessionID = try? codec.roundTrip(untrustedSessionID) else {
+      return
+    }
     guard sessions.removeValue(forKey: sessionID) != nil else {
       return
     }

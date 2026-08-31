@@ -2,9 +2,11 @@ import HexCore
 
 extension HexGatewayService {
   public func startRun(
-    _ request: GatewayStartRunRequest,
-    sessionID: GatewaySessionID
+    _ untrustedRequest: GatewayStartRunRequest,
+    sessionID untrustedSessionID: GatewaySessionID
   ) throws -> GatewayStartRunResponse {
+    let sessionID = try codec.roundTrip(untrustedSessionID)
+    let request = try codec.roundTrip(untrustedRequest)
     try requireSession(sessionID)
 
     if let existingState = runs[request.runID] {
@@ -17,13 +19,17 @@ extension HexGatewayService {
 
       let disposition: GatewayStartRunDisposition =
         existingState.phase == .terminal ? .alreadyTerminal : .alreadyRunning
-      return GatewayStartRunResponse(runID: request.runID, disposition: disposition)
+      return try codec.roundTrip(
+        GatewayStartRunResponse(runID: request.runID, disposition: disposition)
+      )
     }
 
     if let activeRunID {
-      return GatewayStartRunResponse(
-        runID: request.runID,
-        disposition: .busy(activeRunID: activeRunID)
+      return try codec.roundTrip(
+        GatewayStartRunResponse(
+          runID: request.runID,
+          disposition: .busy(activeRunID: activeRunID)
+        )
       )
     }
 
@@ -36,6 +42,9 @@ extension HexGatewayService {
       )
     }
 
+    let response = try codec.roundTrip(
+      GatewayStartRunResponse(runID: request.runID, disposition: .started)
+    )
     let state = GatewayRunState(request: request)
     activeRunID = request.runID
     runs[request.runID] = state
@@ -66,29 +75,38 @@ extension HexGatewayService {
       installedState.task = task
       runs[request.runID] = installedState
     }
-    return GatewayStartRunResponse(runID: request.runID, disposition: .started)
+    return response
   }
 
   public func cancelRun(
-    _ request: GatewayCancelRunRequest,
-    sessionID: GatewaySessionID
+    _ untrustedRequest: GatewayCancelRunRequest,
+    sessionID untrustedSessionID: GatewaySessionID
   ) throws -> GatewayCancelRunResponse {
+    let sessionID = try codec.roundTrip(untrustedSessionID)
+    let request = try codec.roundTrip(untrustedRequest)
     try requireSession(sessionID)
 
     guard var state = runs[request.runID] else {
-      return GatewayCancelRunResponse(runID: request.runID, disposition: .notFound)
+      return try codec.roundTrip(
+        GatewayCancelRunResponse(runID: request.runID, disposition: .notFound)
+      )
     }
 
     guard state.phase != .terminal else {
-      return GatewayCancelRunResponse(runID: request.runID, disposition: .alreadyTerminal)
+      return try codec.roundTrip(
+        GatewayCancelRunResponse(runID: request.runID, disposition: .alreadyTerminal)
+      )
     }
 
+    let response = try codec.roundTrip(
+      GatewayCancelRunResponse(runID: request.runID, disposition: .requested)
+    )
     state.phase = .cancelling
     let task = state.task
     runs[request.runID] = state
     task?.cancel()
 
-    return GatewayCancelRunResponse(runID: request.runID, disposition: .requested)
+    return response
   }
 
   func driverFinished(runID: AgentRunID) {
@@ -113,10 +131,7 @@ extension HexGatewayService {
         )
       )
     }
-    if activeRunID == runID {
-      activeRunID = nil
-    }
-    rememberCompletedRun(runID)
+    finishRunOwnership(runID)
   }
 
   func driverCancelled(runID: AgentRunID) {
@@ -159,6 +174,13 @@ extension HexGatewayService {
     state.subscribers.removeAll()
     runs[runID] = state
     task?.cancel()
+  }
+
+  func finishRunOwnership(_ runID: AgentRunID) {
+    if activeRunID == runID {
+      activeRunID = nil
+    }
+    rememberCompletedRun(runID)
   }
 
   private func rememberCompletedRun(_ runID: AgentRunID) {

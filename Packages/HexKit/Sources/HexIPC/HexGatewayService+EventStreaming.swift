@@ -5,9 +5,11 @@ extension HexGatewayService {
   /// Atomically enqueues retained records and installs the live subscriber without an actor
   /// suspension point, preventing an event from falling between replay and live delivery.
   public func eventRecords(
-    after cursor: GatewayEventCursor,
-    sessionID: GatewaySessionID
+    after untrustedCursor: GatewayEventCursor,
+    sessionID untrustedSessionID: GatewaySessionID
   ) throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+    let sessionID = try codec.roundTrip(untrustedSessionID)
+    let cursor = try codec.roundTrip(untrustedCursor)
     try requireSession(sessionID)
 
     guard var state = runs[cursor.runID] else {
@@ -97,6 +99,13 @@ extension HexGatewayService {
       )
     }
 
+    guard state.phase != .terminal else {
+      throw GatewayFailure(
+        code: .eventAfterTerminal,
+        message: "The run driver emitted a record after a terminal outcome was committed."
+      )
+    }
+
     let record: AgentEventRecord
     let wireByteCount: Int
     do {
@@ -119,15 +128,6 @@ extension HexGatewayService {
       let failure = GatewayFailure(
         code: .wrongRun,
         message: "The run driver emitted a record for the wrong run."
-      )
-      failRun(runID, with: failure)
-      throw failure
-    }
-
-    guard state.terminalSequence == nil else {
-      let failure = GatewayFailure(
-        code: .eventAfterTerminal,
-        message: "The run driver emitted a record after a terminal event."
       )
       failRun(runID, with: failure)
       throw failure
@@ -181,9 +181,11 @@ extension HexGatewayService {
     }
 
     state.latestSequence = record.sequence
-    state.phase = isTerminal(record.event) ? .terminal : .running
-    if state.phase == .terminal {
+    if isTerminal(record.event) {
+      state.phase = .terminal
       state.terminalSequence = record.sequence
+    } else if state.phase != .cancelling {
+      state.phase = .running
     }
 
     state.retainedRecords.append(record)
@@ -228,7 +230,8 @@ extension HexGatewayService {
     // The durable terminal record is the public stream completion commit point. The driver task may
     // still be unwinding (or may be defective and never return), but consumers must not wait on its
     // lifecycle after they have received the terminal fact. State keeps the terminal sequence so any
-    // later driver output still fails internally as an event-after-terminal violation.
+    // later driver output still fails internally without changing replay, and releasing run ownership
+    // at this same commit lets another run start even if the completed driver unwinds slowly.
     if state.phase == .terminal {
       for subscriber in state.subscribers.values {
         subscriber.continuation.finish()
@@ -237,6 +240,9 @@ extension HexGatewayService {
     }
 
     runs[runID] = state
+    if state.terminalSequence != nil {
+      finishRunOwnership(runID)
+    }
   }
 
   private func enqueue(

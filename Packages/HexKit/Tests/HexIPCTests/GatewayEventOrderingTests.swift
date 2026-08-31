@@ -70,26 +70,6 @@ struct GatewayEventOrderingTests {
   }
 
   @Test
-  func rejectsRecordsAfterTerminal() async {
-    let runID = GatewayTestValues.runID()
-    await expectFailure(
-      records: [
-        GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted),
-        GatewayTestValues.record(runID: runID, sequence: 2, event: .runCompleted),
-        GatewayTestValues.record(
-          runID: runID,
-          sequence: 3,
-          event: .messageAppended(
-            GatewayTestValues.request(runID: runID).initialMessages[0]
-          )
-        ),
-      ],
-      runID: runID,
-      code: .eventAfterTerminal
-    )
-  }
-
-  @Test
   func terminalRecordCompletesLiveAndLateReplayBeforeDriverReturns() async throws {
     let driver = ControllableGatewayRunDriver()
     let service = HexGatewayService(driver: driver)
@@ -125,7 +105,7 @@ struct GatewayEventOrderingTests {
   }
 
   @Test
-  func reportsPostTerminalViolationToLaterSubscriber() async throws {
+  func postTerminalViolationCannotChangeCommittedReplayOutcome() async throws {
     let driver = ControllableGatewayRunDriver()
     let service = HexGatewayService(driver: driver)
     let transport = InProcessHexGatewayTransport(service: service)
@@ -160,12 +140,7 @@ struct GatewayEventOrderingTests {
       after: GatewayEventCursor(runID: runID)
     )
 
-    do {
-      _ = try await GatewayTestValues.collect(laterStream)
-      Issue.record("Expected the internally recorded post-terminal violation.")
-    } catch let failure as GatewayFailure {
-      #expect(failure.code == .eventAfterTerminal)
-    }
+    #expect(try await GatewayTestValues.collect(laterStream) == acceptedRecords)
   }
 
   @Test

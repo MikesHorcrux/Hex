@@ -55,6 +55,34 @@ struct GatewayRunAdmissionTests {
 
     let terminalDuplicate = try await transport.startRun(firstRequest)
     #expect(terminalDuplicate.disposition == .alreadyTerminal)
+
+    let secondStart = try await transport.startRun(
+      GatewayTestValues.request(runID: secondRunID)
+    )
+    #expect(secondStart.disposition == .started)
+    guard secondStart.disposition == .started else {
+      await driver.finish(firstRunID)
+      await driver.waitUntilStopped(firstRunID)
+      return
+    }
+    await driver.waitUntilStarted(secondRunID)
+
+    // Cleanup from the terminal run must not clear the newer run's active slot.
     await driver.finish(firstRunID)
+    await driver.waitUntilStopped(firstRunID)
+    let thirdRunID = GatewayTestValues.runID(3)
+    let thirdStart = try await transport.startRun(
+      GatewayTestValues.request(runID: thirdRunID)
+    )
+    #expect(thirdStart.disposition == .busy(activeRunID: secondRunID))
+
+    await driver.yieldAndWait(
+      GatewayTestValues.record(runID: secondRunID, sequence: 1, event: .runStarted)
+    )
+    await driver.yieldAndWait(
+      GatewayTestValues.record(runID: secondRunID, sequence: 2, event: .runCompleted)
+    )
+    await driver.finish(secondRunID)
+    await driver.waitUntilStopped(secondRunID)
   }
 }

@@ -60,4 +60,29 @@ struct GatewayCancellationTests {
     #expect(response.disposition == .alreadyTerminal)
     #expect(records.map(\.event) == [.runStarted, .runCompleted])
   }
+
+  @Test
+  func nonterminalUnwindOutputPreservesCancellingPhase() async throws {
+    let driver = LaggingCancellationGatewayRunDriver()
+    let service = HexGatewayService(driver: driver)
+    let firstHandshake = try await service.handshake(GatewayTestValues.handshakeRequest(73))
+    let runID = GatewayTestValues.runID(73)
+    _ = try await service.startRun(
+      GatewayTestValues.request(runID: runID),
+      sessionID: firstHandshake.sessionID
+    )
+    await driver.waitUntilStarted()
+
+    _ = try await service.cancelRun(
+      GatewayCancelRunRequest(runID: runID),
+      sessionID: firstHandshake.sessionID
+    )
+    await driver.waitUntilLateRecord()
+
+    let reconnect = try await service.handshake(GatewayTestValues.handshakeRequest(74))
+    #expect(reconnect.activeRun?.phase == .cancelling)
+
+    await driver.release()
+    await driver.waitUntilStopped()
+  }
 }

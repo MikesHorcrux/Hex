@@ -1,13 +1,17 @@
+import Foundation
 import HexCore
 
 /// A bounded loopback transport for local development and deterministic tests. Both endpoints remain
 /// in one process. It does not launch `HexGateway`, survive app termination, provide XPC isolation, or
 /// expand the app's sandbox, filesystem, terminal, privacy, or network privileges.
+/// Its configuration bounds client-side encoding and forwarding; the service independently enforces
+/// its own envelope, so a larger transport configuration never weakens service admission.
 public actor InProcessHexGatewayTransport: HexGatewayTransport {
   private let service: HexGatewayService
   private let configuration: GatewayConfiguration
   private let codec: GatewayWireCodec
   private var sessionID: GatewaySessionID?
+  private var latestHandshakeAttemptID: UUID?
 
   public init(
     service: HexGatewayService,
@@ -21,23 +25,39 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
   public func handshake(
     _ request: GatewayHandshakeRequest
   ) async throws -> GatewayHandshakeResponse {
+    let attemptID = UUID()
+    latestHandshakeAttemptID = attemptID
     if let sessionID {
-      await service.disconnect(sessionID: sessionID)
       self.sessionID = nil
+      await service.disconnect(sessionID: sessionID)
     }
 
     do {
+      guard latestHandshakeAttemptID == attemptID else {
+        throw supersededHandshakeFailure()
+      }
       let wireRequest = try codec.roundTrip(request)
       let response = try await service.handshake(wireRequest)
+
+      let wireResponse: GatewayHandshakeResponse
       do {
-        let wireResponse = try codec.roundTrip(response)
-        sessionID = wireResponse.sessionID
-        return wireResponse
+        wireResponse = try codec.roundTrip(response)
       } catch {
         await service.disconnect(sessionID: response.sessionID)
         throw error
       }
+
+      guard latestHandshakeAttemptID == attemptID else {
+        await service.disconnect(sessionID: response.sessionID)
+        throw supersededHandshakeFailure()
+      }
+      sessionID = wireResponse.sessionID
+      latestHandshakeAttemptID = nil
+      return wireResponse
     } catch {
+      if latestHandshakeAttemptID == attemptID {
+        latestHandshakeAttemptID = nil
+      }
       throw codec.canonicalFailure(from: error)
     }
   }
@@ -147,10 +167,19 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
   }
 
   public func disconnect() async {
+    latestHandshakeAttemptID = nil
     guard let sessionID else {
       return
     }
     self.sessionID = nil
     await service.disconnect(sessionID: sessionID)
+  }
+
+  private func supersededHandshakeFailure() -> GatewayFailure {
+    GatewayFailure(
+      code: .disconnected,
+      message: "The handshake was superseded by a newer connection attempt.",
+      isRetryable: true
+    )
   }
 }
