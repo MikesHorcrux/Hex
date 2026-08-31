@@ -729,6 +729,42 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(response == .object(["reply": .string("empty-result")]))
   }
 
+  @Test("Replies to a peer ping with a negative integer ID")
+  func repliesToNegativeIntegerPeerPing() async throws {
+    let program =
+      #"NR == 1 { print "{\"jsonrpc\":\"2.0\",\"id\":-7,\"method\":\"ping\"}"; fflush(); next } NR == 2 { status = index($0, "\"id\":-7") && index($0, "\"result\":{}") ? "empty-result" : "unexpected"; print "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"reply\":\"" status "\"}}"; fflush(); }"#
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: try configuration(program: program)
+    )
+    try await connection.connect()
+    defer { Task { await connection.disconnect() } }
+
+    let response = try await connection.request(
+      method: "test/negative-ping",
+      params: .object([:])
+    )
+
+    #expect(response == .object(["reply": .string("empty-result")]))
+  }
+
+  @Test("Answers an unsupported server request with a negative integer ID")
+  func answersUnsupportedServerRequestWithNegativeIntegerID() async throws {
+    let program =
+      #"NR == 1 { print "{\"jsonrpc\":\"2.0\",\"id\":-9,\"method\":\"roots/list\",\"params\":{}}"; fflush(); next } NR == 2 { status = index($0, "\"id\":-9") && index($0, "\"code\":-32601") ? "method-not-found" : "unexpected"; print "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"reply\":\"" status "\"}}"; fflush(); }"#
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: try configuration(program: program)
+    )
+    try await connection.connect()
+    defer { Task { await connection.disconnect() } }
+
+    let response = try await connection.request(
+      method: "test/negative-request",
+      params: .object([:])
+    )
+
+    #expect(response == .object(["reply": .string("method-not-found")]))
+  }
+
   @Test("Rejects canonical duplicate response members")
   func rejectsCanonicalDuplicateMembers() async throws {
     let connection = MCPStdioJSONRPCConnection(
@@ -778,6 +814,128 @@ struct MCPStdioJSONRPCConnectionTests {
       #expect(response == .object(["ok": .boolean(true)]))
       await connection.disconnect()
     }
+  }
+
+  @Test("A stale backpressured writer cannot fail a replacement generation queue")
+  func staleBackpressuredWriterCannotFailReplacementQueue() async throws {
+    let firstFixture = try PipeProcessFixture(processID: 10_001)
+    let secondFixture = try PipeProcessFixture(processID: 10_002)
+    let fixtures = [firstFixture, secondFixture]
+    let nextFixture = Mutex(0)
+    let closer = PipeDescriptorCloser()
+    let terminator = GatedPipeTerminator()
+    let configuration = try MCPServerConfiguration(
+      serverID: "pipe-race",
+      executableURL: URL(fileURLWithPath: "/bin/cat"),
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 30_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024 * 1_024
+    )
+    try Self.fillPipe(firstFixture.inputWriteDescriptor)
+    try Self.fillPipe(secondFixture.inputWriteDescriptor)
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { _ in
+        let index = nextFixture.withLock { value in
+          let index = value
+          value += 1
+          return index
+        }
+        return fixtures[index].spawnedProcess
+      },
+      terminateProcess: { spawned in
+        guard let fixture = fixtures.first(where: { $0.processID == spawned.processID }) else {
+          return
+        }
+        await terminator.terminate(fixture: fixture, closer: closer)
+      }
+    )
+
+    try await connection.connect()
+    let firstGeneration = await connection.generation
+    let firstWrite = Task {
+      try await connection.notify(
+        method: "blocked",
+        params: JSONValue.object([
+          "payload": JSONValue.string(String(repeating: "x", count: 1_800_000))
+        ])
+      )
+    }
+    var firstWriterStarted = false
+    for _ in 0..<500 {
+      if await connection.activeWriterGeneration == firstGeneration,
+        await connection.writeQueue.isEmpty
+      {
+        firstWriterStarted = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(firstWriterStarted)
+
+    let firstShutdown = try #require(
+      await connection.beginShutdown(error: MCPClientSessionError.connectionClosed)
+    )
+    await terminator.waitUntilFirstTerminationStarts()
+    await connection.finishShutdown(
+      id: firstShutdown.id,
+      generation: firstShutdown.generation
+    )
+    try await connection.connect()
+    #expect(await connection.generation == firstGeneration + 1)
+
+    let replacementWrite = Task {
+      try await connection.notify(
+        method: "replacement",
+        params: JSONValue.object([
+          "payload": JSONValue.string(String(repeating: "y", count: 1_800_000))
+        ])
+      )
+    }
+    var replacementWriterStarted = false
+    for _ in 0..<500 {
+      if await connection.activeWriterGeneration == firstGeneration + 1,
+        await connection.writeQueue.isEmpty
+      {
+        replacementWriterStarted = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(replacementWriterStarted)
+    let queuedReplacement = Task {
+      try await connection.notify(method: "queued", params: JSONValue.object([:]))
+    }
+    var replacementWasQueued = false
+    for _ in 0..<500 {
+      if await connection.writeQueue.count == 1 {
+        replacementWasQueued = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(replacementWasQueued)
+
+    try? await Task.sleep(for: .milliseconds(20))
+    let drainTask = Task {
+      for _ in 0..<400 {
+        Self.drainPipe(secondFixture.inputReadDescriptor)
+        try? await Task.sleep(for: .milliseconds(2))
+      }
+    }
+    try await replacementWrite.value
+    try await queuedReplacement.value
+    drainTask.cancel()
+    _ = await firstWrite.result
+
+    await connection.disconnect()
+    await terminator.releaseFirstTermination()
+    await firstShutdown.completion.value
+    await closer.close(firstFixture)
+    await closer.close(secondFixture)
   }
 
   @Test("Reentrant shutdown shares completion and cannot clobber a replacement")
@@ -1230,6 +1388,30 @@ struct MCPStdioJSONRPCConnectionTests {
       && status.st_mode & 0o777 == 0
   }
 
+  nonisolated private static func fillPipe(_ descriptor: Int32) throws {
+    let bytes = [UInt8](repeating: 0x41, count: 4 * 1_024)
+    while true {
+      let written = bytes.withUnsafeBytes { buffer in
+        Darwin.write(descriptor, buffer.baseAddress, buffer.count)
+      }
+      if written < 0, errno == EINTR { continue }
+      if written < 0, errno == EAGAIN || errno == EWOULDBLOCK { return }
+      guard written > 0 else { throw MCPClientSessionError.connectionClosed }
+    }
+  }
+
+  nonisolated private static func drainPipe(_ descriptor: Int32) {
+    var bytes = [UInt8](repeating: 0, count: 16 * 1_024)
+    while true {
+      let readCount = bytes.withUnsafeMutableBytes { buffer in
+        Darwin.read(descriptor, buffer.baseAddress, buffer.count)
+      }
+      if readCount > 0 { continue }
+      if readCount < 0, errno == EINTR { continue }
+      return
+    }
+  }
+
   private func openDescriptorCount() throws -> Int {
     try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
   }
@@ -1294,6 +1476,143 @@ struct MCPStdioJSONRPCConnectionTests {
 
     func invocationCount() -> Int {
       invocations
+    }
+  }
+
+  fileprivate struct PipeProcessFixture: Sendable {
+    let processID: pid_t
+    let inputReadDescriptor: Int32
+    let inputWriteDescriptor: Int32
+    let outputReadDescriptor: Int32
+    let outputWriteDescriptor: Int32
+    let errorReadDescriptor: Int32
+    let errorWriteDescriptor: Int32
+
+    init(processID: pid_t) throws {
+      let pipes = try Self.makePipeSet()
+      self.processID = processID
+      self.inputReadDescriptor = pipes.input.read
+      self.inputWriteDescriptor = pipes.input.write
+      self.outputReadDescriptor = pipes.output.read
+      self.outputWriteDescriptor = pipes.output.write
+      self.errorReadDescriptor = pipes.error.read
+      self.errorWriteDescriptor = pipes.error.write
+      do {
+        try Self.makeNonBlocking(pipes.input.read)
+        try Self.makeNonBlocking(pipes.input.write)
+        try Self.makeNonBlocking(pipes.output.read)
+        try Self.makeNonBlocking(pipes.error.read)
+      } catch {
+        for descriptor in descriptors { Darwin.close(descriptor) }
+        throw error
+      }
+    }
+
+    var spawnedProcess: MCPSpawnedProcess {
+      MCPSpawnedProcess(
+        processID: processID,
+        inputDescriptor: inputWriteDescriptor,
+        outputDescriptor: outputReadDescriptor,
+        errorDescriptor: errorReadDescriptor,
+        executableSnapshot: nil
+      )
+    }
+
+    var descriptors: [Int32] {
+      [
+        inputReadDescriptor,
+        inputWriteDescriptor,
+        outputReadDescriptor,
+        outputWriteDescriptor,
+        errorReadDescriptor,
+        errorWriteDescriptor,
+      ]
+    }
+
+    private static func makePipe() throws -> (read: Int32, write: Int32) {
+      var descriptors = (Int32(0), Int32(0))
+      let result = withUnsafeMutablePointer(to: &descriptors) { pointer in
+        pointer.withMemoryRebound(to: Int32.self, capacity: 2) { values in
+          Darwin.pipe(values)
+        }
+      }
+      guard result == 0 else { throw MCPClientSessionError.connectionClosed }
+      return (descriptors.0, descriptors.1)
+    }
+
+    private static func makePipeSet() throws -> (
+      input: (read: Int32, write: Int32),
+      output: (read: Int32, write: Int32),
+      error: (read: Int32, write: Int32)
+    ) {
+      let input = try makePipe()
+      do {
+        let output = try makePipe()
+        do {
+          let error = try makePipe()
+          return (input, output, error)
+        } catch {
+          Darwin.close(output.read)
+          Darwin.close(output.write)
+          throw error
+        }
+      } catch {
+        Darwin.close(input.read)
+        Darwin.close(input.write)
+        throw error
+      }
+    }
+
+    private static func makeNonBlocking(_ descriptor: Int32) throws {
+      let flags = fcntl(descriptor, F_GETFL)
+      guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+        throw MCPClientSessionError.connectionClosed
+      }
+    }
+  }
+
+  fileprivate actor PipeDescriptorCloser {
+    private var closedDescriptors = Set<Int32>()
+
+    fileprivate func close(_ fixture: PipeProcessFixture) {
+      for descriptor in fixture.descriptors where closedDescriptors.insert(descriptor).inserted {
+        Darwin.close(descriptor)
+      }
+    }
+  }
+
+  fileprivate actor GatedPipeTerminator {
+    private var firstTerminationStarted = false
+    private var firstTerminationReleased = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    fileprivate func terminate(fixture: PipeProcessFixture, closer: PipeDescriptorCloser) async {
+      if !firstTerminationStarted {
+        firstTerminationStarted = true
+        let waiters = startWaiters
+        startWaiters = []
+        for waiter in waiters { waiter.resume() }
+        if !firstTerminationReleased {
+          await withCheckedContinuation { continuation in
+            releaseWaiter = continuation
+          }
+        }
+      }
+      await closer.close(fixture)
+    }
+
+    func waitUntilFirstTerminationStarts() async {
+      if firstTerminationStarted { return }
+      await withCheckedContinuation { continuation in
+        startWaiters.append(continuation)
+      }
+    }
+
+    func releaseFirstTermination() {
+      firstTerminationReleased = true
+      releaseWaiter?.resume()
+      releaseWaiter = nil
     }
   }
 }

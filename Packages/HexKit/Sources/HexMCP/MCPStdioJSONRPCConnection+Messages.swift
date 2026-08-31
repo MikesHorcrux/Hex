@@ -169,8 +169,8 @@ extension MCPStdioJSONRPCConnection {
 
   private func validServerRequestID(_ value: JSONValue) -> Bool {
     switch value {
-    case .integer(let id):
-      return id >= 0
+    case .integer:
+      return true
     case .string(let id):
       return !id.isEmpty && id.utf8.count <= 128 && !id.contains("\0")
     default:

@@ -20,7 +20,7 @@ extension MCPStdioJSONRPCConnection {
         request.timeoutTask.cancel()
         request.continuation.resume(throwing: error)
       }
-      failQueuedWrites(with: error)
+      failQueuedWrites(with: error, generation: shutdownGeneration)
       let spawned = process
       process = nil
       let tasks = readerTasks

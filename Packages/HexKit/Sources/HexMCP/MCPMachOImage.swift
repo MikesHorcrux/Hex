@@ -15,6 +15,10 @@ struct MCPMachOImage: Sendable {
   private static let maximumLoadCommandBytes = 16 * 1_024 * 1_024
   private static let maximumPathBytes = 4_096
   private static let maximumPathCount = 4_096
+  static let maximumRunpathCount = 1_024
+  static let maximumRunpathBytes = 1 * 1_024 * 1_024
+  static let maximumClosureRunpathCount = 8 * maximumRunpathCount
+  static let maximumClosureRunpathBytes = 8 * maximumRunpathBytes
 
   static func read(from descriptor: Int32, fileSize: off_t) throws -> MCPMachOImage? {
     guard fileSize >= 4 else { return nil }
@@ -44,7 +48,10 @@ struct MCPMachOImage: Sendable {
     }
     let table = try readBytes(from: descriptor, offset: 8, count: tableByteCount)
     var dependencies: [Dependency] = []
+    var dependencyIndexes: [String: Int] = [:]
     var runpaths: [String] = []
+    var runpathSet = Set<String>()
+    var runpathBytes = 0
     for index in 0..<Int(architectureCount) {
       let entryOffset = index * entrySize
       let sliceOffset: UInt64?
@@ -81,10 +88,20 @@ struct MCPMachOImage: Sendable {
         sliceSize: off_t(sliceSize),
         format: format
       )
-      appendUniqueDependencies(image.dependencies, to: &dependencies)
-      appendUnique(image.runpaths, to: &runpaths)
+      appendUniqueDependencies(
+        image.dependencies,
+        to: &dependencies,
+        indexes: &dependencyIndexes
+      )
+      try appendUniqueRunpaths(
+        image.runpaths,
+        to: &runpaths,
+        set: &runpathSet,
+        byteCount: &runpathBytes
+      )
       guard dependencies.count <= maximumPathCount,
-        runpaths.count <= maximumPathCount
+        runpaths.count <= maximumRunpathCount,
+        runpathBytes <= maximumRunpathBytes
       else {
         throw MCPClientSessionError.connectionClosed
       }
@@ -117,7 +134,10 @@ struct MCPMachOImage: Sendable {
       count: Int(commandBytes)
     )
     var dependencies: [Dependency] = []
+    var dependencyIndexes: [String: Int] = [:]
     var runpaths: [String] = []
+    var runpathSet = Set<String>()
+    var runpathBytes = 0
     var commandOffset = 0
     for _ in 0..<Int(commandCount) {
       guard let command = readUInt32(commands, offset: commandOffset, order: format.order),
@@ -142,7 +162,8 @@ struct MCPMachOImage: Sendable {
         )
         appendUniqueDependencies(
           [Dependency(path: path, isRequired: requiredDependencyCommands.contains(command))],
-          to: &dependencies
+          to: &dependencies,
+          indexes: &dependencyIndexes
         )
       } else if command == 0x8000_001C {
         let path = try readLoadCommandPath(
@@ -152,11 +173,20 @@ struct MCPMachOImage: Sendable {
           order: format.order,
           minimumOffset: 12
         )
-        appendUnique([path], to: &runpaths)
+        try appendUniqueRunpaths(
+          [path],
+          to: &runpaths,
+          set: &runpathSet,
+          byteCount: &runpathBytes
+        )
       }
       commandOffset += Int(commandSize)
     }
-    guard commandOffset == commands.count else {
+    guard commandOffset == commands.count,
+      dependencies.count <= maximumPathCount,
+      runpaths.count <= maximumRunpathCount,
+      runpathBytes <= maximumRunpathBytes
+    else {
       throw MCPClientSessionError.connectionClosed
     }
     return MCPMachOImage(dependencies: dependencies, runpaths: runpaths)
@@ -276,22 +306,37 @@ struct MCPMachOImage: Sendable {
       : bytes.reduce(0) { ($0 << 8) | UInt64($1) }
   }
 
-  private static func appendUnique(_ values: [String], to destination: inout [String]) {
-    for value in values where !destination.contains(value) {
+  private static func appendUniqueRunpaths(
+    _ values: [String],
+    to destination: inout [String],
+    set: inout Set<String>,
+    byteCount: inout Int
+  ) throws {
+    for value in values where set.insert(value).inserted {
+      guard destination.count < maximumRunpathCount else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      let (nextByteCount, overflowed) = byteCount.addingReportingOverflow(value.utf8.count)
+      guard !overflowed, nextByteCount <= maximumRunpathBytes else {
+        throw MCPClientSessionError.connectionClosed
+      }
       destination.append(value)
+      byteCount = nextByteCount
     }
   }
 
   private static func appendUniqueDependencies(
     _ values: [Dependency],
-    to destination: inout [Dependency]
+    to destination: inout [Dependency],
+    indexes: inout [String: Int]
   ) {
     for value in values {
-      if let index = destination.firstIndex(where: { $0.path == value.path }) {
+      if let index = indexes[value.path] {
         if value.isRequired, !destination[index].isRequired {
           destination[index] = value
         }
       } else {
+        indexes[value.path] = destination.count
         destination.append(value)
       }
     }

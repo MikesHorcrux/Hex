@@ -11,6 +11,10 @@ final class MCPExecutableSnapshot: Sendable {
   static let maximumSnapshotPathBytes = 4_096
   static let maximumSnapshotPathDepth = 64
   static let maximumSymbolicLinkBytes = 4_096
+  static let maximumRunpathsPerImage = MCPMachOImage.maximumRunpathCount
+  static let maximumRunpathBytesPerImage = MCPMachOImage.maximumRunpathBytes
+  static let maximumClosureRunpaths = MCPMachOImage.maximumClosureRunpathCount
+  static let maximumClosureRunpathBytes = MCPMachOImage.maximumClosureRunpathBytes
 
   let executablePath: String
   let status: stat
@@ -235,7 +239,7 @@ final class MCPExecutableSnapshot: Sendable {
     let executableRelativePath: String
   }
 
-  struct ExpandedRunpath: Equatable {
+  struct ExpandedRunpath: Hashable {
     let relativePath: String
     let isTrustedSystemPath: Bool
     let isExternalPath: Bool
@@ -277,6 +281,8 @@ final class MCPExecutableSnapshot: Sendable {
     var copiedByteCount = off_t(0)
     var pathMetadataByteCount = Int64(0)
     var admittedEntryCount = 0
+    var admittedRunpathCount = 0
+    var admittedRunpathByteCount = Int64(0)
 
     mutating func admitEntry(
       relativePath: String,
@@ -308,6 +314,54 @@ final class MCPExecutableSnapshot: Sendable {
       admittedEntryCount += 1
       pathMetadataByteCount = nextPathBytes
       copiedByteCount = nextCopiedBytes
+    }
+
+    mutating func admitRunpathBudget(
+      source: [ExpandedRunpath],
+      snapshot: [ExpandedRunpath]
+    ) throws {
+      guard
+        source.count <= MCPExecutableSnapshot.maximumRunpathsPerImage,
+        snapshot.count <= MCPExecutableSnapshot.maximumRunpathsPerImage
+      else {
+        throw MCPClientSessionError.limitExceeded
+      }
+
+      func byteCount(of runpaths: [ExpandedRunpath]) -> Int64? {
+        var total = Int64(0)
+        for runpath in runpaths {
+          let (next, overflowed) = total.addingReportingOverflow(
+            Int64(runpath.relativePath.utf8.count)
+          )
+          guard !overflowed else { return nil }
+          total = next
+        }
+        return total
+      }
+
+      guard
+        let sourceBytes = byteCount(of: source),
+        let snapshotBytes = byteCount(of: snapshot),
+        sourceBytes <= Int64(MCPExecutableSnapshot.maximumRunpathBytesPerImage),
+        snapshotBytes <= Int64(MCPExecutableSnapshot.maximumRunpathBytesPerImage)
+      else {
+        throw MCPClientSessionError.limitExceeded
+      }
+      let imageCount = source.count + snapshot.count
+      let (nextCount, countOverflowed) = admittedRunpathCount.addingReportingOverflow(imageCount)
+      let imageBytes = sourceBytes + snapshotBytes
+      let (nextBytes, bytesOverflowed) = admittedRunpathByteCount
+        .addingReportingOverflow(imageBytes)
+      guard
+        !countOverflowed,
+        !bytesOverflowed,
+        nextCount <= MCPExecutableSnapshot.maximumClosureRunpaths,
+        nextBytes <= Int64(MCPExecutableSnapshot.maximumClosureRunpathBytes)
+      else {
+        throw MCPClientSessionError.limitExceeded
+      }
+      admittedRunpathCount = nextCount
+      admittedRunpathByteCount = nextBytes
     }
   }
 

@@ -74,15 +74,18 @@ extension MCPStdioJSONRPCConnection {
         case .connected = state,
         let descriptor = process?.inputDescriptor
       else {
-        failQueuedWrites(with: MCPClientSessionError.connectionClosed)
+        failQueuedWrites(
+          with: MCPClientSessionError.connectionClosed,
+          generation: generation
+        )
+        if activeWriterGeneration == generation { activeWriterGeneration = nil }
+        return
+      }
+      guard writeQueue[0].generation == generation else {
         if activeWriterGeneration == generation { activeWriterGeneration = nil }
         return
       }
       let operation = writeQueue.removeFirst()
-      guard operation.generation == generation else {
-        operation.continuation.resume(throwing: MCPClientSessionError.connectionClosed)
-        continue
-      }
       var offset = 0
       do {
         while offset < operation.data.count {
@@ -114,7 +117,7 @@ extension MCPStdioJSONRPCConnection {
         operation.continuation.resume()
       } catch {
         operation.continuation.resume(throwing: error)
-        failQueuedWrites(with: error)
+        failQueuedWrites(with: error, generation: generation)
         if activeWriterGeneration == generation { activeWriterGeneration = nil }
         if generation == self.generation {
           await closeConnection(error: error)
@@ -140,10 +143,10 @@ extension MCPStdioJSONRPCConnection {
     }
   }
 
-  func failQueuedWrites(with error: any Error) {
+  func failQueuedWrites(with error: any Error, generation: UInt64) {
     let queued = writeQueue
-    writeQueue = []
-    for operation in queued {
+    writeQueue = queued.filter { $0.generation != generation }
+    for operation in queued where operation.generation == generation {
       operation.continuation.resume(throwing: error)
     }
   }

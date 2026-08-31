@@ -57,6 +57,16 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
     }
   }
 
+  init(
+    configuration: MCPServerConfiguration,
+    spawnProcess: @escaping @Sendable (MCPServerConfiguration) throws -> MCPSpawnedProcess,
+    terminateProcess: @escaping @Sendable (MCPSpawnedProcess) async -> Void
+  ) {
+    self.configuration = configuration
+    self.spawnProcess = spawnProcess
+    self.terminateProcess = terminateProcess
+  }
+
   func connect() async throws {
     try Task.checkCancellation()
     if let shutdown {

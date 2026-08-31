@@ -123,6 +123,72 @@ struct MCPExecutableSnapshotTests {
     #expect(!MCPExecutableSnapshot.isAcceptableBundleImageCount(0))
   }
 
+  @Test("Rejects an image whose unique runpath bytes exceed the per-image budget")
+  func rejectsExcessivePerImageRunpathBytes() throws {
+    let longRunpath = String(repeating: "x", count: 4_000)
+    let image = thinImage(
+      commands: (0..<300).map { index in
+        pathCommand(
+          command: 0x8000_001C,
+          path: "@loader_path/\(longRunpath)/\(index)"
+        )
+      }
+    )
+
+    #expect(throws: MCPClientSessionError.connectionClosed) {
+      try parseImage(image)
+    }
+  }
+
+  @Test("Rejects an image whose unique runpath count exceeds the per-image budget")
+  func rejectsExcessivePerImageRunpathCount() throws {
+    let image = thinImage(
+      commands: (0...1_024).map { index in
+        pathCommand(command: 0x8000_001C, path: "@loader_path/\(index)")
+      }
+    )
+
+    #expect(throws: MCPClientSessionError.connectionClosed) {
+      try parseImage(image)
+    }
+  }
+
+  @Test("Enforces closure-wide runpath count and byte budgets")
+  func enforcesClosureWideRunpathBudgets() throws {
+    let shortRunpaths = (0..<MCPExecutableSnapshot.maximumRunpathsPerImage).map { index in
+      MCPExecutableSnapshot.ExpandedRunpath(
+        relativePath: "runpath-\(index)",
+        isTrustedSystemPath: false,
+        isExternalPath: false
+      )
+    }
+    var countState = MCPExecutableSnapshot.CopyState(policy: .standard)
+    for _ in 0..<(
+      MCPExecutableSnapshot.maximumClosureRunpaths
+        / MCPExecutableSnapshot.maximumRunpathsPerImage
+    ) {
+      try countState.admitRunpathBudget(source: shortRunpaths, snapshot: [])
+    }
+    #expect(throws: MCPClientSessionError.limitExceeded) {
+      try countState.admitRunpathBudget(source: shortRunpaths, snapshot: [])
+    }
+
+    let longRunpaths = (0..<240).map { index in
+      MCPExecutableSnapshot.ExpandedRunpath(
+        relativePath: String(repeating: "x", count: 4_000) + "-\(index)",
+        isTrustedSystemPath: false,
+        isExternalPath: false
+      )
+    }
+    var byteState = MCPExecutableSnapshot.CopyState(policy: .standard)
+    for _ in 0..<8 {
+      try byteState.admitRunpathBudget(source: longRunpaths, snapshot: [])
+    }
+    #expect(throws: MCPClientSessionError.limitExceeded) {
+      try byteState.admitRunpathBudget(source: longRunpaths, snapshot: [])
+    }
+  }
+
   @Test("Enforces snapshot path byte, component, and depth bounds")
   func enforcesPathBounds() {
     let maximumDepthPath = Array(

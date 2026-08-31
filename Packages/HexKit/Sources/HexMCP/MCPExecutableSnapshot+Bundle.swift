@@ -101,22 +101,26 @@ extension MCPExecutableSnapshot {
       }
       let image = images[imageIndex]
       imageIndex += 1
-      let sourceSearchRunpaths =
-        expandedRunpaths(
-          image.image.runpaths,
-          imageDirectory: directoryPath(of: image.sourceRelativePath),
-          executableDirectory: directoryPath(of: initialImage.sourceRelativePath),
-          layout: layout,
-          allowAbsoluteBundlePath: true
-        ) + image.sourceInheritedRunpaths
-      let snapshotSearchRunpaths =
-        expandedRunpaths(
-          image.image.runpaths,
-          imageDirectory: directoryPath(of: image.snapshotRelativePath),
-          executableDirectory: directoryPath(of: initialImage.snapshotRelativePath),
-          layout: layout,
-          allowAbsoluteBundlePath: false
-        ) + image.snapshotInheritedRunpaths
+      let sourceSearchRunpaths = try expandedRunpaths(
+        image.image.runpaths,
+        inherited: image.sourceInheritedRunpaths,
+        imageDirectory: directoryPath(of: image.sourceRelativePath),
+        executableDirectory: directoryPath(of: initialImage.sourceRelativePath),
+        layout: layout,
+        allowAbsoluteBundlePath: true
+      )
+      let snapshotSearchRunpaths = try expandedRunpaths(
+        image.image.runpaths,
+        inherited: image.snapshotInheritedRunpaths,
+        imageDirectory: directoryPath(of: image.snapshotRelativePath),
+        executableDirectory: directoryPath(of: initialImage.snapshotRelativePath),
+        layout: layout,
+        allowAbsoluteBundlePath: false
+      )
+      try copyState.admitRunpathBudget(
+        source: sourceSearchRunpaths,
+        snapshot: snapshotSearchRunpaths
+      )
       for dependency in image.image.dependencies {
         guard
           let resolvedDependency = try resolveDependency(
@@ -336,27 +340,49 @@ extension MCPExecutableSnapshot {
 
   private static func expandedRunpaths(
     _ runpaths: [String],
+    inherited: [ExpandedRunpath],
     imageDirectory: String,
     executableDirectory: String,
     layout: BundleLayout,
     allowAbsoluteBundlePath: Bool
-  ) -> [ExpandedRunpath] {
+  ) throws -> [ExpandedRunpath] {
     var result: [ExpandedRunpath] = []
+    var seen = Set<ExpandedRunpath>()
+    var byteCount = Int64(0)
     for runpath in runpaths {
-      guard
-        let expanded = expandRunpath(
-          runpath,
-          imageDirectory: imageDirectory,
-          executableDirectory: executableDirectory,
-          layout: layout,
-          allowAbsoluteBundlePath: allowAbsoluteBundlePath
-        ), !result.contains(expanded)
-      else {
-        continue
+      if let expanded = expandRunpath(
+        runpath,
+        imageDirectory: imageDirectory,
+        executableDirectory: executableDirectory,
+        layout: layout,
+        allowAbsoluteBundlePath: allowAbsoluteBundlePath
+      ), seen.insert(expanded).inserted {
+        try appendRunpath(expanded, to: &result, byteCount: &byteCount)
       }
-      result.append(expanded)
+    }
+    for expanded in inherited where seen.insert(expanded).inserted {
+      try appendRunpath(expanded, to: &result, byteCount: &byteCount)
     }
     return result
+  }
+
+  private static func appendRunpath(
+    _ runpath: ExpandedRunpath,
+    to result: inout [ExpandedRunpath],
+    byteCount: inout Int64
+  ) throws {
+    let (nextByteCount, overflowed) = byteCount.addingReportingOverflow(
+      Int64(runpath.relativePath.utf8.count)
+    )
+    guard
+      result.count < MCPExecutableSnapshot.maximumRunpathsPerImage,
+      !overflowed,
+      nextByteCount <= Int64(MCPExecutableSnapshot.maximumRunpathBytesPerImage)
+    else {
+      throw MCPClientSessionError.limitExceeded
+    }
+    result.append(runpath)
+    byteCount = nextByteCount
   }
 
   private static func expandRunpath(
