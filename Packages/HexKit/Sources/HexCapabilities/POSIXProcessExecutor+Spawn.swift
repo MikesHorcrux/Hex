@@ -123,7 +123,10 @@ extension POSIXProcessExecutor {
       throw ProcessExecutionError.spawnFailed
     }
     guard setNonblocking(readDescriptor) else {
-      try terminateAndReap(processID)
+      let cleanupStatus = try terminateAndReap(processID)
+      guard cleanupStatus >= 0 else {
+        throw ProcessExecutionError.cleanupFailed
+      }
       throw ProcessExecutionError.ioFailure
     }
     didSpawn = true
