@@ -70,11 +70,13 @@ struct SQLiteAgentEventJournalCheckpointTests {
   func oversizedStoredCheckpointFailsBeforeDecode() async throws {
     let directory = try JournalTestSupport.makeTemporaryDirectory()
     defer { JournalTestSupport.removeTemporaryDirectory(directory) }
-    let configuration = SQLiteAgentEventJournalConfiguration(
-      databaseURL: JournalTestSupport.databaseURL(in: directory),
+    let databaseURL = JournalTestSupport.databaseURL(in: directory)
+    let writeConfiguration = SQLiteAgentEventJournalConfiguration(databaseURL: databaseURL)
+    let readConfiguration = SQLiteAgentEventJournalConfiguration(
+      databaseURL: databaseURL,
       maximumPayloadBytes: 64
     )
-    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: writeConfiguration)
     let runID = AgentRunID()
     _ = try await journal.append(.runStarted, to: runID)
     _ = try await journal.append(.runCompleted, to: runID)
@@ -86,11 +88,11 @@ struct SQLiteAgentEventJournalCheckpointTests {
     try await journal.close()
     try JournalTestSupport.execute(
       "UPDATE journal_checkpoints SET snapshot = zeroblob(65) WHERE run_id = '\(runID)'",
-      at: configuration.databaseURL
+      at: databaseURL
     )
 
     do {
-      let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      let reopened = try await SQLiteAgentEventJournal.open(configuration: readConfiguration)
       try await reopened.close()
       Issue.record("Expected oversized checkpoint to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {

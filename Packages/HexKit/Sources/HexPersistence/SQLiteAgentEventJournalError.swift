@@ -25,6 +25,7 @@ public enum SQLiteAgentEventJournalError: Error, Equatable, LocalizedError, Send
   case integrityRunLimitExceeded(maximum: Int)
   case integrityRecordLimitExceeded(maximum: Int)
   case integrityByteLimitExceeded(actual: Int, maximum: Int)
+  case databaseSizeLimitExceeded(actual: Int, maximum: Int)
   case checkpointSequenceMissing(runID: AgentRunID, sequence: UInt64)
   case checkpointConflict(runID: AgentRunID, sequence: UInt64)
 
@@ -76,6 +77,8 @@ public enum SQLiteAgentEventJournalError: Error, Equatable, LocalizedError, Send
       "Journal integrity validation found more than the configured maximum of \(maximum) records."
     case .integrityByteLimitExceeded(let actual, let maximum):
       "Journal integrity validation decoded \(actual) bytes; the configured maximum is \(maximum)."
+    case .databaseSizeLimitExceeded(let actual, let maximum):
+      "Journal database uses \(actual) physical bytes; the configured maximum is \(maximum)."
     case .checkpointSequenceMissing(let runID, let sequence):
       "Checkpoint sequence \(sequence) does not exist for run \(runID)."
     case .checkpointConflict(let runID, let sequence):

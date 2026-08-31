@@ -162,6 +162,14 @@ struct SQLiteAgentEventJournalLifecycleTests {
         databaseURL: databaseURL,
         maximumRecoveryBytes: Int.max
       ),
+      SQLiteAgentEventJournalConfiguration(
+        databaseURL: databaseURL,
+        maximumDatabaseBytes: 0
+      ),
+      SQLiteAgentEventJournalConfiguration(
+        databaseURL: databaseURL,
+        maximumDatabaseBytes: Int.max
+      ),
     ]
 
     for configuration in configurations {

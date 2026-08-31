@@ -6,22 +6,28 @@ enum SQLiteJournalMigrationValidator {
     configuration: SQLiteAgentEventJournalConfiguration
   ) throws {
     var byteCount = 0
-    let runIDs = try validateRuns(
+    let runs = try validateRuns(
       connection: connection,
       configuration: configuration,
       byteCount: &byteCount
     )
     var recordCount = 0
     try validateEvents(
-      runIDs: runIDs,
+      runIDs: runs.runIDs,
       connection: connection,
       configuration: configuration,
       recordCount: &recordCount,
       byteCount: &byteCount
     )
     try validateCheckpoints(
-      runIDs: runIDs,
+      runIDs: runs.runIDs,
       connection: connection,
+      configuration: configuration,
+      recordCount: &recordCount,
+      byteCount: &byteCount
+    )
+    try reserveRecoveryTerminalCapacity(
+      nonterminalRunCount: runs.nonterminalRunCount,
       configuration: configuration,
       recordCount: &recordCount,
       byteCount: &byteCount
@@ -32,11 +38,14 @@ enum SQLiteJournalMigrationValidator {
     connection: SQLiteConnection,
     configuration: SQLiteAgentEventJournalConfiguration,
     byteCount: inout Int
-  ) throws -> Set<String> {
-    let statement = try connection.prepare("SELECT run_id FROM runs LIMIT ?")
+  ) throws -> (runIDs: Set<String>, nonterminalRunCount: Int) {
+    let statement = try connection.prepare(
+      "SELECT run_id, terminal_sequence FROM runs LIMIT ?"
+    )
     try statement.bind(Int64(configuration.maximumRecoveryRunCount + 1), at: 1)
     var runIDs: Set<String> = []
     runIDs.reserveCapacity(min(configuration.maximumRecoveryRunCount, 256))
+    var nonterminalRunCount = 0
     while true {
       try Task.checkCancellation()
       guard try statement.step() == .row else {
@@ -57,9 +66,12 @@ enum SQLiteJournalMigrationValidator {
           "runs.run_id contains a case-insensitive UUID collision."
         )
       }
+      if try statement.columnOptionalInt64(at: 1) == nil {
+        nonterminalRunCount += 1
+      }
       try addBytes(value.utf8.count, configuration: configuration, byteCount: &byteCount)
     }
-    return runIDs
+    return (runIDs, nonterminalRunCount)
   }
 
   private static func validateEvents(
@@ -197,5 +209,46 @@ enum SQLiteJournalMigrationValidator {
       )
     }
     byteCount = nextByteCount
+  }
+
+  private static func reserveRecoveryTerminalCapacity(
+    nonterminalRunCount: Int,
+    configuration: SQLiteAgentEventJournalConfiguration,
+    recordCount: inout Int,
+    byteCount: inout Int
+  ) throws {
+    let (nextRecordCount, recordCountOverflowed) = recordCount.addingReportingOverflow(
+      nonterminalRunCount
+    )
+    guard
+      !recordCountOverflowed,
+      nextRecordCount <= configuration.maximumRecoveryRecordCount
+    else {
+      throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
+        maximum: configuration.maximumRecoveryRecordCount
+      )
+    }
+    guard nonterminalRunCount > 0 else {
+      return
+    }
+    let terminalByteCount = try SQLiteInterruptedRunTerminal.encodedRecordByteCount(
+      runIDTextByteCount: 36,
+      configuration: configuration
+    )
+    let (reservedBytes, reserveOverflowed) = terminalByteCount.multipliedReportingOverflow(
+      by: nonterminalRunCount
+    )
+    guard !reserveOverflowed else {
+      throw SQLiteAgentEventJournalError.integrityByteLimitExceeded(
+        actual: Int.max,
+        maximum: configuration.maximumRecoveryBytes
+      )
+    }
+    try addBytes(
+      reservedBytes,
+      configuration: configuration,
+      byteCount: &byteCount
+    )
+    recordCount = nextRecordCount
   }
 }

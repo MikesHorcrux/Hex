@@ -160,18 +160,20 @@ struct SQLiteAgentEventJournalReadTests {
   func oversizedStoredPayloadFailsBeforeDecode() async throws {
     let directory = try JournalTestSupport.makeTemporaryDirectory()
     defer { JournalTestSupport.removeTemporaryDirectory(directory) }
-    let configuration = SQLiteAgentEventJournalConfiguration(
-      databaseURL: JournalTestSupport.databaseURL(in: directory),
+    let databaseURL = JournalTestSupport.databaseURL(in: directory)
+    let writeConfiguration = SQLiteAgentEventJournalConfiguration(databaseURL: databaseURL)
+    let readConfiguration = SQLiteAgentEventJournalConfiguration(
+      databaseURL: databaseURL,
       maximumPayloadBytes: 64
     )
-    let runID = try await makeTerminalRun(configuration: configuration)
+    let runID = try await makeTerminalRun(configuration: writeConfiguration)
     try JournalTestSupport.execute(
       "UPDATE event_records SET payload = zeroblob(65) WHERE run_id = '\(runID)' AND sequence = 1",
-      at: configuration.databaseURL
+      at: databaseURL
     )
 
     do {
-      let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      let journal = try await SQLiteAgentEventJournal.open(configuration: readConfiguration)
       try await journal.close()
       Issue.record("Expected oversized stored payload to fail during open admission.")
     } catch let error as SQLiteAgentEventJournalError {

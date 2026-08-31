@@ -10,6 +10,7 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
   static let hardMaximumRecoveryRunCount = 10_000
   static let hardMaximumRecoveryRecordCount = 100_000
   static let hardMaximumRecoveryBytes = 128 * 1_024 * 1_024
+  static let hardMaximumDatabaseBytes = 512 * 1_024 * 1_024
 
   /// A database file inside a dedicated journal directory. Opening the journal requires that
   /// directory to be owned by the current user and secures it to mode 0700.
@@ -22,6 +23,7 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
   public let maximumRecoveryRunCount: Int
   public let maximumRecoveryRecordCount: Int
   public let maximumRecoveryBytes: Int
+  public let maximumDatabaseBytes: Int
   public let clock: @Sendable () -> Date
   public let uuidGenerator: @Sendable () -> UUID
 
@@ -35,6 +37,7 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
     maximumRecoveryRunCount: Int = 1_000,
     maximumRecoveryRecordCount: Int = 50_000,
     maximumRecoveryBytes: Int = 64 * 1_024 * 1_024,
+    maximumDatabaseBytes: Int = 256 * 1_024 * 1_024,
     clock: @escaping @Sendable () -> Date = { Date() },
     uuidGenerator: @escaping @Sendable () -> UUID = { UUID() }
   ) {
@@ -47,6 +50,7 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
     self.maximumRecoveryRunCount = maximumRecoveryRunCount
     self.maximumRecoveryRecordCount = maximumRecoveryRecordCount
     self.maximumRecoveryBytes = maximumRecoveryBytes
+    self.maximumDatabaseBytes = maximumDatabaseBytes
     self.clock = clock
     self.uuidGenerator = uuidGenerator
   }
@@ -108,6 +112,14 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
     else {
       throw SQLiteAgentEventJournalError.invalidConfiguration(
         "maximumRecoveryBytes must be between 1 and \(Self.hardMaximumRecoveryBytes)."
+      )
+    }
+    guard
+      maximumDatabaseBytes > 0,
+      maximumDatabaseBytes <= Self.hardMaximumDatabaseBytes
+    else {
+      throw SQLiteAgentEventJournalError.invalidConfiguration(
+        "maximumDatabaseBytes must be between 1 and \(Self.hardMaximumDatabaseBytes)."
       )
     }
     return self

@@ -42,18 +42,17 @@ struct SQLiteJournalPostMutationBoundsAuditTests {
     let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
     let runID = AgentRunID()
     _ = try await journal.append(.runStarted, to: runID)
-    _ = try await journal.append(
-      .messageAppended(Message(role: .user, content: [.text("at-capacity")])),
-      to: runID
-    )
-
     do {
-      _ = try await journal.append(.runCompleted, to: runID)
-      Issue.record("append exceeded the configured whole-journal record bound.")
+      _ = try await journal.append(
+        .messageAppended(Message(role: .user, content: [.text("at-capacity")])),
+        to: runID
+      )
+      Issue.record("append consumed the reserved recovery-terminal record.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .integrityRecordLimitExceeded(maximum: 2))
     }
 
+    _ = try await journal.append(.runCompleted, to: runID)
     let records = try await journal.records(for: runID, after: nil, limit: 10)
     #expect(records.count == 2)
     try await journal.close()
@@ -95,15 +94,21 @@ struct SQLiteJournalPostMutationBoundsAuditTests {
     let directory = try JournalTestSupport.makeTemporaryDirectory()
     defer { JournalTestSupport.removeTemporaryDirectory(directory) }
     let event = AgentEvent.runStarted
+    let runID = AgentRunID()
     let bytesBeforeCheckpoint =
       36 + 36 + 36 + event.journalKind.utf8.count
       + (try AgentEventCodec.encode(event: event)).count
+      + (try SQLiteInterruptedRunTerminal.encodedRecordByteCount(
+        runIDTextByteCount: runID.description.utf8.count,
+        configuration: SQLiteAgentEventJournalConfiguration(
+          databaseURL: JournalTestSupport.databaseURL(in: directory)
+        )
+      ))
     let configuration = SQLiteAgentEventJournalConfiguration(
       databaseURL: JournalTestSupport.databaseURL(in: directory),
       maximumRecoveryBytes: bytesBeforeCheckpoint
     )
     let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
-    let runID = AgentRunID()
     _ = try await journal.append(event, to: runID)
 
     do {

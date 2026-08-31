@@ -6,6 +6,10 @@ extension SQLiteAgentEventJournal {
     connection: SQLiteConnection,
     checksCancellation: Bool = true
   ) throws {
+    try validatePhysicalDatabaseIntegrity(
+      connection: connection,
+      checksCancellation: checksCancellation
+    )
     try validateBoundedForeignKeyData(
       connection: connection,
       checksCancellation: checksCancellation
@@ -47,10 +51,11 @@ extension SQLiteAgentEventJournal {
         )
       }
       try addIntegrityBytes(runIDText.utf8.count, to: &byteCount)
+      let terminalSequence = try runStatement.columnOptionalInt64(at: 2)
       try validateRunEvents(
         for: AgentRunID(rawValue: runUUID),
         nextSequence: try runStatement.columnInt64(at: 1),
-        terminalSequence: try runStatement.columnOptionalInt64(at: 2),
+        terminalSequence: terminalSequence,
         connection: connection,
         maximumRecordCount: configuration.maximumRecoveryRecordCount,
         maximumBytes: configuration.maximumRecoveryBytes,
@@ -58,6 +63,13 @@ extension SQLiteAgentEventJournal {
         recordCount: &recordCount,
         byteCount: &byteCount
       )
+      if terminalSequence == nil {
+        try reserveRecoveryTerminalIntegrityCapacity(
+          runIDTextByteCount: runIDText.utf8.count,
+          recordCount: &recordCount,
+          byteCount: &byteCount
+        )
+      }
       runCount += 1
     }
 
@@ -99,12 +111,7 @@ extension SQLiteAgentEventJournal {
     var terminalCount = 0
     var lastEventTerminatesRun = false
     var lastEventCompletedRun = false
-    var unresolvedToolCallIDs: Set<ToolCallID> = []
-    var finishedToolCallIDs: Set<ToolCallID> = []
-    var authorizationRequestIDs: Set<AuthorizationRequestID> = []
-    var decidedAuthorizationRequestIDs: Set<AuthorizationRequestID> = []
-    var authorizationToolCallIDs: [AuthorizationRequestID: ToolCallID] = [:]
-    var deniedToolCallIDs: Set<ToolCallID> = []
+    var lifecycleValidator = SQLiteRunLifecycleValidator(runID: runID)
 
     while true {
       if checksCancellation {
@@ -152,16 +159,7 @@ extension SQLiteAgentEventJournal {
       } else {
         lastEventCompletedRun = false
       }
-      try validateEventLifecycle(
-        record.event,
-        runID: runID,
-        unresolvedToolCallIDs: &unresolvedToolCallIDs,
-        finishedToolCallIDs: &finishedToolCallIDs,
-        authorizationRequestIDs: &authorizationRequestIDs,
-        decidedAuthorizationRequestIDs: &decidedAuthorizationRequestIDs,
-        authorizationToolCallIDs: &authorizationToolCallIDs,
-        deniedToolCallIDs: &deniedToolCallIDs
-      )
+      try lifecycleValidator.consume(record.event, sequence: record.sequence)
       sawRecord = true
       recordCount += 1
       expectedSequence = expectedSequence == Int64.max ? -1 : expectedSequence + 1
@@ -189,16 +187,7 @@ extension SQLiteAgentEventJournal {
         )
       }
       if lastEventCompletedRun {
-        guard unresolvedToolCallIDs.isEmpty else {
-          throw SQLiteAgentEventJournalError.corruptRecord(
-            "A completed run contains an unresolved tool call."
-          )
-        }
-        guard authorizationRequestIDs == decidedAuthorizationRequestIDs else {
-          throw SQLiteAgentEventJournalError.corruptRecord(
-            "A completed run contains an undecided authorization request."
-          )
-        }
+        try lifecycleValidator.validateSuccessfulCompletion()
       }
     } else {
       guard terminalCount == 0, !lastEventTerminatesRun, expectedSequence > 0 else {
@@ -206,74 +195,6 @@ extension SQLiteAgentEventJournal {
           "A nonterminal run contains terminal or exhausted sequence state."
         )
       }
-    }
-  }
-
-  private func validateEventLifecycle(
-    _ event: AgentEvent,
-    runID: AgentRunID,
-    unresolvedToolCallIDs: inout Set<ToolCallID>,
-    finishedToolCallIDs: inout Set<ToolCallID>,
-    authorizationRequestIDs: inout Set<AuthorizationRequestID>,
-    decidedAuthorizationRequestIDs: inout Set<AuthorizationRequestID>,
-    authorizationToolCallIDs: inout [AuthorizationRequestID: ToolCallID],
-    deniedToolCallIDs: inout Set<ToolCallID>
-  ) throws {
-    switch event {
-    case .authorizationRequested(let request):
-      guard request.runID == runID else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "An authorization request belongs to a different run."
-        )
-      }
-      guard authorizationRequestIDs.insert(request.id).inserted else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "A run contains a duplicate authorization request."
-        )
-      }
-      if let toolCallID = request.toolCallID {
-        authorizationToolCallIDs[request.id] = toolCallID
-      }
-    case .authorizationDecided(let requestID, let decision):
-      guard authorizationRequestIDs.contains(requestID) else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "An authorization decision has no preceding request."
-        )
-      }
-      guard decidedAuthorizationRequestIDs.insert(requestID).inserted else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "A run contains a repeated authorization decision."
-        )
-      }
-      if case .deny = decision, let toolCallID = authorizationToolCallIDs[requestID] {
-        deniedToolCallIDs.insert(toolCallID)
-      }
-    case .toolStarted(let call):
-      guard
-        unresolvedToolCallIDs.insert(call.id).inserted,
-        !finishedToolCallIDs.contains(call.id),
-        !deniedToolCallIDs.contains(call.id)
-      else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "A run contains a duplicate or contradictory tool start."
-        )
-      }
-    case .toolFinished(let result):
-      guard !finishedToolCallIDs.contains(result.toolCallID) else {
-        throw SQLiteAgentEventJournalError.corruptRecord(
-          "A run contains a repeated tool finish."
-        )
-      }
-      if unresolvedToolCallIDs.remove(result.toolCallID) == nil {
-        guard result.status == .failure, deniedToolCallIDs.contains(result.toolCallID) else {
-          throw SQLiteAgentEventJournalError.corruptRecord(
-            "A tool finish has no unresolved start or prior authorization denial."
-          )
-        }
-      }
-      finishedToolCallIDs.insert(result.toolCallID)
-    default:
-      break
     }
   }
 
@@ -356,5 +277,23 @@ extension SQLiteAgentEventJournal {
       )
     }
     byteCount = nextByteCount
+  }
+
+  private func reserveRecoveryTerminalIntegrityCapacity(
+    runIDTextByteCount: Int,
+    recordCount: inout Int,
+    byteCount: inout Int
+  ) throws {
+    guard recordCount < configuration.maximumRecoveryRecordCount else {
+      throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
+        maximum: configuration.maximumRecoveryRecordCount
+      )
+    }
+    let terminalByteCount = try SQLiteInterruptedRunTerminal.encodedRecordByteCount(
+      runIDTextByteCount: runIDTextByteCount,
+      configuration: configuration
+    )
+    try addIntegrityBytes(terminalByteCount, to: &byteCount)
+    recordCount += 1
   }
 }
