@@ -10,7 +10,7 @@ extension CodexAppServerConnection {
     if let shutdown {
       return shutdown
     }
-    guard state != .disconnected else {
+    guard state != .disconnected, state != .retired else {
       return nil
     }
 

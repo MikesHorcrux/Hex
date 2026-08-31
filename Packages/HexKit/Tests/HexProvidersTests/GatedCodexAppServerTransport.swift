@@ -3,7 +3,9 @@ import HexCore
 @testable import HexProviders
 
 actor GatedCodexAppServerTransport: CodexAppServerTransport {
+  nonisolated let accountLoginFlowGeneration: CodexAccountLoginFlowGenerationController
   private var requests: [CodexAppServerRequest] = []
+  private var queuedResponses: [JSONValue] = []
   private var requestWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
   private var responseWaiters: [CheckedContinuation<JSONValue, any Error>] = []
   private var shouldBlockGenerationRetirement = false
@@ -12,12 +14,29 @@ actor GatedCodexAppServerTransport: CodexAppServerTransport {
   private var generationRetirementStartWaiters: [CheckedContinuation<Void, Never>] = []
   private var generationRetirementReleaseWaiters: [CheckedContinuation<Void, Never>] = []
 
+  init() {
+    accountLoginFlowGeneration = CodexAccountLoginFlowGenerationController()
+  }
+
+  init?(loginFlowHistoryCapacity: Int) {
+    guard (1...64).contains(loginFlowHistoryCapacity) else {
+      return nil
+    }
+    accountLoginFlowGeneration = CodexAccountLoginFlowGenerationController(
+      validatedCapacity: loginFlowHistoryCapacity
+    )
+  }
+
   func send(_ request: CodexAppServerRequest) async throws -> JSONValue {
+    try await accountLoginFlowGeneration.ensureUsable()
     requests.append(request)
     let readyWaiters = requestWaiters.filter { $0.0 <= requests.count }
     requestWaiters.removeAll { $0.0 <= requests.count }
     for waiter in readyWaiters {
       waiter.1.resume()
+    }
+    if !queuedResponses.isEmpty {
+      return queuedResponses.removeFirst()
     }
     return try await withCheckedThrowingContinuation { continuation in
       responseWaiters.append(continuation)
@@ -40,9 +59,22 @@ actor GatedCodexAppServerTransport: CodexAppServerTransport {
     responseWaiters.removeFirst().resume(returning: value)
   }
 
+  func enqueueResponse(_ value: JSONValue) {
+    queuedResponses.append(value)
+  }
+
   func retireAccountLoginFlowGeneration() async {
-    generationRetirementCount += 1
+    guard !generationRetirementStarted else {
+      if shouldBlockGenerationRetirement {
+        await withCheckedContinuation { continuation in
+          generationRetirementReleaseWaiters.append(continuation)
+        }
+      }
+      return
+    }
     generationRetirementStarted = true
+    await accountLoginFlowGeneration.retireGeneration()
+    generationRetirementCount += 1
     let startWaiters = generationRetirementStartWaiters
     generationRetirementStartWaiters = []
     for waiter in startWaiters {

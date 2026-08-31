@@ -7,6 +7,224 @@ import Testing
 @Suite("Codex account login-flow regressions")
 struct CodexAccountLoginFlowRegressionTests {
   @Test
+  func sharesIdentifierReuseProtectionAcrossClientsOnOneTransport() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let firstClient = CodexAccountClient(transport: transport)
+    let secondClient = CodexAccountClient(transport: transport)
+    _ = try await startAndCancelLogin(
+      named: "shared-generation-id",
+      client: firstClient,
+      transport: transport,
+      expectedRequestCount: 1
+    )
+    let secondStart = Task { try await secondClient.startLogin(.browser) }
+    await transport.waitForRequest(count: 3)
+
+    await transport.succeed(with: challenge(named: "shared-generation-id"))
+    await #expect(throws: CodexAccountClientError.loginIdentifierReused) {
+      try await secondStart.value
+    }
+  }
+
+  @Test
+  func rejectsASecondClientStartBeforeSendingOnTheSharedGeneration() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let firstClient = CodexAccountClient(transport: transport)
+    let secondClient = CodexAccountClient(transport: transport)
+    let firstStart = Task { try await firstClient.startLogin(.browser) }
+    await transport.waitForRequest()
+
+    await #expect(throws: CodexAccountClientError.loginAlreadyPending) {
+      try await secondClient.startLogin(.deviceCode)
+    }
+    #expect(await transport.requestCount() == 1)
+
+    await transport.succeed(with: challenge(named: "generation-wide-active"))
+    #expect(try await firstStart.value.loginID.rawValue == "generation-wide-active")
+  }
+
+  @Test
+  func sharesCompletionCorrelationAcrossClientsOnOneTransport() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let issuingClient = CodexAccountClient(transport: transport)
+    let notificationClient = CodexAccountClient(transport: transport)
+    let starting = Task { try await issuingClient.startLogin(.browser) }
+    await transport.waitForRequest()
+    await transport.succeed(with: challenge(named: "shared-completion"))
+    let loginID = try await starting.value.loginID
+    let sharedCompletion = try completion(for: loginID)
+
+    try await notificationClient.acceptLoginCompletion(sharedCompletion)
+
+    #expect(await issuingClient.loginCompletion(for: loginID) == sharedCompletion)
+    #expect(await notificationClient.loginCompletion(for: loginID) == sharedCompletion)
+    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+      try await issuingClient.acceptLoginCompletion(sharedCompletion)
+    }
+
+    await transport.enqueueResponse(challenge(named: "after-shared-completion"))
+    let replacement = try await issuingClient.startLogin(.browser)
+    #expect(replacement.loginID.rawValue == "after-shared-completion")
+  }
+
+  @Test
+  func earlyCompletionThroughAnotherClientCorrelatesWithTheSharedStart() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let startingClient = CodexAccountClient(transport: transport)
+    let notificationClient = CodexAccountClient(transport: transport)
+    let starting = Task { try await startingClient.startLogin(.browser) }
+    await transport.waitForRequest()
+    let loginID = try CodexLoginID(rawValue: "cross-client-early")
+    let earlyCompletion = try completion(for: loginID)
+
+    try await notificationClient.acceptLoginCompletion(earlyCompletion)
+    #expect(await startingClient.loginCompletion(for: loginID) == earlyCompletion)
+    #expect(await notificationClient.loginCompletion(for: loginID) == earlyCompletion)
+    await transport.succeed(with: challenge(named: loginID.rawValue))
+
+    #expect(try await starting.value.loginID == loginID)
+    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+      try await startingClient.acceptLoginCompletion(earlyCompletion)
+    }
+  }
+
+  @Test
+  func crossClientCompletionDoesNotReleaseTheGenerationDuringCancellation() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let cancellingClient = CodexAccountClient(transport: transport)
+    let notificationClient = CodexAccountClient(transport: transport)
+    let starting = Task { try await cancellingClient.startLogin(.browser) }
+    await transport.waitForRequest()
+    await transport.succeed(with: challenge(named: "shared-cancelling"))
+    let loginID = try await starting.value.loginID
+    let cancelling = Task { try await cancellingClient.cancelLogin(loginID) }
+    await transport.waitForRequest(count: 2)
+
+    try await notificationClient.acceptLoginCompletion(completion(for: loginID))
+    await #expect(throws: CodexAccountClientError.loginAlreadyPending) {
+      try await notificationClient.startLogin(.browser)
+    }
+    #expect(await transport.requestCount() == 2)
+
+    await transport.succeed(with: .object(["status": .string("canceled")]))
+    #expect(try await cancelling.value == .cancelled)
+    await transport.enqueueResponse(challenge(named: "after-shared-cancel"))
+    let replacement = try await notificationClient.startLogin(.browser)
+    #expect(replacement.loginID.rawValue == "after-shared-cancel")
+  }
+
+  @Test
+  func cancellationBeforeAResponseRetiresTheAmbiguousSharedGeneration() async throws {
+    let transport = TestCodexAppServerTransport(
+      outcomes: [
+        .cancellation,
+        .value(challenge(named: "after-pre-response-cancellation")),
+      ]
+    )
+    let client = CodexAccountClient(transport: transport)
+
+    await #expect(throws: CancellationError.self) {
+      try await client.startLogin(.browser)
+    }
+
+    #expect(await transport.retirementCount() == 1)
+    let replacementClient = CodexAccountClient(transport: transport)
+    await #expect(throws: CodexAccountClientError.loginFlowGenerationRetired) {
+      try await replacementClient.startLogin(.browser)
+    }
+    #expect(await transport.requests().count == 1)
+  }
+
+  @Test
+  func cancellationAfterAResponseTombstonesTheIDAndRetiresTheGeneration() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let client = CodexAccountClient(transport: transport)
+    let starting = Task { try await client.startLogin(.browser) }
+    await transport.waitForRequest()
+
+    starting.cancel()
+    await transport.succeed(with: challenge(named: "cancelled-response-id"))
+
+    await #expect(throws: CancellationError.self) {
+      try await starting.value
+    }
+    #expect(await transport.retirementCount() == 1)
+    await transport.enqueueResponse(challenge(named: "cancelled-response-id"))
+    let replacementClient = CodexAccountClient(transport: transport)
+    await #expect(throws: CodexAccountClientError.loginFlowGenerationRetired) {
+      try await replacementClient.startLogin(.browser)
+    }
+    #expect(await transport.requestCount() == 1)
+  }
+
+  @Test
+  func malformedStartResponseRetiresTheGenerationBeforeReturning() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let client = CodexAccountClient(transport: transport)
+    let starting = Task { try await client.startLogin(.browser) }
+    await transport.waitForRequest()
+
+    await transport.succeed(with: .object(["type": .string("chatgpt")]))
+
+    await #expect(throws: CodexAccountClientError.malformedResponse) {
+      try await starting.value
+    }
+    #expect(await transport.retirementCount() == 1)
+    await transport.enqueueResponse(challenge(named: "replacement-after-malformed"))
+    let replacementClient = CodexAccountClient(transport: transport)
+    await #expect(throws: CodexAccountClientError.loginFlowGenerationRetired) {
+      try await replacementClient.startLogin(.browser)
+    }
+    #expect(await transport.requestCount() == 1)
+  }
+
+  @Test
+  func sharesTheCapacityEdgeAcrossClientsOnOneTransport() async throws {
+    let transport = try #require(
+      TestCodexAppServerTransport(
+        outcomes: [
+          .value(challenge(named: "only-shared-slot")),
+          .value(.object(["status": .string("canceled")])),
+          .value(challenge(named: "capacity-bypass")),
+        ],
+        loginFlowHistoryCapacity: 1
+      )
+    )
+    let firstClient = CodexAccountClient(transport: transport)
+    let secondClient = CodexAccountClient(transport: transport)
+    let challenge = try await firstClient.startLogin(.browser)
+    #expect(try await firstClient.cancelLogin(challenge.loginID) == .cancelled)
+
+    await #expect(throws: CodexAccountClientError.loginFlowHistoryExhausted) {
+      try await secondClient.startLogin(.browser)
+    }
+    #expect(await transport.requests().count == 2)
+  }
+
+  @Test
+  func enforcesTheExactDefaultSixtyFourFlowCapacityAcrossClients() async throws {
+    var outcomes: [TestCodexAppServerTransportOutcome] = []
+    for index in 0..<64 {
+      outcomes.append(.value(challenge(named: "bounded-\(index)")))
+      outcomes.append(.value(.object(["status": .string("canceled")])))
+    }
+    let transport = TestCodexAppServerTransport(outcomes: outcomes)
+    let firstClient = CodexAccountClient(transport: transport)
+
+    for index in 0..<64 {
+      let challenge = try await firstClient.startLogin(.browser)
+      #expect(challenge.loginID.rawValue == "bounded-\(index)")
+      #expect(try await firstClient.cancelLogin(challenge.loginID) == .cancelled)
+    }
+
+    let secondClient = CodexAccountClient(transport: transport)
+    await #expect(throws: CodexAccountClientError.loginFlowHistoryExhausted) {
+      try await secondClient.startLogin(.browser)
+    }
+    #expect(await transport.requests().count == 128)
+  }
+
+  @Test
   func acceptsOneLateCompletionForEachOfMultipleCancelledFlows() async throws {
     let transport = GatedCodexAppServerTransport()
     let client = CodexAccountClient(transport: transport)
@@ -56,7 +274,7 @@ struct CodexAccountLoginFlowRegressionTests {
     await #expect(throws: CodexAccountClientError.loginIdentifierReused) {
       try await replacement.value
     }
-    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+    await #expect(throws: CodexAccountClientError.loginFlowGenerationRetired) {
       try await client.acceptLoginCompletion(lateRetiredCompletion)
     }
   }
@@ -130,13 +348,8 @@ struct CodexAccountLoginFlowRegressionTests {
 
   @Test
   func exhaustsBeforeSendingAndRetiresOnlyAfterPhysicalTeardown() async throws {
-    let transport = GatedCodexAppServerTransport()
-    let client = try #require(
-      CodexAccountClient(
-        transport: transport,
-        loginFlowHistoryCapacity: 2
-      )
-    )
+    let transport = try #require(GatedCodexAppServerTransport(loginFlowHistoryCapacity: 2))
+    let client = CodexAccountClient(transport: transport)
     _ = try await startAndCancelLogin(
       named: "capacity-first",
       client: client,
@@ -165,7 +378,7 @@ struct CodexAccountLoginFlowRegressionTests {
     #expect(!(await completionProbe.hasCompleted()))
     retirement.cancel()
     #expect(!(await completionProbe.hasCompleted()))
-    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+    await #expect(throws: CodexAccountClientError.loginFlowGenerationRetired) {
       try await client.startLogin(.browser)
     }
 
@@ -179,13 +392,10 @@ struct CodexAccountLoginFlowRegressionTests {
     await client.retireLoginFlowGeneration()
     #expect(await transport.retirementCount() == 1)
 
-    let freshTransport = GatedCodexAppServerTransport()
-    let freshClient = try #require(
-      CodexAccountClient(
-        transport: freshTransport,
-        loginFlowHistoryCapacity: 2
-      )
+    let freshTransport = try #require(
+      GatedCodexAppServerTransport(loginFlowHistoryCapacity: 2)
     )
+    let freshClient = CodexAccountClient(transport: freshTransport)
     let freshStart = Task { try await freshClient.startLogin(.browser) }
     await freshTransport.waitForRequest()
     await freshTransport.succeed(with: challenge(named: "capacity-first"))
@@ -214,13 +424,8 @@ struct CodexAccountLoginFlowRegressionTests {
 
   @Test
   func rejectsInvalidTestLedgerCapacities() {
-    let transport = GatedCodexAppServerTransport()
-
     for capacity in [0, 65] {
-      switch CodexAccountClient(
-        transport: transport,
-        loginFlowHistoryCapacity: capacity
-      ) {
+      switch GatedCodexAppServerTransport(loginFlowHistoryCapacity: capacity) {
       case .none:
         break
       case .some:

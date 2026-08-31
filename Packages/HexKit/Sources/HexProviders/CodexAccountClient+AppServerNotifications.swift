@@ -6,7 +6,7 @@ extension CodexAccountClient: CodexAppServerNotificationHandler {
     guard let parameters = notification.parameters else {
       throw CodexAccountClientError.malformedResponse
     }
-    try acceptLoginCompletion(
+    try await acceptLoginCompletion(
       CodexLoginCompletion(appServerParameters: parameters)
     )
   }

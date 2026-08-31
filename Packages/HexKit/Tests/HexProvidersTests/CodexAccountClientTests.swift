@@ -427,7 +427,7 @@ struct CodexAccountClientTests {
         "success": .boolean(true),
       ])
     )
-    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+    await #expect(throws: CodexAccountClientError.loginFlowGenerationRetired) {
       try await client.acceptLoginCompletion(staleCompletion)
     }
   }

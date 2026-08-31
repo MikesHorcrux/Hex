@@ -1,9 +1,7 @@
 enum CodexAccountClientState: Equatable, Sendable {
   case idle
-  case starting(CodexChatGPTLoginMode, CodexLoginCompletion?)
+  case starting(CodexChatGPTLoginMode)
   case awaiting(CodexLoginID)
   case cancelling(CodexLoginID, CodexLoginCompletion?)
   case loggingOut
-  case retiringGeneration
-  case retiredGeneration
 }

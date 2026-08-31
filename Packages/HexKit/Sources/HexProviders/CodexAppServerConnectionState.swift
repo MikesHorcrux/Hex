@@ -4,4 +4,5 @@ enum CodexAppServerConnectionState: Equatable, Sendable {
   case handshaking
   case ready
   case closing
+  case retired
 }

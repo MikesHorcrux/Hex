@@ -3,6 +3,8 @@ import HexCore
 
 /// Bounded JSONL connection for the stable Codex app-server protocol.
 public actor CodexAppServerConnection: CodexAppServerTransport {
+  public nonisolated let accountLoginFlowGeneration =
+    CodexAccountLoginFlowGenerationController()
   let configuration: CodexAppServerConnectionConfiguration
   let channel: any CodexAppServerChannel
   var notificationHandler: (any CodexAppServerNotificationHandler)?
@@ -14,6 +16,10 @@ public actor CodexAppServerConnection: CodexAppServerTransport {
   var outputBuffer = Data()
   var readerTask: Task<Void, Never>?
   var shutdown: CodexAppServerConnectionShutdown?
+  var generationRetirementStarted = false
+  var generationRetirementFinished = false
+  var generationRetirementWaiters: [CheckedContinuation<Void, Never>] = []
+  var establishmentWaiters: [CheckedContinuation<Void, Never>] = []
 
   public init(
     configuration: CodexAppServerConnectionConfiguration,
@@ -27,7 +33,14 @@ public actor CodexAppServerConnection: CodexAppServerTransport {
 
   public func installNotificationHandler(
     _ handler: any CodexAppServerNotificationHandler
-  ) throws {
+  ) async throws {
+    guard !generationRetirementStarted else {
+      throw CodexAppServerConnectionError.connectionClosed
+    }
+    try await ensureAccountLoginFlowGenerationIsUsable()
+    guard !generationRetirementStarted else {
+      throw CodexAppServerConnectionError.connectionClosed
+    }
     guard state == .disconnected, notificationHandler == nil else {
       throw CodexAppServerConnectionError.alreadyConnected
     }
@@ -35,7 +48,11 @@ public actor CodexAppServerConnection: CodexAppServerTransport {
   }
 
   public func send(_ request: CodexAppServerRequest) async throws -> JSONValue {
-    guard state == .ready else {
+    guard !generationRetirementStarted else {
+      throw CodexAppServerConnectionError.connectionClosed
+    }
+    try await ensureAccountLoginFlowGenerationIsUsable()
+    guard !generationRetirementStarted, state == .ready else {
       throw CodexAppServerConnectionError.connectionClosed
     }
     return try await requestResult(
@@ -44,5 +61,13 @@ public actor CodexAppServerConnection: CodexAppServerTransport {
       generation: generation,
       permittedState: .ready
     )
+  }
+
+  func ensureAccountLoginFlowGenerationIsUsable() async throws {
+    do {
+      try await accountLoginFlowGeneration.ensureUsable()
+    } catch {
+      throw CodexAppServerConnectionError.connectionClosed
+    }
   }
 }

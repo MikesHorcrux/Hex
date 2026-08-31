@@ -76,12 +76,86 @@ struct CodexAppServerConnectionTests {
 
     await channel.waitUntilCloseStarts()
     #expect(!(await completionProbe.hasCompleted()))
+    let secondRetirementProbe = TestTaskCompletionProbe()
+    let secondRetirement = Task {
+      await connection.retireAccountLoginFlowGeneration()
+      await secondRetirementProbe.recordCompletion()
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await secondRetirementProbe.hasCompleted()))
+    await channel.failFutureOpens()
+    let reconnectProbe = TestTaskCompletionProbe()
+    let reconnectingDuringRetirement = Task {
+      do {
+        try await connection.connect()
+        await reconnectProbe.recordCompletion()
+      } catch {
+        await reconnectProbe.recordCompletion()
+        throw error
+      }
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(await reconnectProbe.hasCompleted())
+    await #expect(throws: CodexAppServerConnectionError.connectionClosed) {
+      try await connection.send(
+        CodexAppServerRequest(method: "account/read", parameters: .object([:]))
+      )
+    }
+    retirement.cancel()
+    secondRetirement.cancel()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await completionProbe.hasCompleted()))
+    #expect(!(await secondRetirementProbe.hasCompleted()))
     await channel.releaseClose()
     await retirement.value
+    await secondRetirement.value
+    await #expect(throws: CodexAppServerConnectionError.connectionClosed) {
+      try await reconnectingDuringRetirement.value
+    }
 
     #expect(await completionProbe.hasCompleted())
+    #expect(await secondRetirementProbe.hasCompleted())
     #expect(await channel.closeCount() == 1)
     #expect(!(await channel.isOpen()))
+    await #expect(throws: CodexAppServerConnectionError.connectionClosed) {
+      try await connection.connect()
+    }
+    #expect(await channel.closeCount() == 1)
+    #expect(await channel.openCount() == 1)
+  }
+
+  @Test
+  func retirementWaitsForAnInFlightOpenToUnwindAndCannotReopen() async throws {
+    let channel = TestCodexAppServerChannel()
+    await channel.blockOpen()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    let connecting = Task { try await connection.connect() }
+    await channel.waitUntilOpenStarts()
+    let retirementProbe = TestTaskCompletionProbe()
+    let retirement = Task {
+      await connection.retireAccountLoginFlowGeneration()
+      await retirementProbe.recordCompletion()
+    }
+    await channel.waitUntilCloseStarts()
+
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await retirementProbe.hasCompleted()))
+    await channel.releaseOpen()
+
+    await #expect(throws: CodexAppServerConnectionError.self) {
+      try await connecting.value
+    }
+    await retirement.value
+    #expect(await retirementProbe.hasCompleted())
+    #expect(await channel.closeCount() == 1)
+    #expect(!(await channel.isOpen()))
+    await #expect(throws: CodexAppServerConnectionError.connectionClosed) {
+      try await connection.connect()
+    }
+    #expect(await channel.openCount() == 1)
   }
 
   @Test

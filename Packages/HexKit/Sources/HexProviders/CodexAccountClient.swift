@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 
 /// Native Swift account boundary for Codex-managed authentication.
@@ -6,30 +7,16 @@ import HexCore
 /// transport launches and initializes Codex, which owns credential persistence and refresh.
 public actor CodexAccountClient {
   private let transport: any CodexAppServerTransport
+  private let loginFlowGeneration: CodexAccountLoginFlowGenerationController
   private var state = CodexAccountClientState.idle
-  private var latestLoginCompletion: CodexLoginCompletion?
-  private var loginFlowLedger: CodexAccountLoginFlowLedger
 
   public init(transport: any CodexAppServerTransport) {
     self.transport = transport
-    loginFlowLedger = CodexAccountLoginFlowLedger()
-  }
-
-  init?(
-    transport: any CodexAppServerTransport,
-    loginFlowHistoryCapacity: Int
-  ) {
-    guard (1...64).contains(loginFlowHistoryCapacity) else {
-      return nil
-    }
-    self.transport = transport
-    loginFlowLedger = CodexAccountLoginFlowLedger(
-      validatedCapacity: loginFlowHistoryCapacity
-    )
+    loginFlowGeneration = transport.accountLoginFlowGeneration
   }
 
   public func readAccount(refreshToken: Bool = false) async throws -> CodexAccountSnapshot {
-    try ensureGenerationIsUsable()
+    try await ensureGenerationIsUsable()
     let result = try await send(
       CodexAppServerRequest(
         method: "account/read",
@@ -40,21 +27,25 @@ public actor CodexAccountClient {
   }
 
   public func startLogin(_ mode: CodexChatGPTLoginMode) async throws -> CodexLoginChallenge {
+    try await synchronizeStateWithGeneration()
     switch state {
     case .idle:
-      guard loginFlowLedger.hasCapacity else {
-        throw CodexAccountClientError.loginFlowHistoryExhausted
-      }
-      state = .starting(mode, nil)
-      latestLoginCompletion = nil
+      state = .starting(mode)
     case .awaiting:
       throw CodexAccountClientError.loginAlreadyPending
-    case .starting, .cancelling, .loggingOut, .retiringGeneration:
+    case .starting, .cancelling, .loggingOut:
       throw CodexAccountClientError.transitionInProgress
-    case .retiredGeneration:
-      throw CodexAccountClientError.loginFlowGenerationRetired
     }
 
+    let reservation: UUID
+    do {
+      reservation = try await loginFlowGeneration.reserveLoginStart()
+    } catch {
+      resetStartingState(mode: mode, admittedLoginID: nil)
+      throw sanitized(error)
+    }
+
+    var admittedLoginID: CodexLoginID?
     do {
       let result = try await send(
         CodexAppServerRequest(
@@ -62,37 +53,33 @@ public actor CodexAccountClient {
           parameters: loginParameters(for: mode)
         )
       )
-      try Task.checkCancellation()
       let challenge = try decodeLoginChallenge(result, expectedMode: mode)
+      let earlyCompletion = try await loginFlowGeneration.issue(
+        challenge.loginID,
+        reservation: reservation
+      )
+      admittedLoginID = challenge.loginID
 
-      guard case .starting(let activeMode, let earlyCompletion) = state,
-        activeMode == mode
-      else {
+      guard case .starting(let activeMode) = state, activeMode == mode else {
         throw CodexAccountClientError.transitionInProgress
       }
-      try loginFlowLedger.issue(challenge.loginID)
 
-      if let earlyCompletion {
-        guard earlyCompletion.loginID == challenge.loginID else {
-          loginFlowLedger.retire(challenge.loginID)
-          state = .idle
-          latestLoginCompletion = nil
-          throw CodexAccountClientError.loginIdentifierMismatch
-        }
-        try loginFlowLedger.acceptCompletion(for: challenge.loginID)
-        latestLoginCompletion = earlyCompletion
+      if earlyCompletion != nil {
         state = .idle
       } else {
         state = .awaiting(challenge.loginID)
       }
+      try Task.checkCancellation()
+      try await loginFlowGeneration.ensureUsable()
       return challenge
     } catch {
-      if case .starting(let activeMode, let earlyCompletion) = state, activeMode == mode {
-        state = .idle
-        if earlyCompletion != nil {
-          latestLoginCompletion = nil
-        }
+      if let admittedLoginID {
+        await loginFlowGeneration.retire(admittedLoginID)
+      } else {
+        await loginFlowGeneration.abandonLoginStart(reservation)
       }
+      await retireGenerationAfterAmbiguousStart()
+      resetStartingState(mode: mode, admittedLoginID: admittedLoginID)
       throw sanitized(error)
     }
   }
@@ -100,6 +87,7 @@ public actor CodexAccountClient {
   public func cancelLogin(
     _ loginID: CodexLoginID
   ) async throws -> CodexLoginCancellationStatus {
+    try await synchronizeStateWithGeneration()
     switch state {
     case .awaiting(let pendingID) where pendingID == loginID:
       state = .cancelling(loginID, nil)
@@ -107,10 +95,19 @@ public actor CodexAccountClient {
       throw CodexAccountClientError.loginIdentifierMismatch
     case .idle:
       throw CodexAccountClientError.noPendingLogin
-    case .starting, .cancelling, .loggingOut, .retiringGeneration:
+    case .starting, .cancelling, .loggingOut:
       throw CodexAccountClientError.transitionInProgress
-    case .retiredGeneration:
-      throw CodexAccountClientError.loginFlowGenerationRetired
+    }
+
+    do {
+      try await loginFlowGeneration.beginCancellation(for: loginID)
+    } catch {
+      if await loginFlowGeneration.entry(for: loginID) == .completionAccepted {
+        state = .idle
+      } else {
+        state = .awaiting(loginID)
+      }
+      throw sanitized(error)
     }
 
     do {
@@ -125,16 +122,16 @@ public actor CodexAccountClient {
       guard case .cancelling(let activeID, let completion) = state, activeID == loginID else {
         throw CodexAccountClientError.transitionInProgress
       }
-      if completion == nil {
-        loginFlowLedger.retire(loginID)
-      } else {
-        guard loginFlowLedger.entry(for: loginID) == .completionAccepted else {
-          throw CodexAccountClientError.transitionInProgress
-        }
+      if completion != nil,
+        await loginFlowGeneration.entry(for: loginID) != .completionAccepted
+      {
+        throw CodexAccountClientError.transitionInProgress
       }
+      try await loginFlowGeneration.finishCancellation(for: loginID)
       state = .idle
       return status
     } catch {
+      await loginFlowGeneration.abandonCancellation(for: loginID)
       if case .cancelling(let activeID, let completion) = state, activeID == loginID {
         state = completion == nil ? .awaiting(loginID) : .idle
       }
@@ -142,46 +139,36 @@ public actor CodexAccountClient {
     }
   }
 
-  public func acceptLoginCompletion(_ completion: CodexLoginCompletion) throws {
+  public func acceptLoginCompletion(_ completion: CodexLoginCompletion) async throws {
     guard let loginID = completion.loginID else {
       throw CodexAccountClientError.loginIdentifierMismatch
     }
+    try await loginFlowGeneration.acceptCompletion(completion)
 
-    if state == .retiredGeneration {
-      throw CodexAccountClientError.loginFlowGenerationRetired
-    }
-
-    switch loginFlowLedger.entry(for: loginID) {
-    case .retiredAwaitingCompletion:
-      try loginFlowLedger.acceptCompletion(for: loginID)
-      latestLoginCompletion = completion
-    case .completionAccepted:
-      throw CodexAccountClientError.unexpectedLoginCompletion
-    case .pending:
-      try acceptPendingCompletion(completion, loginID: loginID)
-    case .none:
-      try acceptUnboundCompletion(completion)
+    switch state {
+    case .awaiting(let pendingID) where pendingID == loginID:
+      state = .idle
+    case .cancelling(let pendingID, nil) where pendingID == loginID:
+      state = .cancelling(pendingID, completion)
+    case .idle, .starting, .awaiting, .cancelling, .loggingOut:
+      return
     }
   }
 
   /// Returns the latest redacted completion only when it belongs to the requested login flow.
-  public func loginCompletion(for loginID: CodexLoginID) -> CodexLoginCompletion? {
-    guard latestLoginCompletion?.loginID == loginID else {
-      return nil
-    }
-    return latestLoginCompletion
+  public func loginCompletion(for loginID: CodexLoginID) async -> CodexLoginCompletion? {
+    return await loginFlowGeneration.completion(for: loginID)
   }
 
   public func logout() async throws {
+    try await synchronizeStateWithGeneration()
     switch state {
     case .idle:
       state = .loggingOut
     case .awaiting:
       throw CodexAccountClientError.loginAlreadyPending
-    case .starting, .cancelling, .loggingOut, .retiringGeneration:
+    case .starting, .cancelling, .loggingOut:
       throw CodexAccountClientError.transitionInProgress
-    case .retiredGeneration:
-      throw CodexAccountClientError.loginFlowGenerationRetired
     }
 
     do {
@@ -207,62 +194,43 @@ public actor CodexAccountClient {
   /// history. To continue after history exhaustion, construct a fresh transport and account client
   /// only after this method returns.
   public func retireLoginFlowGeneration() async {
-    guard state != .retiredGeneration else { return }
-    state = .retiringGeneration
+    await loginFlowGeneration.retireGeneration()
     await transport.retireAccountLoginFlowGeneration()
-    state = .retiredGeneration
   }
 
-  private func acceptPendingCompletion(
-    _ completion: CodexLoginCompletion,
-    loginID: CodexLoginID
-  ) throws {
+  private func ensureGenerationIsUsable() async throws {
+    try await loginFlowGeneration.ensureUsable()
     switch state {
-    case .awaiting(let pendingID) where pendingID == loginID:
-      try loginFlowLedger.acceptCompletion(for: loginID)
-      state = .idle
-      latestLoginCompletion = completion
-    case .cancelling(let pendingID, nil) where pendingID == loginID:
-      try loginFlowLedger.acceptCompletion(for: loginID)
-      state = .cancelling(pendingID, completion)
-      latestLoginCompletion = completion
-    case .retiringGeneration:
-      try loginFlowLedger.acceptCompletion(for: loginID)
-      latestLoginCompletion = completion
-    case .awaiting, .cancelling:
-      throw CodexAccountClientError.loginIdentifierMismatch
-    case .idle, .starting, .loggingOut:
-      throw CodexAccountClientError.unexpectedLoginCompletion
-    case .retiredGeneration:
-      throw CodexAccountClientError.loginFlowGenerationRetired
-    }
-  }
-
-  private func acceptUnboundCompletion(_ completion: CodexLoginCompletion) throws {
-    switch state {
-    case .starting(let mode, nil):
-      state = .starting(mode, completion)
-      latestLoginCompletion = completion
-    case .starting:
-      throw CodexAccountClientError.unexpectedLoginCompletion
-    case .idle where loginFlowLedger.isEmpty:
-      throw CodexAccountClientError.unexpectedLoginCompletion
-    case .retiredGeneration:
-      throw CodexAccountClientError.loginFlowGenerationRetired
-    case .idle, .awaiting, .cancelling, .loggingOut, .retiringGeneration:
-      throw CodexAccountClientError.loginIdentifierMismatch
-    }
-  }
-
-  private func ensureGenerationIsUsable() throws {
-    switch state {
-    case .retiringGeneration:
-      throw CodexAccountClientError.transitionInProgress
-    case .retiredGeneration:
-      throw CodexAccountClientError.loginFlowGenerationRetired
     case .idle, .starting, .awaiting, .cancelling, .loggingOut:
       return
     }
+  }
+
+  private func synchronizeStateWithGeneration() async throws {
+    try await ensureGenerationIsUsable()
+    if case .awaiting(let loginID) = state,
+      await loginFlowGeneration.entry(for: loginID) == .completionAccepted
+    {
+      state = .idle
+    }
+  }
+
+  private func resetStartingState(
+    mode: CodexChatGPTLoginMode,
+    admittedLoginID: CodexLoginID?
+  ) {
+    if case .starting(let activeMode) = state, activeMode == mode {
+      state = .idle
+    } else if case .awaiting(let activeLoginID) = state,
+      activeLoginID == admittedLoginID
+    {
+      state = .idle
+    }
+  }
+
+  private func retireGenerationAfterAmbiguousStart() async {
+    await loginFlowGeneration.retireGeneration()
+    await transport.retireAccountLoginFlowGeneration()
   }
 
   private func send(_ request: CodexAppServerRequest) async throws -> JSONValue {

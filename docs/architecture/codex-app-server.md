@@ -13,16 +13,27 @@ output. Hex must not read, copy, or parse Codex credential files such as `~/.cod
 Account responses are decoded as a closed, non-secret projection: unexpected members fail the
 request instead of being silently carried across the boundary. User-facing login URLs must use
 HTTPS on an explicit OpenAI or ChatGPT authorization host with no embedded credentials.
-The account actor retains at most one redacted login completion, bound to its issued login identifier,
-so the app can observe success or failure without receiving provider error text or credentials.
+Each physical transport owns one `CodexAccountLoginFlowGenerationController`. Every account client
+over that transport shares its no-eviction history of at most 64 issued identifiers and the bounded
+redacted completions correlated to those identifiers. The controller permits exactly one
+generation-wide active login or start reservation and owns the sole early completion until the
+start response supplies its identifier. A fresh transport and controller are the only capacity
+reset; constructing another client over the same transport cannot bypass the bound.
 
 `CodexAppServerTransport` is injected. The concrete transport is responsible for launching and
 initializing the app-server process, assigning JSON-RPC request identifiers, bounding and validating
 JSONL frames, routing responses and notifications, honoring cancellation, and terminating the
-process when the connection is no longer trustworthy. The account actor separately binds every
-cancel and completion to the login identifier issued for its active flow, and it keeps a cancel
-transition reserved until that request has actually returned even if a completion notification
-arrives first.
+process when the connection is no longer trustworthy. The shared generation controller binds every
+cancel and completion to an identifier issued on that physical transport. Once a login-start send
+is invoked, any send, decode, admission, correlation, or cancellation failure is ambiguous: Hex
+terminally retires the controller and awaits physical transport close before returning the failure.
+Successful cancellation keeps its transition reserved until the request has actually returned even
+if a completion notification arrives first.
+
+`retireAccountLoginFlowGeneration()` is terminal for its transport instance. Retirement marks the
+shared controller and concrete connection unavailable before awaiting physical close; concurrent
+retirement callers await that same close, and later connect, send, or open attempts fail. Only a
+new transport with its own controller can establish another login-flow generation.
 
 Composition uses `CodexAppServerNotificationRouter` to bind exact notification methods to separate
 handlers. Unknown methods are ignored for forward compatibility; account, inference, and future

@@ -4,9 +4,19 @@ import HexCore
 extension CodexAppServerConnection {
   public func connect() async throws {
     try Task.checkCancellation()
+    guard !generationRetirementStarted else {
+      throw CodexAppServerConnectionError.connectionClosed
+    }
+    try await ensureAccountLoginFlowGenerationIsUsable()
+    guard !generationRetirementStarted else {
+      throw CodexAppServerConnectionError.connectionClosed
+    }
     if let shutdown {
       await shutdown.completion.value
       try Task.checkCancellation()
+    }
+    guard !generationRetirementStarted else {
+      throw CodexAppServerConnectionError.connectionClosed
     }
     guard state == .disconnected else {
       throw CodexAppServerConnectionError.alreadyConnected
@@ -44,14 +54,37 @@ extension CodexAppServerConnection {
   }
 
   public func retireAccountLoginFlowGeneration() async {
+    if generationRetirementFinished {
+      return
+    }
+    if generationRetirementStarted {
+      await withCheckedContinuation { continuation in
+        generationRetirementWaiters.append(continuation)
+      }
+      return
+    }
+
+    generationRetirementStarted = true
+    await accountLoginFlowGeneration.retireGeneration()
     await disconnect()
+    await waitForConnectionEstablishmentToFinish()
+    state = .retired
+    generationRetirementFinished = true
+    let waiters = generationRetirementWaiters
+    generationRetirementWaiters = []
+    for waiter in waiters {
+      waiter.resume()
+    }
   }
 
   private func establishConnection(generation openingGeneration: UInt64) async throws {
     let output = try await channel.open(
       maximumReadBytes: configuration.maximumReadBytes
     )
-    guard generation == openingGeneration, state == .opening else {
+    guard !generationRetirementStarted,
+      generation == openingGeneration,
+      state == .opening
+    else {
       let activeShutdown = shutdown
       if let activeShutdown {
         await activeShutdown.completion.value
@@ -85,7 +118,10 @@ extension CodexAppServerConnection {
       permittedState: .handshaking
     )
     try Task.checkCancellation()
-    guard generation == openingGeneration, state == .handshaking else {
+    guard !generationRetirementStarted,
+      generation == openingGeneration,
+      state == .handshaking
+    else {
       throw CodexAppServerConnectionError.handshakeFailed
     }
     state = .ready
@@ -102,9 +138,21 @@ extension CodexAppServerConnection {
   private func finishConnectionEstablishment(generation finishedGeneration: UInt64) {
     guard establishmentGeneration == finishedGeneration else { return }
     establishmentGeneration = nil
+    let waiters = establishmentWaiters
+    establishmentWaiters = []
+    for waiter in waiters {
+      waiter.resume()
+    }
     guard state == .closing, shutdown?.generation == finishedGeneration else { return }
     shutdown = nil
     state = .disconnected
+  }
+
+  private func waitForConnectionEstablishmentToFinish() async {
+    guard establishmentGeneration != nil else { return }
+    await withCheckedContinuation { continuation in
+      establishmentWaiters.append(continuation)
+    }
   }
 
   static func makeReaderTask(

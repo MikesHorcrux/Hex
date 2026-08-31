@@ -1,17 +1,8 @@
 struct CodexAccountLoginFlowLedger: Sendable {
-  private let capacity: Int
   private var entries: [CodexLoginID: CodexAccountLoginFlowLedgerEntry] = [:]
 
-  init() {
-    capacity = 64
-  }
-
-  init(validatedCapacity capacity: Int) {
-    self.capacity = capacity
-  }
-
-  var hasCapacity: Bool {
-    entries.count < capacity
+  var count: Int {
+    entries.count
   }
 
   var isEmpty: Bool {
@@ -25,9 +16,6 @@ struct CodexAccountLoginFlowLedger: Sendable {
   mutating func issue(_ loginID: CodexLoginID) throws {
     guard entries[loginID] == nil else {
       throw CodexAccountClientError.loginIdentifierReused
-    }
-    guard hasCapacity else {
-      throw CodexAccountClientError.loginFlowHistoryExhausted
     }
     entries[loginID] = .pending
   }

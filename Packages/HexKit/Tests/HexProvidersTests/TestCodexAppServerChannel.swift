@@ -7,6 +7,8 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
   private var recordedFrames: [Data] = []
   private var frameWaiters: [Int: [CheckedContinuation<Data, Never>]] = [:]
   private var openState = false
+  private var physicalOpenCount = 0
+  private var shouldFailFutureOpens = false
   private var shouldBlockOpen = false
   private var openStarted = false
   private var openStartWaiters: [CheckedContinuation<Void, Never>] = []
@@ -25,6 +27,10 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
   private var blockedWriteReleaseWaiters: [CheckedContinuation<Void, Never>] = []
 
   func open(maximumReadBytes: Int) async throws -> AsyncThrowingStream<Data, any Error> {
+    physicalOpenCount += 1
+    guard !shouldFailFutureOpens else {
+      throw TestCodexAppServerChannelError.failed("open-secret")
+    }
     guard maximumReadBytes > 0 else {
       throw TestCodexAppServerChannelError.failed("channel-secret")
     }
@@ -117,6 +123,10 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
     physicalCloseCount
   }
 
+  func openCount() -> Int {
+    physicalOpenCount
+  }
+
   func isOpen() -> Bool {
     openState
   }
@@ -139,6 +149,10 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
 
   func setFailWrites(_ enabled: Bool) {
     failWrites = enabled
+  }
+
+  func failFutureOpens() {
+    shouldFailFutureOpens = true
   }
 
   func blockOpen() {
