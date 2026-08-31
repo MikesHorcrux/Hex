@@ -74,6 +74,14 @@ struct GatewayWireCodecTests {
     )
     #expect(
       GatewayConfiguration(
+        maximumWireBytes: 2,
+        maximumRetainedRecordsPerRun: 1,
+        maximumRetainedWireBytesPerRun: 1,
+        subscriberBufferCapacity: 1
+      ) == nil
+    )
+    #expect(
+      GatewayConfiguration(
         maximumWireBytes: 1,
         maximumRetainedRecordsPerRun: 1,
         subscriberBufferCapacity: 1,

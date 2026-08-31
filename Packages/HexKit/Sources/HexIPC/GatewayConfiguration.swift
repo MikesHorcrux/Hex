@@ -3,6 +3,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
     GatewayConfiguration(
       validatedMaximumWireBytes: 1_048_576,
       validatedMaximumRetainedRecordsPerRun: 4_096,
+      validatedMaximumRetainedWireBytesPerRun: 16_777_216,
       validatedSubscriberBufferCapacity: 4_096,
       validatedMaximumSubscribersPerRun: 8,
       validatedMaximumSessions: 16,
@@ -12,6 +13,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
 
   public let maximumWireBytes: Int
   public let maximumRetainedRecordsPerRun: Int
+  public let maximumRetainedWireBytesPerRun: Int
   public let subscriberBufferCapacity: Int
   public let maximumSubscribersPerRun: Int
   public let maximumSessions: Int
@@ -20,6 +22,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
   public init?(
     maximumWireBytes: Int,
     maximumRetainedRecordsPerRun: Int,
+    maximumRetainedWireBytesPerRun: Int = 16_777_216,
     subscriberBufferCapacity: Int,
     maximumSubscribersPerRun: Int = 8,
     maximumSessions: Int = 16,
@@ -28,6 +31,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
     guard
       maximumWireBytes > 0,
       maximumRetainedRecordsPerRun > 0,
+      maximumRetainedWireBytesPerRun >= maximumWireBytes,
       subscriberBufferCapacity >= maximumRetainedRecordsPerRun,
       maximumSubscribersPerRun > 0,
       maximumSessions > 0,
@@ -39,6 +43,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
     self.init(
       validatedMaximumWireBytes: maximumWireBytes,
       validatedMaximumRetainedRecordsPerRun: maximumRetainedRecordsPerRun,
+      validatedMaximumRetainedWireBytesPerRun: maximumRetainedWireBytesPerRun,
       validatedSubscriberBufferCapacity: subscriberBufferCapacity,
       validatedMaximumSubscribersPerRun: maximumSubscribersPerRun,
       validatedMaximumSessions: maximumSessions,
@@ -49,6 +54,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
   private init(
     validatedMaximumWireBytes: Int,
     validatedMaximumRetainedRecordsPerRun: Int,
+    validatedMaximumRetainedWireBytesPerRun: Int,
     validatedSubscriberBufferCapacity: Int,
     validatedMaximumSubscribersPerRun: Int,
     validatedMaximumSessions: Int,
@@ -56,6 +62,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
   ) {
     maximumWireBytes = validatedMaximumWireBytes
     maximumRetainedRecordsPerRun = validatedMaximumRetainedRecordsPerRun
+    maximumRetainedWireBytesPerRun = validatedMaximumRetainedWireBytesPerRun
     subscriberBufferCapacity = validatedSubscriberBufferCapacity
     maximumSubscribersPerRun = validatedMaximumSubscribersPerRun
     maximumSessions = validatedMaximumSessions
