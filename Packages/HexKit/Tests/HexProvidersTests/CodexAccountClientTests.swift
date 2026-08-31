@@ -285,6 +285,17 @@ struct CodexAccountClientTests {
         "authUrl": .string("https://user@attacker.test/authorize"),
       ]),
       .object([
+        "type": .string("chatgpt"),
+        "loginId": .string("login-safe"),
+        "authUrl": .string("https://attacker.example/authorize"),
+      ]),
+      .object([
+        "type": .string("chatgpt"),
+        "loginId": .string("login-safe"),
+        "authUrl": .string("https://auth.openai.com/authorize"),
+        "accessToken": .string("must-not-cross-boundary"),
+      ]),
+      .object([
         "type": .string("chatgptDeviceCode"),
         "loginId": .string("login-safe"),
         "userCode": .string("ALLOW\u{202E}DENY"),
@@ -329,6 +340,15 @@ struct CodexAccountClientTests {
           "type": .string("chatgpt"),
           "email": .null,
           "planType": .string("PLUS"),
+        ]),
+        "requiresOpenaiAuth": .boolean(false),
+      ]),
+      .object([
+        "account": .object([
+          "type": .string("chatgpt"),
+          "email": .null,
+          "planType": .string("plus"),
+          "refreshToken": .string("must-not-cross-boundary"),
         ]),
         "requiresOpenaiAuth": .boolean(false),
       ]),
@@ -409,6 +429,46 @@ struct CodexAccountClientTests {
   }
 
   @Test
+  func matchingCompletionDoesNotReleaseAnInFlightCancellationTransition() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let client = CodexAccountClient(transport: transport)
+    let starting = Task { try await client.startLogin(.browser) }
+    await transport.waitForRequest()
+    await transport.succeed(
+      with: .object([
+        "type": .string("chatgpt"),
+        "loginId": .string("login-cancelling"),
+        "authUrl": .string("https://auth.openai.com/authorize"),
+      ])
+    )
+    let challenge = try await starting.value
+
+    let cancelling = Task { try await client.cancelLogin(challenge.loginID) }
+    await transport.waitForRequest(count: 2)
+    let completion = try CodexLoginCompletion(
+      appServerParameters: .object([
+        "loginId": .string("login-cancelling"),
+        "success": .boolean(false),
+        "error": .string("Login was cancelled."),
+      ])
+    )
+    try await client.acceptLoginCompletion(completion)
+
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await client.startLogin(.deviceCode)
+    }
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await client.logout()
+    }
+
+    await transport.succeed(with: .object(["status": .string("canceled")]))
+    #expect(try await cancelling.value == .cancelled)
+    await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
+      try await client.acceptLoginCompletion(completion)
+    }
+  }
+
+  @Test
   func redactsTransportFailuresAndPreservesCancellation() async throws {
     let failingClient = CodexAccountClient(
       transport: TestCodexAppServerTransport(outcomes: [.failure])
@@ -452,6 +512,16 @@ struct CodexAccountClientTests {
           "loginId": .string("login-contradiction"),
           "success": .boolean(true),
           "error": .string("contradictory-secret"),
+        ])
+      )
+    }
+    #expect(throws: CodexAccountClientError.malformedResponse) {
+      try CodexLoginCompletion(
+        appServerParameters: .object([
+          "loginId": .string("login-extra-secret"),
+          "success": .boolean(false),
+          "error": .string("Rejected."),
+          "accessToken": .string("must-not-cross-boundary"),
         ])
       )
     }

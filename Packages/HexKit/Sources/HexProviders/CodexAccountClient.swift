@@ -71,7 +71,7 @@ public actor CodexAccountClient {
   ) async throws -> CodexLoginCancellationStatus {
     switch state {
     case .awaiting(let pendingID) where pendingID == loginID:
-      state = .cancelling(loginID)
+      state = .cancelling(loginID, nil)
     case .awaiting:
       throw CodexAccountClientError.loginIdentifierMismatch
     case .idle:
@@ -89,13 +89,14 @@ public actor CodexAccountClient {
       )
       try Task.checkCancellation()
       let status = try decodeCancellationStatus(result)
-      if case .cancelling(let activeID) = state, activeID == loginID {
-        state = .idle
+      guard case .cancelling(let activeID, _) = state, activeID == loginID else {
+        throw CodexAccountClientError.transitionInProgress
       }
+      state = .idle
       return status
     } catch {
-      if case .cancelling(let activeID) = state, activeID == loginID {
-        state = .awaiting(loginID)
+      if case .cancelling(let activeID, let completion) = state, activeID == loginID {
+        state = completion == nil ? .awaiting(loginID) : .idle
       }
       throw sanitized(error)
     }
@@ -111,11 +112,18 @@ public actor CodexAccountClient {
       state = .starting(mode, completion)
     case .starting(_, .some):
       throw CodexAccountClientError.unexpectedLoginCompletion
-    case .awaiting(let pendingID), .cancelling(let pendingID):
+    case .awaiting(let pendingID):
       guard pendingID == loginID else {
         throw CodexAccountClientError.loginIdentifierMismatch
       }
       state = .idle
+    case .cancelling(let pendingID, nil):
+      guard pendingID == loginID else {
+        throw CodexAccountClientError.loginIdentifierMismatch
+      }
+      state = .cancelling(pendingID, completion)
+    case .cancelling(_, .some):
+      throw CodexAccountClientError.unexpectedLoginCompletion
     case .idle, .loggingOut:
       throw CodexAccountClientError.unexpectedLoginCompletion
     }
