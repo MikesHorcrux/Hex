@@ -168,7 +168,8 @@ extension MCPExecutableSnapshot {
     _ relativePath: String,
     beneath rootDescriptor: Int32,
     requireExecutable: Bool,
-    missingIsAllowed: Bool
+    missingIsAllowed: Bool,
+    allowsTrustedHardLinks: Bool = false
   ) throws -> (descriptor: Int32, status: stat)? {
     guard let normalized = normalizeRelativePath(relativePath, relativeTo: ""),
       normalized == relativePath,
@@ -206,7 +207,11 @@ extension MCPExecutableSnapshot {
     var status = stat()
     guard
       fstat(descriptor, &status) == 0,
-      isAcceptableRuntimeSource(status, requireExecutable: requireExecutable)
+      isAcceptableRuntimeSource(
+        status,
+        requireExecutable: requireExecutable,
+        allowsTrustedHardLinks: allowsTrustedHardLinks
+      )
     else {
       Darwin.close(descriptor)
       throw MCPClientSessionError.connectionClosed

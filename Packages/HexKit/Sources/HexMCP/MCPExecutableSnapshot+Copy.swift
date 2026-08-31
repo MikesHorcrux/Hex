@@ -237,7 +237,11 @@ extension MCPExecutableSnapshot {
     beforeCopy: (() -> Void)?
   ) throws -> (descriptor: Int32, status: stat) {
     guard
-      isAcceptableRuntimeSource(initialStatus, requireExecutable: requireExecutable)
+      isAcceptableRuntimeSource(
+        initialStatus,
+        requireExecutable: requireExecutable,
+        allowsTrustedHardLinks: copyState.allowsTrustedHardLinks
+      )
     else {
       throw MCPClientSessionError.connectionClosed
     }
@@ -360,7 +364,8 @@ extension MCPExecutableSnapshot {
         expectedParentDescriptor: sourceParentDescriptor,
         requireExecutable: false,
         requireRegular: false,
-        missingIsAllowed: false
+        missingIsAllowed: false,
+        allowsTrustedHardLinks: copyState.allowsTrustedHardLinks
       )
     else {
       throw MCPClientSessionError.connectionClosed

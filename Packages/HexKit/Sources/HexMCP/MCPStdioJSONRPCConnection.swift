@@ -2,7 +2,8 @@ import Foundation
 import HexCore
 
 actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
-  static let maximumQueuedWriteOperations = 64
+  static let maximumPendingRequests = 64
+  static let maximumQueuedWriteOperations = maximumPendingRequests
 
   let configuration: MCPServerConfiguration
   var state = MCPConnectionState.disconnected
@@ -109,7 +110,10 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
 
   func request(method: String, params: JSONValue) async throws -> JSONValue {
     try Task.checkCancellation()
-    guard case .connected = state, pendingRequests.count < 64 else {
+    guard
+      case .connected = state,
+      pendingRequests.count < Self.maximumPendingRequests
+    else {
       throw MCPClientSessionError.connectionClosed
     }
     guard Self.validMethod(method), nextRequestID < Int64.max else {

@@ -84,7 +84,7 @@ extension MCPStdioJSONRPCConnection {
       let (nextByteCount, overflowed) = queuedWriteByteCount.addingReportingOverflow(data.count)
       guard
         !overflowed,
-        nextByteCount <= configuration.maximumMessageBytes + 1
+        nextByteCount <= maximumQueuedWriteBytes
       else {
         continuation.resume(throwing: MCPClientSessionError.limitExceeded)
         return
@@ -294,6 +294,16 @@ extension MCPStdioJSONRPCConnection {
     let now = DispatchTime.now().uptimeNanoseconds
     let (deadline, deadlineOverflowed) = now.addingReportingOverflow(timeout)
     return deadlineOverflowed ? UInt64.max : deadline
+  }
+
+  private var maximumQueuedWriteBytes: Int {
+    let (frameLimit, frameOverflowed) = configuration.maximumMessageBytes
+      .addingReportingOverflow(1)
+    let (queueLimit, queueOverflowed) = frameLimit.multipliedReportingOverflow(
+      by: MCPStdioJSONRPCConnection.maximumPendingRequests
+    )
+    guard !frameOverflowed, !queueOverflowed else { return 0 }
+    return queueLimit
   }
 
   private func checkWriteDeadline(_ operation: MCPWriteOperation) throws {

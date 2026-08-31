@@ -77,11 +77,19 @@ final class MCPExecutableSnapshot: Sendable {
       throw MCPClientSessionError.connectionClosed
     }
 
+    let bundle = sourcePath.flatMap { Self.bundleLayout(for: $0) }
+    let allowsTrustedHardLinks =
+      bundle.map { layout in
+        Self.isTrustedSignedXcodeBundle(rootPath: layout.rootPath)
+      } ?? false
     let privateDirectory = try makePrivateDirectory(
       policy: policy,
       namespaceBasename: namespaceBasename
     )
-    var copyState = CopyState(policy: policy)
+    var copyState = CopyState(
+      policy: policy,
+      allowsTrustedHardLinks: allowsTrustedHardLinks
+    )
     var executableDescriptor = Int32(-1)
     var completed = false
     defer {
@@ -95,7 +103,7 @@ final class MCPExecutableSnapshot: Sendable {
 
     let executableRelativePath: String
     let executableStatus: stat
-    if let sourcePath, let layout = bundleLayout(for: sourcePath) {
+    if let layout = bundle {
       let result = try createBundleSnapshot(
         layout: layout,
         sourceDescriptor: sourceDescriptor,
@@ -279,6 +287,7 @@ final class MCPExecutableSnapshot: Sendable {
 
   struct CopyState {
     let policy: MCPExecutableSnapshotPolicy
+    let allowsTrustedHardLinks: Bool
     var createdEntries: [CreatedEntry] = []
     var createdDirectoryStatuses: [String: stat] = [:]
     var copiedFiles: Set<String> = []
@@ -290,6 +299,14 @@ final class MCPExecutableSnapshot: Sendable {
     var admittedEntryCount = 0
     var admittedRunpathCount = 0
     var admittedRunpathByteCount = Int64(0)
+
+    init(
+      policy: MCPExecutableSnapshotPolicy,
+      allowsTrustedHardLinks: Bool = false
+    ) {
+      self.policy = policy
+      self.allowsTrustedHardLinks = allowsTrustedHardLinks
+    }
 
     mutating func admitEntry(
       relativePath: String,

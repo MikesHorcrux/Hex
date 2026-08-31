@@ -28,7 +28,10 @@ of silently changing the local legacy handshake.
   if any single source directory contains more than 2,048 names. Every policy permits at most 512
   linked images. A linked framework is copied with its resources and relative symlinks so bundle
   lookups remain local to the snapshot. Paths are limited to 4,096 bytes, 255-byte components, and
-  64 components.
+  64 components. Apple-signed, root-owned Xcode bundles are the sole exception to the source-file
+  hard-link rule: their hard-linked regular resources are admitted only after the complete bundle
+  path is opened without following symlinks and its nested code signature satisfies Apple's Xcode
+  identity; all other bundles keep the single-link requirement.
 - Admit snapshots through atomic claims in the fixed, owner-only
   `/private/tmp/.hex-mcp-snapshots.v1` namespace. The standard policy permits 32 retained slots;
   each slot admits at most 2,048 entries, 8 MiB of pathname and symbolic-link metadata, and
@@ -52,7 +55,10 @@ of silently changing the local legacy handshake.
 - Put the child in its own process group and terminate/reap the group on timeout, cancellation, or
   protocol failure.
 - Bound every JSON line, pending request count, discovery page, tool catalog, schema, argument, and
-  result before publishing it to the runtime.
+  result before publishing it to the runtime. The stdio connection admits at most 64 pending
+  requests and 64 serialized write operations per generation; queued write bytes are capped at 64
+  times the configured frame ceiling (including its newline), and each write has the request
+  deadline. Count, byte, and deadline exhaustion fail closed.
 - Reject duplicate JSON object members, including escaped spellings of the same key.
 - Treat server annotations, descriptions, schemas, content, stderr, and errors as untrusted input.
 - Namespace tools as `mcp.<server>.<tool>` and derive authorization from Hex-owned policy metadata.
