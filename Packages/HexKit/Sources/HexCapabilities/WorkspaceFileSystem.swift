@@ -10,6 +10,8 @@ public actor WorkspaceFileSystem {
   let replacementPublicationHook: (@Sendable () throws -> Void)?
   let replacementPostValidationHook: (@Sendable () throws -> Void)?
   let replacementPostSwapHook: (@Sendable () throws -> Void)?
+  let replacementPreRollbackSwapHook: (@Sendable (URL) throws -> Void)?
+  let transactionPreTeardownHook: (@Sendable (URL) throws -> Void)?
   let creationPublicationHook: (@Sendable () throws -> Void)?
   let creationPostLinkHook: (@Sendable () throws -> Void)?
   let readDataPreflightHook: (@Sendable (Int) -> Void)?
@@ -24,6 +26,8 @@ public actor WorkspaceFileSystem {
       replacementPublicationHook: nil,
       replacementPostValidationHook: nil,
       replacementPostSwapHook: nil,
+      replacementPreRollbackSwapHook: nil,
+      transactionPreTeardownHook: nil,
       creationPublicationHook: nil,
       creationPostLinkHook: nil,
       readDataPreflightHook: nil
@@ -36,6 +40,8 @@ public actor WorkspaceFileSystem {
     replacementPublicationHook: (@Sendable () throws -> Void)?,
     replacementPostValidationHook: (@Sendable () throws -> Void)? = nil,
     replacementPostSwapHook: (@Sendable () throws -> Void)? = nil,
+    replacementPreRollbackSwapHook: (@Sendable (URL) throws -> Void)? = nil,
+    transactionPreTeardownHook: (@Sendable (URL) throws -> Void)? = nil,
     creationPublicationHook: (@Sendable () throws -> Void)? = nil,
     creationPostLinkHook: (@Sendable () throws -> Void)? = nil,
     readDataPreflightHook: (@Sendable (Int) -> Void)? = nil
@@ -67,6 +73,8 @@ public actor WorkspaceFileSystem {
     self.replacementPublicationHook = replacementPublicationHook
     self.replacementPostValidationHook = replacementPostValidationHook
     self.replacementPostSwapHook = replacementPostSwapHook
+    self.replacementPreRollbackSwapHook = replacementPreRollbackSwapHook
+    self.transactionPreTeardownHook = transactionPreTeardownHook
     self.creationPublicationHook = creationPublicationHook
     self.creationPostLinkHook = creationPostLinkHook
     self.readDataPreflightHook = readDataPreflightHook

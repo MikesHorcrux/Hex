@@ -235,30 +235,31 @@ extension WorkspaceFileSystem {
     replacing replacedMetadata: WorkspaceFileMetadataSnapshot?,
     expectedRevision: String?
   ) throws {
-    let temporaryName = ".hex-write-\(UUID().uuidString.lowercased()).tmp"
+    let parentURL = parentComponents.reduce(rootURL) { partialURL, component in
+      partialURL.appending(path: component, directoryHint: .isDirectory)
+    }
+    let transaction = try WorkspaceWriteTransaction(
+      appropriateFor: parentURL,
+      targetDescriptor: parentDescriptor
+    )
+    let temporaryName = WorkspaceWriteTransaction.candidateName
     let descriptor = openat(
-      parentDescriptor,
+      transaction.directoryDescriptor,
       temporaryName,
       O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
       mode_t(0o600)
     )
     guard descriptor >= 0 else {
-      throw WorkspaceFileSystemError.ioFailure
+      transaction.close()
+      throw WorkspaceFileSystemError.outcomeUncertain
     }
     var shouldRemoveTemporary = true
     defer {
       if shouldRemoveTemporary {
-        var descriptorStatus = stat()
-        var namedStatus = stat()
-        if fstat(descriptor, &descriptorStatus) == 0,
-          fstatat(parentDescriptor, temporaryName, &namedStatus, AT_SYMLINK_NOFOLLOW) == 0,
-          descriptorStatus.st_dev == namedStatus.st_dev,
-          descriptorStatus.st_ino == namedStatus.st_ino
-        {
-          _ = unlinkat(parentDescriptor, temporaryName, 0)
-        }
+        _ = unlinkat(transaction.directoryDescriptor, temporaryName, 0)
       }
       Darwin.close(descriptor)
+      transaction.close()
     }
 
     try writeAll(data, to: descriptor)
@@ -321,7 +322,7 @@ extension WorkspaceFileSystem {
       try Task.checkCancellation()
       guard
         renameatx_np(
-          parentDescriptor,
+          transaction.directoryDescriptor,
           temporaryName,
           parentDescriptor,
           name,
@@ -339,7 +340,7 @@ extension WorkspaceFileSystem {
       do {
         displacedMetadata = try metadataSnapshot(
           named: temporaryName,
-          in: parentDescriptor,
+          in: transaction.directoryDescriptor,
           expectedLinkCount: 1
         )
       } catch {
@@ -355,6 +356,7 @@ extension WorkspaceFileSystem {
           named: name,
           temporaryName: temporaryName,
           in: parentDescriptor,
+          transactionDescriptor: transaction.directoryDescriptor,
           expectedMetadata: replacedMetadata,
           expectedRevision: expectedRevision,
           publishedMetadata: publishedMetadata,
@@ -371,6 +373,7 @@ extension WorkspaceFileSystem {
           named: name,
           temporaryName: temporaryName,
           in: parentDescriptor,
+          transactionDescriptor: transaction.directoryDescriptor,
           expectedMetadata: replacedMetadata,
           expectedRevision: expectedRevision,
           publishedMetadata: publishedMetadata,
@@ -382,29 +385,36 @@ extension WorkspaceFileSystem {
             named: name,
             temporaryName: temporaryName,
             in: parentDescriptor,
+            transactionDescriptor: transaction.directoryDescriptor,
             displacedMetadata: displacedMetadata,
             publishedMetadata: publishedMetadata,
-            publishedData: data
+            publishedData: data,
+            expectedRevision: expectedRevision,
+            transactionURL: transaction.directoryURL
           )
           shouldRemoveTemporary = false
+          try finishWriteTransaction(transaction)
         } catch {
           throw WorkspaceFileSystemError.outcomeUncertain
         }
         throw validationError
       }
-      let discardedStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
-      guard
-        discardedStatus.st_dev == displacedMetadata.device,
-        discardedStatus.st_ino == displacedMetadata.inode,
-        discardedStatus.st_nlink == 1,
-        unlinkat(parentDescriptor, temporaryName, 0) == 0
-      else {
+      guard unlinkat(transaction.directoryDescriptor, temporaryName, 0) == 0 else {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
+      shouldRemoveTemporary = false
     } else {
       try creationPublicationHook?()
       try Task.checkCancellation()
-      guard linkat(parentDescriptor, temporaryName, parentDescriptor, name, 0) == 0 else {
+      guard
+        linkat(
+          transaction.directoryDescriptor,
+          temporaryName,
+          parentDescriptor,
+          name,
+          0
+        ) == 0
+      else {
         if errno == EEXIST {
           throw WorkspaceFileSystemError.destinationExists
         }
@@ -442,33 +452,54 @@ extension WorkspaceFileSystem {
             named: name,
             temporaryName: temporaryName,
             in: parentDescriptor,
+            transactionDescriptor: transaction.directoryDescriptor,
             publishedMetadata: publishedMetadata,
             publishedData: data
           )
+          try finishWriteTransaction(transaction)
         } catch {
           throw WorkspaceFileSystemError.outcomeUncertain
         }
         throw validationError
       }
-      let temporaryStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
-      guard
-        temporaryStatus.st_dev == publishedMetadata.device,
-        temporaryStatus.st_ino == publishedMetadata.inode,
-        temporaryStatus.st_nlink == 2,
-        unlinkat(parentDescriptor, temporaryName, 0) == 0
-      else {
+      guard unlinkat(transaction.directoryDescriptor, temporaryName, 0) == 0 else {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
+      shouldRemoveTemporary = false
     }
-    guard fsync(parentDescriptor) == 0 else {
+    do {
+      try finishWriteTransaction(transaction)
+    } catch {
       throw WorkspaceFileSystemError.outcomeUncertain
     }
+  }
+
+  private func finishWriteTransaction(
+    _ transaction: WorkspaceWriteTransaction
+  ) throws {
+    try transactionPreTeardownHook?(transaction.directoryURL)
+    var descriptorStatus = stat()
+    var namedStatus = stat()
+    guard
+      fsync(transaction.directoryDescriptor) == 0,
+      fstat(transaction.directoryDescriptor, &descriptorStatus) == 0,
+      lstat(transaction.directoryURL.path, &namedStatus) == 0,
+      descriptorStatus.st_mode & S_IFMT == S_IFDIR,
+      namedStatus.st_mode & S_IFMT == S_IFDIR,
+      descriptorStatus.st_dev == namedStatus.st_dev,
+      descriptorStatus.st_ino == namedStatus.st_ino
+    else {
+      throw WorkspaceFileSystemError.outcomeUncertain
+    }
+    // The system-temporary namespace is intentionally retained for OS reclamation. Removing its
+    // public name after this identity check would reintroduce a name-swap deletion race.
   }
 
   private func validatePublishedReplacement(
     named name: String,
     temporaryName: String,
     in parentDescriptor: Int32,
+    transactionDescriptor: Int32,
     expectedMetadata: WorkspaceFileMetadataSnapshot,
     expectedRevision: String?,
     publishedMetadata: WorkspaceFileMetadataSnapshot,
@@ -495,7 +526,7 @@ extension WorkspaceFileSystem {
 
     let displaced = try fileSnapshot(
       named: temporaryName,
-      in: parentDescriptor,
+      in: transactionDescriptor,
       expectedLinkCount: 1,
       maximumBytes: configuration.maximumWriteBytes
     )
@@ -538,49 +569,79 @@ extension WorkspaceFileSystem {
     named name: String,
     temporaryName: String,
     in parentDescriptor: Int32,
+    transactionDescriptor: Int32,
     publishedMetadata: WorkspaceFileMetadataSnapshot,
     publishedData: Data
   ) throws {
-    let current = try fileSnapshot(
-      named: name,
-      in: parentDescriptor,
-      expectedLinkCount: 2,
-      maximumBytes: configuration.maximumWriteBytes,
-      checksCancellation: false
-    )
-    let currentStatus = try entryStatus(named: name, in: parentDescriptor)
+    let rejectedName = WorkspaceWriteTransaction.rejectedPublicationName
     guard
-      current.metadata.matches(
-        publishedMetadata,
-        comparesChangeTime: false,
-        expectedLinkCount: 2
-      ),
-      current.data == publishedData,
-      currentStatus.st_dev == publishedMetadata.device,
-      currentStatus.st_ino == publishedMetadata.inode,
-      currentStatus.st_nlink == 2,
-      unlinkat(parentDescriptor, name, 0) == 0
+      renameatx_np(
+        parentDescriptor,
+        name,
+        transactionDescriptor,
+        rejectedName,
+        UInt32(RENAME_EXCL)
+      ) == 0
     else {
       throw WorkspaceFileSystemError.outcomeUncertain
     }
-    let remaining = try fileSnapshot(
-      named: temporaryName,
-      in: parentDescriptor,
-      expectedLinkCount: 1,
-      maximumBytes: configuration.maximumWriteBytes,
-      checksCancellation: false
-    )
-    let remainingStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
+
+    do {
+      let rejected = try fileSnapshot(
+        named: rejectedName,
+        in: transactionDescriptor,
+        expectedLinkCount: 2,
+        maximumBytes: configuration.maximumWriteBytes,
+        checksCancellation: false
+      )
+      guard
+        rejected.metadata.matches(
+          publishedMetadata,
+          comparesChangeTime: false,
+          expectedLinkCount: 2
+        ),
+        rejected.data == publishedData
+      else {
+        throw WorkspaceFileSystemError.revisionConflict
+      }
+    } catch {
+      guard
+        renameatx_np(
+          transactionDescriptor,
+          rejectedName,
+          parentDescriptor,
+          name,
+          UInt32(RENAME_EXCL)
+        ) == 0
+      else {
+        throw WorkspaceFileSystemError.outcomeUncertain
+      }
+      let candidate = try fileSnapshot(
+        named: temporaryName,
+        in: transactionDescriptor,
+        expectedLinkCount: 1,
+        maximumBytes: configuration.maximumWriteBytes,
+        checksCancellation: false
+      )
+      guard
+        candidate.metadata.matches(
+          publishedMetadata,
+          comparesChangeTime: false
+        ),
+        candidate.data == publishedData,
+        unlinkat(transactionDescriptor, temporaryName, 0) == 0,
+        fsync(transactionDescriptor) == 0,
+        fsync(parentDescriptor) == 0
+      else {
+        throw WorkspaceFileSystemError.outcomeUncertain
+      }
+      return
+    }
+
     guard
-      remaining.metadata.matches(
-        publishedMetadata,
-        comparesChangeTime: false
-      ),
-      remaining.data == publishedData,
-      remainingStatus.st_dev == publishedMetadata.device,
-      remainingStatus.st_ino == publishedMetadata.inode,
-      remainingStatus.st_nlink == 1,
-      unlinkat(parentDescriptor, temporaryName, 0) == 0,
+      unlinkat(transactionDescriptor, rejectedName, 0) == 0,
+      unlinkat(transactionDescriptor, temporaryName, 0) == 0,
+      fsync(transactionDescriptor) == 0,
       fsync(parentDescriptor) == 0
     else {
       throw WorkspaceFileSystemError.outcomeUncertain
@@ -591,21 +652,48 @@ extension WorkspaceFileSystem {
     named name: String,
     temporaryName: String,
     in parentDescriptor: Int32,
+    transactionDescriptor: Int32,
     displacedMetadata: WorkspaceFileMetadataSnapshot,
     publishedMetadata: WorkspaceFileMetadataSnapshot,
-    publishedData: Data
+    publishedData: Data,
+    expectedRevision: String?,
+    transactionURL: URL
   ) throws {
-    let currentPublishedStatus = try entryStatus(named: name, in: parentDescriptor)
-    let currentDisplacedStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
+    guard let expectedRevision else {
+      throw WorkspaceFileSystemError.outcomeUncertain
+    }
+    let currentPublished = try fileSnapshot(
+      named: name,
+      in: parentDescriptor,
+      expectedLinkCount: 1,
+      maximumBytes: configuration.maximumWriteBytes,
+      checksCancellation: false
+    )
+    let currentDisplaced = try fileSnapshot(
+      named: temporaryName,
+      in: transactionDescriptor,
+      expectedLinkCount: 1,
+      maximumBytes: configuration.maximumWriteBytes,
+      checksCancellation: false
+    )
     guard
-      currentPublishedStatus.st_dev == publishedMetadata.device,
-      currentPublishedStatus.st_ino == publishedMetadata.inode,
-      currentPublishedStatus.st_nlink == 1,
-      currentDisplacedStatus.st_dev == displacedMetadata.device,
-      currentDisplacedStatus.st_ino == displacedMetadata.inode,
-      currentDisplacedStatus.st_nlink == 1,
+      currentPublished.metadata.matches(
+        publishedMetadata,
+        comparesChangeTime: false
+      ),
+      currentPublished.data == publishedData,
+      currentDisplaced.metadata.matches(
+        displacedMetadata,
+        comparesChangeTime: false
+      ),
+      revision(for: currentDisplaced.data) == expectedRevision
+    else {
+      throw WorkspaceFileSystemError.outcomeUncertain
+    }
+    try replacementPreRollbackSwapHook?(transactionURL)
+    guard
       renameatx_np(
-        parentDescriptor,
+        transactionDescriptor,
         temporaryName,
         parentDescriptor,
         name,
@@ -614,32 +702,52 @@ extension WorkspaceFileSystem {
     else {
       throw WorkspaceFileSystemError.outcomeUncertain
     }
-    let restoredStatus = try entryStatus(named: name, in: parentDescriptor)
-    guard
-      restoredStatus.st_dev == displacedMetadata.device,
-      restoredStatus.st_ino == displacedMetadata.inode,
-      restoredStatus.st_nlink == 1
-    else {
+
+    do {
+      let restored = try fileSnapshot(
+        named: name,
+        in: parentDescriptor,
+        expectedLinkCount: 1,
+        maximumBytes: configuration.maximumWriteBytes,
+        checksCancellation: false
+      )
+      let rejected = try fileSnapshot(
+        named: temporaryName,
+        in: transactionDescriptor,
+        expectedLinkCount: 1,
+        maximumBytes: configuration.maximumWriteBytes,
+        checksCancellation: false
+      )
+      guard
+        restored.metadata.matches(
+          displacedMetadata,
+          comparesChangeTime: false
+        ),
+        revision(for: restored.data) == expectedRevision,
+        rejected.metadata.matches(
+          publishedMetadata,
+          comparesChangeTime: false
+        ),
+        rejected.data == publishedData
+      else {
+        throw WorkspaceFileSystemError.outcomeUncertain
+      }
+    } catch {
+      _ = renameatx_np(
+        transactionDescriptor,
+        temporaryName,
+        parentDescriptor,
+        name,
+        UInt32(RENAME_SWAP)
+      )
+      _ = fsync(transactionDescriptor)
+      _ = fsync(parentDescriptor)
       throw WorkspaceFileSystemError.outcomeUncertain
     }
-    let rejected = try fileSnapshot(
-      named: temporaryName,
-      in: parentDescriptor,
-      expectedLinkCount: 1,
-      maximumBytes: configuration.maximumWriteBytes,
-      checksCancellation: false
-    )
-    let rejectedStatus = try entryStatus(named: temporaryName, in: parentDescriptor)
+
     guard
-      rejected.metadata.matches(
-        publishedMetadata,
-        comparesChangeTime: false
-      ),
-      rejected.data == publishedData,
-      rejectedStatus.st_dev == publishedMetadata.device,
-      rejectedStatus.st_ino == publishedMetadata.inode,
-      rejectedStatus.st_nlink == 1,
-      unlinkat(parentDescriptor, temporaryName, 0) == 0,
+      unlinkat(transactionDescriptor, temporaryName, 0) == 0,
+      fsync(transactionDescriptor) == 0,
       fsync(parentDescriptor) == 0
     else {
       throw WorkspaceFileSystemError.outcomeUncertain

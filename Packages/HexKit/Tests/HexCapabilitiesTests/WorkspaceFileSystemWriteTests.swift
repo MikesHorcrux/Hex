@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 
 @testable import HexCapabilities
@@ -244,6 +245,163 @@ struct WorkspaceFileSystemWriteTests {
     #expect(try String(contentsOf: destination, encoding: .utf8) == "original")
     #expect(remainingEntries == [destination.lastPathComponent])
     #expect(!remainingEntries.contains { $0.hasPrefix(".hex-write-") })
+  }
+
+  @Test
+  func creationRollbackRestoresAnUnrelatedDestinationWithoutDeletingIt() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sources = root.appending(path: "Sources", directoryHint: .isDirectory)
+    let destination = sources.appending(path: "Concurrent.swift")
+    let externalContent = "unrelated concurrent destination"
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      creationPostLinkHook: {
+        try Data(externalContent.utf8).write(to: destination, options: .atomic)
+      }
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.hardLinkRejected) {
+      _ = try await fileSystem.writeTextFile(
+        "agent creation",
+        at: "Sources/Concurrent.swift",
+        expectedRevision: nil,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == externalContent)
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: sources.path)
+        == [destination.lastPathComponent]
+    )
+  }
+
+  @Test
+  func replacementRollbackRetainsEveryFileWhenThePublishedNameChangesBeforeSwap() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sources = root.appending(path: "Sources", directoryHint: .isDirectory)
+    let destination = sources.appending(path: "ConcurrentReplacement.swift")
+    try Data("original".utf8).write(to: destination)
+    let externalContent = "unrelated concurrent replacement"
+    let observedTransactionURL = Mutex<URL?>(nil)
+    defer {
+      if let transactionURL = observedTransactionURL.withLock({ $0 }) {
+        try? FileManager.default.removeItem(at: transactionURL)
+      }
+    }
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      replacementPostSwapHook: {
+        throw WorkspaceFileSystemError.revisionConflict
+      },
+      replacementPreRollbackSwapHook: { transactionURL in
+        observedTransactionURL.withLock { $0 = transactionURL }
+        try Data(externalContent.utf8).write(to: destination, options: .atomic)
+      }
+    )
+    let initial = try await fileSystem.readTextFile(
+      at: "Sources/ConcurrentReplacement.swift",
+      relativeTo: nil
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.outcomeUncertain) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/ConcurrentReplacement.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == externalContent)
+    let transactionURL = try #require(observedTransactionURL.withLock { $0 })
+    let retainedOriginal = transactionURL.appending(
+      path: WorkspaceWriteTransaction.candidateName
+    )
+    #expect(try String(contentsOf: retainedOriginal, encoding: .utf8) == "original")
+  }
+
+  @Test
+  func teardownPreservesMovedTransactionAndAnUnrelatedReplacementAtItsOriginalName() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Teardown.swift")
+    let retainedTransaction = FileManager.default.temporaryDirectory.appending(
+      path: "hex-retained-write-transaction-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    let observedTransactionURL = Mutex<URL?>(nil)
+    defer {
+      try? FileManager.default.removeItem(at: retainedTransaction)
+      if let transactionURL = observedTransactionURL.withLock({ $0 }) {
+        try? FileManager.default.removeItem(at: transactionURL)
+      }
+    }
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      transactionPreTeardownHook: { transactionURL in
+        observedTransactionURL.withLock { $0 = transactionURL }
+        try FileManager.default.moveItem(at: transactionURL, to: retainedTransaction)
+        try FileManager.default.createDirectory(
+          at: transactionURL,
+          withIntermediateDirectories: false
+        )
+      }
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.outcomeUncertain) {
+      _ = try await fileSystem.writeTextFile(
+        "published before teardown",
+        at: "Sources/Teardown.swift",
+        expectedRevision: nil,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "published before teardown")
+    let transactionURL = try #require(observedTransactionURL.withLock { $0 })
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: retainedTransaction.path).isEmpty
+    )
+    #expect(try FileManager.default.contentsOfDirectory(atPath: transactionURL.path).isEmpty)
+  }
+
+  @Test
+  func cancellationDuringTransactionTeardownDoesNotInterruptPublishedCleanup() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sources = root.appending(path: "Sources", directoryHint: .isDirectory)
+    let destination = sources.appending(path: "Committed.swift")
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      transactionPreTeardownHook: { _ in
+        withUnsafeCurrentTask { currentTask in
+          currentTask?.cancel()
+        }
+      }
+    )
+
+    let task = Task {
+      try await fileSystem.writeTextFile(
+        "committed",
+        at: "Sources/Committed.swift",
+        expectedRevision: nil,
+        relativeTo: nil
+      )
+    }
+    let written = try await task.value
+
+    #expect(written.content == "committed")
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "committed")
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: sources.path) == ["Committed.swift"]
+    )
   }
 
   @Test
