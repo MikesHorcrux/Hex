@@ -46,12 +46,12 @@ extension POSIXProcessExecutor {
           )
         }
 
-        leaderHasExited =
-          leaderHasExited
-          || (try observeExit(
+        if !leaderHasExited {
+          leaderHasExited = try observeExit(
             process.processID,
             leaderMayHaveBeenReaped: &leaderMayHaveBeenReaped
-          ))
+          )
+        }
 
         if leaderHasExited && reachedEndOfFile {
           cleanupAttempted = true
