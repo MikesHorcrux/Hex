@@ -199,7 +199,7 @@ extension MCPExecutableSnapshot {
             copyState: &copyState,
             beforeCopy: nil
           )
-          Darwin.close(copied.descriptor)
+          _ = copied
           if ownsChildDescriptor { Darwin.close(childDescriptor) }
         } catch {
           if ownsChildDescriptor { Darwin.close(childDescriptor) }
@@ -234,16 +234,7 @@ extension MCPExecutableSnapshot {
     beforeCopy: (() -> Void)?
   ) throws -> (descriptor: Int32, status: stat) {
     guard
-      isAcceptableRuntimeSource(initialStatus, requireExecutable: requireExecutable),
-      canCreateBundleEntry(currentCount: copyState.createdEntries.count)
-    else {
-      throw MCPClientSessionError.connectionClosed
-    }
-    guard
-      let nextTotal = nextBundleByteCount(
-        current: copyState.totalByteCount,
-        adding: initialStatus.st_size
-      )
+      isAcceptableRuntimeSource(initialStatus, requireExecutable: requireExecutable)
     else {
       throw MCPClientSessionError.connectionClosed
     }
@@ -253,6 +244,10 @@ extension MCPExecutableSnapshot {
       copyState: &copyState
     )
     defer { Darwin.close(parent.descriptor) }
+    try copyState.admitEntry(
+      relativePath: destinationRelativePath,
+      copiedBytes: initialStatus.st_size
+    )
     let destinationDescriptor = parent.basename.withCString { name in
       openat(
         parent.descriptor,
@@ -264,6 +259,10 @@ extension MCPExecutableSnapshot {
     guard destinationDescriptor >= 0 else {
       throw MCPClientSessionError.connectionClosed
     }
+    let ownedFileIndex = copyState.ownedRegularFiles.count
+    copyState.ownedRegularFiles.append(
+      MCPExecutableSnapshotOwnedFile(descriptor: destinationDescriptor, status: nil)
+    )
     var createdStatus = stat()
     guard
       fstat(destinationDescriptor, &createdStatus) == 0,
@@ -271,9 +270,9 @@ extension MCPExecutableSnapshot {
       createdStatus.st_uid == geteuid(),
       createdStatus.st_nlink == 1
     else {
-      Darwin.close(destinationDescriptor)
       throw MCPClientSessionError.connectionClosed
     }
+    copyState.ownedRegularFiles[ownedFileIndex].status = createdStatus
     copyState.createdEntries.append(
       CreatedEntry(relativePath: destinationRelativePath, kind: .file, status: createdStatus)
     )
@@ -305,12 +304,11 @@ extension MCPExecutableSnapshot {
       else {
         throw MCPClientSessionError.connectionClosed
       }
-      copyState.totalByteCount = nextTotal
       copyState.copiedFiles.insert(destinationRelativePath)
       copyState.copiedFileSources[destinationRelativePath] = sourceRelativePath
+      copyState.ownedRegularFiles[ownedFileIndex].status = destinationStatus
       return (destinationDescriptor, destinationStatus)
     } catch {
-      Darwin.close(destinationDescriptor)
       throw error
     }
   }
@@ -330,16 +328,7 @@ extension MCPExecutableSnapshot {
       initialStatus.st_uid == 0 || initialStatus.st_uid == geteuid(),
       initialStatus.st_nlink == 1,
       initialStatus.st_size > 0,
-      initialStatus.st_size <= off_t(maximumSymbolicLinkBytes),
-      canCreateBundleEntry(currentCount: copyState.createdEntries.count)
-    else {
-      throw MCPClientSessionError.connectionClosed
-    }
-    guard
-      let nextTotal = nextBundleByteCount(
-        current: copyState.totalByteCount,
-        adding: initialStatus.st_size
-      )
+      initialStatus.st_size <= off_t(maximumSymbolicLinkBytes)
     else {
       throw MCPClientSessionError.connectionClosed
     }
@@ -368,6 +357,11 @@ extension MCPExecutableSnapshot {
     else {
       throw MCPClientSessionError.connectionClosed
     }
+    try copyState.admitEntry(
+      relativePath: destinationRelativePath,
+      additionalPathMetadataBytes: Int64(target.utf8.count + 1),
+      copiedBytes: 0
+    )
     var finalStatus = stat()
     let finalStatusResult = name.withCString { childName in
       fstatat(sourceParentDescriptor, childName, &finalStatus, AT_SYMLINK_NOFOLLOW)
@@ -407,7 +401,6 @@ extension MCPExecutableSnapshot {
       CreatedEntry(
         relativePath: destinationRelativePath, kind: .symbolicLink, status: createdStatus)
     )
-    copyState.totalByteCount = nextTotal
   }
 
   private static func copyExactBytes(

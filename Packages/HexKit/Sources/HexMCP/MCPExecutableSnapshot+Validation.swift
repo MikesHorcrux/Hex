@@ -127,6 +127,19 @@ extension MCPExecutableSnapshot {
       && rhs.st_mode & S_IFMT == S_IFDIR
   }
 
+  static func sameSnapshotDirectoryIdentityAndPermissions(
+    _ lhs: stat,
+    _ rhs: stat
+  ) -> Bool {
+    lhs.st_dev == rhs.st_dev
+      && lhs.st_ino == rhs.st_ino
+      && lhs.st_mode == rhs.st_mode
+      && lhs.st_mode & S_IFMT == S_IFDIR
+      && rhs.st_mode & S_IFMT == S_IFDIR
+      && lhs.st_uid == geteuid()
+      && rhs.st_uid == geteuid()
+  }
+
   static func sameCreatedEntryIdentity(
     _ lhs: stat,
     _ rhs: stat,

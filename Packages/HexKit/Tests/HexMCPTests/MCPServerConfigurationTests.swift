@@ -113,4 +113,45 @@ struct MCPServerConfigurationTests {
       )
     }
   }
+
+  @Test("Exposes validated persistent snapshot admission limits")
+  func exposesSnapshotAdmissionPolicy() throws {
+    let policy = try MCPExecutableSnapshotPolicy(
+      maximumRetainedSlots: 4,
+      maximumEntriesPerSlot: 8,
+      maximumPathMetadataBytesPerSlot: 4_096,
+      maximumCopiedBytesPerSlot: 1_024
+    )
+    let configuration = try MCPServerConfiguration(
+      serverID: "fixture",
+      executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: [:],
+      executableSnapshotPolicy: policy
+    )
+
+    #expect(configuration.executableSnapshotPolicy == policy)
+    #expect(policy.maximumTotalRetainedEntries == 32)
+    #expect(policy.maximumTotalPathMetadataBytes == 16_384)
+    #expect(policy.maximumTotalCopiedBytes == 4_096)
+    #expect(MCPExecutableSnapshotPolicy.standard.maximumRetainedSlots == 32)
+    #expect(MCPExecutableSnapshotPolicy.standard.maximumTotalRetainedEntries == 65_536)
+    #expect(
+      MCPExecutableSnapshotPolicy.standard.maximumTotalPathMetadataBytes
+        == 256 * 1_024 * 1_024
+    )
+    #expect(
+      MCPExecutableSnapshotPolicy.standard.maximumTotalCopiedBytes
+        == 4 * 1_024 * 1_024 * 1_024
+    )
+    #expect(throws: MCPExecutableSnapshotPolicyError.invalidLimit) {
+      _ = try MCPExecutableSnapshotPolicy(
+        maximumRetainedSlots: 4_097,
+        maximumEntriesPerSlot: 8,
+        maximumPathMetadataBytesPerSlot: 4_096,
+        maximumCopiedBytesPerSlot: 1_024
+      )
+    }
+  }
 }

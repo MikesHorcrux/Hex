@@ -16,6 +16,8 @@ public struct MCPServerConfiguration: Sendable {
   public let maximumTools: Int
   public let maximumContentItems: Int
   public let maximumArgumentsBytes: Int
+  /// Bounds persistent snapshot slots and per-slot materialization before process launch.
+  public let executableSnapshotPolicy: MCPExecutableSnapshotPolicy
 
   public init(
     serverID: String,
@@ -32,7 +34,8 @@ public struct MCPServerConfiguration: Sendable {
     maximumToolPages: Int = 32,
     maximumTools: Int = 4_096,
     maximumContentItems: Int = 1_024,
-    maximumArgumentsBytes: Int = 512 * 1_024
+    maximumArgumentsBytes: Int = 512 * 1_024,
+    executableSnapshotPolicy: MCPExecutableSnapshotPolicy = .standard
   ) throws {
     guard MCPToolCatalogBuilder.isValidServerID(serverID) else {
       throw MCPServerConfigurationError.invalidServerID
@@ -93,6 +96,7 @@ public struct MCPServerConfiguration: Sendable {
     self.maximumTools = maximumTools
     self.maximumContentItems = maximumContentItems
     self.maximumArgumentsBytes = maximumArgumentsBytes
+    self.executableSnapshotPolicy = executableSnapshotPolicy
   }
 
   private static func validArguments(_ values: [String]) -> Bool {

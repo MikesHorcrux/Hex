@@ -2,8 +2,11 @@ import Darwin
 
 final class MCPExecutableSnapshot: Sendable {
   static let maximumExecutableBytes: off_t = 256 * 1_024 * 1_024
-  static let maximumBundleBytes: off_t = 768 * 1_024 * 1_024
-  static let maximumBundleEntries = 32_768
+  static let maximumBundleBytes: off_t = off_t(
+    MCPExecutableSnapshotPolicy.standard.maximumCopiedBytesPerSlot
+  )
+  static let maximumBundleEntries =
+    MCPExecutableSnapshotPolicy.standard.maximumEntriesPerSlot
   static let maximumBundleImages = 512
   static let maximumSnapshotPathBytes = 4_096
   static let maximumSnapshotPathDepth = 64
@@ -12,51 +15,50 @@ final class MCPExecutableSnapshot: Sendable {
   let executablePath: String
   let status: stat
 
+  private let namespaceParentDescriptor: Int32
+  private let namespaceBasename: String
+  private let namespaceStatus: stat
   private let parentDescriptor: Int32
   private let directoryBasename: String
   private let directoryDescriptor: Int32
   private let directoryStatus: stat
   private let executableDescriptor: Int32
   private let entries: [SnapshotEntry]
-  private let cleanupAuditHooks: CleanupAuditHooks?
+  private let ownedRegularFiles: [MCPExecutableSnapshotOwnedFile]
 
   private init(
     executablePath: String,
     status: stat,
+    namespaceParentDescriptor: Int32,
+    namespaceBasename: String,
+    namespaceStatus: stat,
     parentDescriptor: Int32,
     directoryBasename: String,
     directoryDescriptor: Int32,
     directoryStatus: stat,
     executableDescriptor: Int32,
     entries: [SnapshotEntry],
-    cleanupAuditHooks: CleanupAuditHooks?
+    ownedRegularFiles: [MCPExecutableSnapshotOwnedFile]
   ) {
     self.executablePath = executablePath
     self.status = status
+    self.namespaceParentDescriptor = namespaceParentDescriptor
+    self.namespaceBasename = namespaceBasename
+    self.namespaceStatus = namespaceStatus
     self.parentDescriptor = parentDescriptor
     self.directoryBasename = directoryBasename
     self.directoryDescriptor = directoryDescriptor
     self.directoryStatus = directoryStatus
     self.executableDescriptor = executableDescriptor
     self.entries = entries
-    self.cleanupAuditHooks = cleanupAuditHooks
+    self.ownedRegularFiles = ownedRegularFiles
   }
 
   deinit {
-    Darwin.close(executableDescriptor)
-    Self.removeCreatedEntries(
-      entries.map(\.created),
-      from: directoryDescriptor,
-      auditHooks: cleanupAuditHooks
-    )
-    Self.removePrivateDirectory(
-      parentDescriptor: parentDescriptor,
-      basename: directoryBasename,
-      directoryStatus: directoryStatus,
-      auditHooks: cleanupAuditHooks
-    )
+    Self.hardenAndCloseOwnedRegularFiles(ownedRegularFiles)
     Darwin.close(directoryDescriptor)
     Darwin.close(parentDescriptor)
+    Darwin.close(namespaceParentDescriptor)
   }
 
   static func create(
@@ -64,32 +66,26 @@ final class MCPExecutableSnapshot: Sendable {
     initialStatus: stat,
     sourcePath: String? = nil,
     afterSourceValidation: (@Sendable (_ snapshotPath: String) -> Void)?,
-    cleanupAuditHooks: CleanupAuditHooks? = nil
+    policy: MCPExecutableSnapshotPolicy = .standard,
+    namespaceBasename: String = MCPExecutableSnapshotAdmission.productionNamespaceBasename
   ) throws -> MCPExecutableSnapshot {
     guard isAcceptableSource(initialStatus) else {
       throw MCPClientSessionError.connectionClosed
     }
 
-    let privateDirectory = try makePrivateDirectory()
-    var copyState = CopyState()
+    let privateDirectory = try makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespaceBasename
+    )
+    var copyState = CopyState(policy: policy)
     var executableDescriptor = Int32(-1)
     var completed = false
     defer {
       if !completed {
-        if executableDescriptor >= 0 { Darwin.close(executableDescriptor) }
-        removeCreatedEntries(
-          copyState.createdEntries,
-          from: privateDirectory.descriptor,
-          auditHooks: cleanupAuditHooks
-        )
-        removePrivateDirectory(
-          parentDescriptor: privateDirectory.parentDescriptor,
-          basename: privateDirectory.basename,
-          directoryStatus: privateDirectory.initialStatus,
-          auditHooks: cleanupAuditHooks
-        )
+        hardenAndCloseOwnedRegularFiles(copyState.ownedRegularFiles)
         Darwin.close(privateDirectory.descriptor)
         Darwin.close(privateDirectory.parentDescriptor)
+        Darwin.close(privateDirectory.namespaceParentDescriptor)
       }
     }
 
@@ -141,17 +137,43 @@ final class MCPExecutableSnapshot: Sendable {
     return MCPExecutableSnapshot(
       executablePath: privateDirectory.path + "/" + executableRelativePath,
       status: executableStatus,
+      namespaceParentDescriptor: privateDirectory.namespaceParentDescriptor,
+      namespaceBasename: privateDirectory.namespaceBasename,
+      namespaceStatus: privateDirectory.namespaceStatus,
       parentDescriptor: privateDirectory.parentDescriptor,
       directoryBasename: privateDirectory.basename,
       directoryDescriptor: privateDirectory.descriptor,
       directoryStatus: finalDirectoryStatus,
       executableDescriptor: executableDescriptor,
       entries: snapshotEntries,
-      cleanupAuditHooks: cleanupAuditHooks
+      ownedRegularFiles: copyState.ownedRegularFiles
     )
   }
 
   func isIntact() -> Bool {
+    var namespaceDescriptorStatus = stat()
+    var namedNamespaceStatus = stat()
+    guard
+      fstat(parentDescriptor, &namespaceDescriptorStatus) == 0,
+      Self.sameSnapshotDirectoryIdentityAndPermissions(
+        namespaceStatus,
+        namespaceDescriptorStatus
+      ),
+      namespaceBasename.withCString({ name in
+        fstatat(
+          namespaceParentDescriptor,
+          name,
+          &namedNamespaceStatus,
+          AT_SYMLINK_NOFOLLOW
+        )
+      }) == 0,
+      Self.sameSnapshotDirectoryIdentityAndPermissions(
+        namespaceStatus,
+        namedNamespaceStatus
+      )
+    else {
+      return false
+    }
     var descriptorStatus = stat()
     var namedDirectoryStatus = stat()
     guard
@@ -198,6 +220,9 @@ final class MCPExecutableSnapshot: Sendable {
   }
 
   struct PrivateDirectory {
+    let namespaceParentDescriptor: Int32
+    let namespaceBasename: String
+    let namespaceStatus: stat
     let parentDescriptor: Int32
     let basename: String
     let path: String
@@ -242,12 +267,48 @@ final class MCPExecutableSnapshot: Sendable {
   }
 
   struct CopyState {
+    let policy: MCPExecutableSnapshotPolicy
     var createdEntries: [CreatedEntry] = []
     var createdDirectories: Set<String> = []
     var copiedFiles: Set<String> = []
     var copiedFileSources: [String: String] = [:]
     var copiedPackages: [String: String] = [:]
-    var totalByteCount = off_t(0)
+    var ownedRegularFiles: [MCPExecutableSnapshotOwnedFile] = []
+    var copiedByteCount = off_t(0)
+    var pathMetadataByteCount = Int64(0)
+    var admittedEntryCount = 0
+
+    mutating func admitEntry(
+      relativePath: String,
+      additionalPathMetadataBytes: Int64 = 0,
+      copiedBytes: off_t
+    ) throws {
+      guard
+        additionalPathMetadataBytes >= 0,
+        copiedBytes >= 0,
+        admittedEntryCount < policy.maximumEntriesPerSlot
+      else {
+        throw MCPClientSessionError.limitExceeded
+      }
+      let (pathBytes, entryPathOverflowed) = Int64(relativePath.utf8.count + 1)
+        .addingReportingOverflow(additionalPathMetadataBytes)
+      let (nextPathBytes, totalPathOverflowed) =
+        pathMetadataByteCount.addingReportingOverflow(pathBytes)
+      let (nextCopiedBytes, copiedOverflowed) =
+        copiedByteCount.addingReportingOverflow(copiedBytes)
+      guard
+        !entryPathOverflowed,
+        !totalPathOverflowed,
+        !copiedOverflowed,
+        nextPathBytes <= policy.maximumPathMetadataBytesPerSlot,
+        nextCopiedBytes <= off_t(policy.maximumCopiedBytesPerSlot)
+      else {
+        throw MCPClientSessionError.limitExceeded
+      }
+      admittedEntryCount += 1
+      pathMetadataByteCount = nextPathBytes
+      copiedByteCount = nextCopiedBytes
+    }
   }
 
   struct CreatedEntry: Sendable {
@@ -267,32 +328,4 @@ final class MCPExecutableSnapshot: Sendable {
     let status: stat
   }
 
-  struct CleanupAuditHooks: Sendable {
-    let afterEntryIdentityValidation:
-      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
-    let afterRootIdentityValidation:
-      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
-    let afterQuarantinedEntryIdentityValidation:
-      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
-    let afterQuarantinedRootIdentityValidation:
-      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
-
-    init(
-      afterEntryIdentityValidation:
-        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil,
-      afterRootIdentityValidation:
-        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil,
-      afterQuarantinedEntryIdentityValidation:
-        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil,
-      afterQuarantinedRootIdentityValidation:
-        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil
-    ) {
-      self.afterEntryIdentityValidation = afterEntryIdentityValidation
-      self.afterRootIdentityValidation = afterRootIdentityValidation
-      self.afterQuarantinedEntryIdentityValidation =
-        afterQuarantinedEntryIdentityValidation
-      self.afterQuarantinedRootIdentityValidation =
-        afterQuarantinedRootIdentityValidation
-    }
-  }
 }

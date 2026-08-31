@@ -81,7 +81,6 @@ extension MCPExecutableSnapshot {
       }
       return executable
     } catch {
-      Darwin.close(executable.descriptor)
       throw error
     }
   }
@@ -175,7 +174,7 @@ extension MCPExecutableSnapshot {
               copyState: &copyState,
               beforeCopy: nil
             )
-            Darwin.close(copied.descriptor)
+            _ = copied
           }
           Darwin.close(resolvedDependency.descriptor)
         } catch {

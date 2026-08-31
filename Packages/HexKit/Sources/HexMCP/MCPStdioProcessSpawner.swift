@@ -66,7 +66,8 @@ enum MCPStdioProcessSpawner {
         from: executableDescriptor,
         initialStatus: executableStatus,
         sourcePath: configuration.executableURL.path,
-        afterSourceValidation: afterSourceValidation
+        afterSourceValidation: afterSourceValidation,
+        policy: configuration.executableSnapshotPolicy
       )
       executableSnapshot = snapshot
       launchPath = snapshot.executablePath

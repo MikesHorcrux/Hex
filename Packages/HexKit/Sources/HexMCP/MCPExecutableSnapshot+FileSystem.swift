@@ -2,95 +2,17 @@ import Darwin
 import Foundation
 
 extension MCPExecutableSnapshot {
-  static func makePrivateDirectory() throws -> PrivateDirectory {
-    let parentDescriptor = Darwin.open(
-      "/private/tmp",
-      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+  static func makePrivateDirectory(
+    policy: MCPExecutableSnapshotPolicy,
+    namespaceBasename: String = MCPExecutableSnapshotAdmission.productionNamespaceBasename,
+    openClaimedSlot: @Sendable (Int32, String) -> Int32 = MCPExecutableSnapshotAdmission
+      .openDirectoryForProduction
+  ) throws -> PrivateDirectory {
+    try MCPExecutableSnapshotAdmission.claimSlot(
+      policy: policy,
+      namespaceBasename: namespaceBasename,
+      openClaimedSlot: openClaimedSlot
     )
-    guard parentDescriptor >= 0 else {
-      throw MCPClientSessionError.connectionClosed
-    }
-    var parentStatus = stat()
-    guard
-      fstat(parentDescriptor, &parentStatus) == 0,
-      parentStatus.st_mode & S_IFMT == S_IFDIR,
-      parentStatus.st_uid == 0,
-      parentStatus.st_mode & S_ISVTX != 0
-    else {
-      Darwin.close(parentDescriptor)
-      throw MCPClientSessionError.connectionClosed
-    }
-    for _ in 0..<8 {
-      let basename = ".hex-mcp-executable.\(UUID().uuidString)"
-      let createResult = basename.withCString { name in
-        mkdirat(parentDescriptor, name, 0o700)
-      }
-      if createResult != 0 {
-        if errno == EEXIST { continue }
-        Darwin.close(parentDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      let descriptor = basename.withCString { name in
-        openat(parentDescriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-      }
-      guard descriptor >= 0 else {
-        Darwin.close(parentDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      var descriptorStatus = stat()
-      guard fstat(descriptor, &descriptorStatus) == 0 else {
-        Darwin.close(descriptor)
-        Darwin.close(parentDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      guard fchmod(descriptor, 0o700) == 0 else {
-        Darwin.close(descriptor)
-        removePrivateDirectory(
-          parentDescriptor: parentDescriptor,
-          basename: basename,
-          directoryStatus: descriptorStatus
-        )
-        Darwin.close(parentDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      guard fstat(descriptor, &descriptorStatus) == 0 else {
-        Darwin.close(descriptor)
-        removePrivateDirectory(
-          parentDescriptor: parentDescriptor,
-          basename: basename,
-          directoryStatus: descriptorStatus
-        )
-        Darwin.close(parentDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      var namedStatus = stat()
-      let namedResult = basename.withCString { name in
-        fstatat(parentDescriptor, name, &namedStatus, AT_SYMLINK_NOFOLLOW)
-      }
-      guard
-        namedResult == 0,
-        isAcceptableSnapshotDirectory(descriptorStatus),
-        sameSnapshotIdentityAndMetadata(descriptorStatus, namedStatus)
-      else {
-        Darwin.close(descriptor)
-        removePrivateDirectory(
-          parentDescriptor: parentDescriptor,
-          basename: basename,
-          directoryStatus: descriptorStatus
-        )
-        Darwin.close(parentDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      return PrivateDirectory(
-        parentDescriptor: parentDescriptor,
-        basename: basename,
-        path: "/private/tmp/" + basename,
-        descriptor: descriptor,
-        initialStatus: descriptorStatus
-      )
-    }
-    Darwin.close(parentDescriptor)
-    throw MCPClientSessionError.connectionClosed
   }
 
   static func ensureDestinationDirectory(
@@ -120,9 +42,11 @@ extension MCPExecutableSnapshot {
       accumulated.append(component)
       let currentPath = accumulated.joined(separator: "/")
       if !copyState.createdDirectories.contains(currentPath) {
-        guard canCreateBundleEntry(currentCount: copyState.createdEntries.count) else {
+        do {
+          try copyState.admitEntry(relativePath: currentPath, copiedBytes: 0)
+        } catch {
           Darwin.close(currentDescriptor)
-          throw MCPClientSessionError.connectionClosed
+          throw error
         }
         let result = component.withCString { name in
           mkdirat(currentDescriptor, name, 0o700)
@@ -147,6 +71,14 @@ extension MCPExecutableSnapshot {
           CreatedEntry(relativePath: currentPath, kind: .directory, status: createdStatus)
         )
       }
+      guard
+        let expectedDirectoryStatus = copyState.createdEntries.first(where: {
+          $0.relativePath == currentPath
+        })?.status
+      else {
+        Darwin.close(currentDescriptor)
+        throw MCPClientSessionError.connectionClosed
+      }
       let nextDescriptor = component.withCString { name in
         openat(currentDescriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
       }
@@ -157,7 +89,8 @@ extension MCPExecutableSnapshot {
       var status = stat()
       guard
         fstat(nextDescriptor, &status) == 0,
-        isAcceptableSnapshotDirectory(status)
+        isAcceptableSnapshotDirectory(status),
+        sameDirectoryIdentity(expectedDirectoryStatus, status)
       else {
         Darwin.close(nextDescriptor)
         Darwin.close(currentDescriptor)

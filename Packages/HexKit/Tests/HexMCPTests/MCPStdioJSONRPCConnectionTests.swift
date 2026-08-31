@@ -8,8 +8,8 @@ import Testing
 
 @Suite("MCP stdio JSON-RPC connection", .serialized)
 struct MCPStdioJSONRPCConnectionTests {
-  @Test("Executes a private snapshot when the configured path is replaced before spawn")
-  func configuredExecutableReplacementNeverRuns() async throws {
+  @Test("Uses a private snapshot when the configured source changes before spawn")
+  func usesSnapshotWhenConfiguredSourceChanges() async throws {
     let fixtureDirectory = try makeFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
     let configuredExecutable = fixtureDirectory.appendingPathComponent("server")
@@ -46,15 +46,15 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(replacementResult.withLock { $0 } == 0)
     #expect(!FileManager.default.fileExists(atPath: marker.path))
     let launchPath = try #require(observedLaunchPath.withLock { $0 })
+    let snapshotRoot = URL(fileURLWithPath: launchPath).deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
     #expect(launchPath != configuredPath)
-    #expect(!FileManager.default.fileExists(atPath: launchPath))
-    #expect(
-      !FileManager.default.fileExists(
-        atPath: URL(fileURLWithPath: launchPath).deletingLastPathComponent().path))
+    #expect(Self.isRetainedHardenedRegularFile(atPath: launchPath))
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
   }
 
-  @Test("Rejects in-place executable mutation after validation without running mutated bytes")
-  func inPlaceExecutableMutationNeverRuns() async throws {
+  @Test("Rejects configured source mutation observed while copying the snapshot")
+  func rejectsConfiguredSourceMutationDuringCopy() async throws {
     let fixtureDirectory = try makeFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
     let configuredExecutable = fixtureDirectory.appendingPathComponent("server")
@@ -98,12 +98,10 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(mutationResult.withLock { $0 } == true)
     #expect(!FileManager.default.fileExists(atPath: marker.path))
     let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
-    #expect(!FileManager.default.fileExists(atPath: snapshotPath))
-    #expect(
-      !FileManager.default.fileExists(
-        atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
-      )
-    )
+    let snapshotRoot = URL(fileURLWithPath: snapshotPath).deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
+    #expect(Self.isRetainedHardenedRegularFile(atPath: snapshotPath))
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
   }
 
   @Test("Rejects oversized and hard-linked executable sources before launch")
@@ -223,17 +221,15 @@ struct MCPStdioJSONRPCConnectionTests {
       }
 
       let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
-      #expect(!FileManager.default.fileExists(atPath: snapshotPath))
-      #expect(
-        !FileManager.default.fileExists(
-          atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
-        )
-      )
+      let snapshotRoot = URL(fileURLWithPath: snapshotPath).deletingLastPathComponent()
+      #expect(Self.isRetainedHardenedRegularFile(atPath: snapshotPath))
+      #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
+      try FileManager.default.removeItem(at: snapshotRoot)
     }
   }
 
-  @Test("Repeated rejected snapshots release their private files and descriptors")
-  func repeatedRejectedSnapshotsDoNotLeakResources() throws {
+  @Test("Repeated rejected snapshots truncate bytes and release descriptors")
+  func repeatedRejectedSnapshotsReleaseDescriptors() throws {
     let fixtureDirectory = try makeFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
     let descriptorCountBefore = try openDescriptorCount()
@@ -255,12 +251,10 @@ struct MCPStdioJSONRPCConnectionTests {
       }
 
       let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
-      #expect(!FileManager.default.fileExists(atPath: snapshotPath))
-      #expect(
-        !FileManager.default.fileExists(
-          atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
-        )
-      )
+      let snapshotRoot = URL(fileURLWithPath: snapshotPath).deletingLastPathComponent()
+      #expect(Self.isRetainedHardenedRegularFile(atPath: snapshotPath))
+      #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
+      try FileManager.default.removeItem(at: snapshotRoot)
     }
 
     #expect(try openDescriptorCount() <= descriptorCountBefore)
@@ -319,7 +313,9 @@ struct MCPStdioJSONRPCConnectionTests {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
+    #expect(Self.isRetainedHardenedRegularFile(atPath: launchPath))
   }
 
   @Test("Builds the installed Xcode bridge closure without launching it")
@@ -370,10 +366,11 @@ struct MCPStdioJSONRPCConnectionTests {
         ).path
       )
     )
-
     snapshot = nil
 
-    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
+    #expect(Self.isRetainedHardenedRegularFile(atPath: executablePath))
   }
 
   @Test("Rejects an oversized bundle runtime dependency before launch")
@@ -424,8 +421,9 @@ struct MCPStdioJSONRPCConnectionTests {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
     #expect(!executionReached.withLock { $0 })
-    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
   }
 
   @Test("Rejects a bundle dependency tree beyond the snapshot depth bound")
@@ -480,8 +478,9 @@ struct MCPStdioJSONRPCConnectionTests {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
     #expect(!executionReached.withLock { $0 })
-    #expect(!FileManager.default.fileExists(atPath: snapshotRoot.path))
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
   }
 
   @Test("Completed snapshot cleanup preserves a replacement directory")
@@ -516,7 +515,9 @@ struct MCPStdioJSONRPCConnectionTests {
 
     #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
     #expect(
-      try FileManager.default.contentsOfDirectory(atPath: renamedSnapshot.path).isEmpty
+      Self.isRetainedHardenedRegularFile(
+        atPath: renamedSnapshot.appendingPathComponent("executable").path
+      )
     )
   }
 
@@ -559,7 +560,9 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(mutationSucceeded.withLock { $0 })
     #expect(FileManager.default.fileExists(atPath: snapshotRoot))
     #expect(
-      try FileManager.default.contentsOfDirectory(atPath: renamedSnapshot.path).isEmpty
+      Self.isRetainedHardenedRegularFile(
+        atPath: renamedSnapshot.appendingPathComponent("executable").path
+      )
     )
   }
 
@@ -636,12 +639,10 @@ struct MCPStdioJSONRPCConnectionTests {
     await session.disconnect()
 
     let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
-    #expect(!FileManager.default.fileExists(atPath: snapshotPath))
-    #expect(
-      !FileManager.default.fileExists(
-        atPath: URL(fileURLWithPath: snapshotPath).deletingLastPathComponent().path
-      )
-    )
+    let snapshotRoot = URL(fileURLWithPath: snapshotPath).deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
+    #expect(Self.isRetainedHardenedRegularFile(atPath: snapshotPath))
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
   }
 
   @Test("Does not inherit unrelated parent file descriptors")
@@ -1199,6 +1200,16 @@ struct MCPStdioJSONRPCConnectionTests {
       offset += written
     }
     return fsync(descriptor) == 0
+  }
+
+  nonisolated private static func isRetainedHardenedRegularFile(
+    atPath path: String
+  ) -> Bool {
+    var status = stat()
+    return lstat(path, &status) == 0
+      && status.st_mode & S_IFMT == S_IFREG
+      && status.st_size == 0
+      && status.st_mode & 0o777 == 0
   }
 
   private func openDescriptorCount() throws -> Int {

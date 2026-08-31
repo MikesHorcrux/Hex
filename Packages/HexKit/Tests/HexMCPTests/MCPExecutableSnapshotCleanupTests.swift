@@ -1,14 +1,13 @@
 import Darwin
 import Foundation
-import Synchronization
 import Testing
 
 @testable import HexMCP
 
 @Suite("MCP executable snapshot cleanup", .serialized)
 struct MCPExecutableSnapshotCleanupTests {
-  @Test("Entry cleanup preserves a replacement installed after identity validation")
-  func entryCleanupPreservesFinalWindowReplacement() throws {
+  @Test("Teardown retains path metadata and truncates its physically owned file")
+  func teardownRetainsMetadataAndTruncatesOwnedFile() throws {
     let fixtureDirectory = try makeFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
     let source = fixtureDirectory.appendingPathComponent("server")
@@ -19,43 +18,11 @@ struct MCPExecutableSnapshotCleanupTests {
     defer { Darwin.close(sourceDescriptor) }
     var sourceStatus = stat()
     #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
-    let replacement = Data("entry replacement".utf8)
-    let mutationSucceeded = Mutex(false)
-    let movedBasename = "moved-executable-\(UUID().uuidString)"
 
     var snapshot: MCPExecutableSnapshot? = try MCPExecutableSnapshot.create(
       from: sourceDescriptor,
       initialStatus: sourceStatus,
-      afterSourceValidation: nil,
-      cleanupAuditHooks: .init(
-        afterEntryIdentityValidation: { parentDescriptor, basename in
-          guard basename == "executable" else { return }
-          let renamed =
-            movedBasename.withCString { movedName in
-              basename.withCString { name in
-                renameat(parentDescriptor, name, parentDescriptor, movedName)
-              }
-            } == 0
-          let descriptor = basename.withCString { name in
-            openat(
-              parentDescriptor,
-              name,
-              O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-              0o600
-            )
-          }
-          guard renamed, descriptor >= 0 else {
-            if descriptor >= 0 { Darwin.close(descriptor) }
-            return
-          }
-          defer { Darwin.close(descriptor) }
-          mutationSucceeded.withLock {
-            $0 = replacement.withUnsafeBytes { bytes in
-              Darwin.write(descriptor, bytes.baseAddress, bytes.count) == bytes.count
-            }
-          }
-        }
-      )
+      afterSourceValidation: nil
     )
     let executablePath = try #require(snapshot?.executablePath)
     let snapshotRoot = URL(fileURLWithPath: executablePath).deletingLastPathComponent()
@@ -63,17 +30,16 @@ struct MCPExecutableSnapshotCleanupTests {
 
     snapshot = nil
 
-    #expect(mutationSucceeded.withLock { $0 })
-    #expect(try Data(contentsOf: URL(fileURLWithPath: executablePath)) == replacement)
-    #expect(
-      FileManager.default.fileExists(
-        atPath: snapshotRoot.appendingPathComponent(movedBasename).path
-      )
-    )
+    var retainedStatus = stat()
+    #expect(lstat(executablePath, &retainedStatus) == 0)
+    #expect(retainedStatus.st_mode & S_IFMT == S_IFREG)
+    #expect(retainedStatus.st_size == 0)
+    #expect(retainedStatus.st_mode & 0o777 == 0)
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
   }
 
-  @Test("Root cleanup preserves a replacement installed after identity validation")
-  func rootCleanupPreservesFinalWindowReplacement() throws {
+  @Test("Teardown truncates the owned inode without touching a pathname replacement")
+  func teardownTruncatesOwnedInodeNotReplacement() throws {
     let fixtureDirectory = try makeFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
     let source = fixtureDirectory.appendingPathComponent("server")
@@ -84,162 +50,27 @@ struct MCPExecutableSnapshotCleanupTests {
     defer { Darwin.close(sourceDescriptor) }
     var sourceStatus = stat()
     #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
-    let mutationSucceeded = Mutex(false)
-    let movedBasename = ".hex-mcp-moved-root.\(UUID().uuidString)"
 
     var snapshot: MCPExecutableSnapshot? = try MCPExecutableSnapshot.create(
       from: sourceDescriptor,
       initialStatus: sourceStatus,
-      afterSourceValidation: nil,
-      cleanupAuditHooks: .init(
-        afterRootIdentityValidation: { parentDescriptor, basename in
-          let renamed =
-            movedBasename.withCString { movedName in
-              basename.withCString { name in
-                renameat(parentDescriptor, name, parentDescriptor, movedName)
-              }
-            } == 0
-          let replaced =
-            basename.withCString { name in
-              mkdirat(parentDescriptor, name, 0o700)
-            } == 0
-          mutationSucceeded.withLock { $0 = renamed && replaced }
-        }
-      )
-    )
-    let executablePath = try #require(snapshot?.executablePath)
-    let snapshotRoot = URL(fileURLWithPath: executablePath).deletingLastPathComponent()
-    let movedRoot = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
-      .appendingPathComponent(movedBasename, isDirectory: true)
-    defer {
-      try? FileManager.default.removeItem(at: snapshotRoot)
-      try? FileManager.default.removeItem(at: movedRoot)
-    }
-
-    snapshot = nil
-
-    #expect(mutationSucceeded.withLock { $0 })
-    var isDirectory: ObjCBool = false
-    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path, isDirectory: &isDirectory))
-    #expect(isDirectory.boolValue)
-    #expect(try FileManager.default.contentsOfDirectory(atPath: movedRoot.path).isEmpty)
-  }
-
-  @Test("Entry cleanup retains a replacement installed at the quarantined unlink window")
-  func entryCleanupRetainsQuarantinedFinalWindowReplacement() throws {
-    let fixtureDirectory = try makeFixtureDirectory()
-    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
-    let source = fixtureDirectory.appendingPathComponent("server")
-    try writeExecutable(to: source)
-    let sourceDescriptor = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-    #expect(sourceDescriptor >= 0)
-    guard sourceDescriptor >= 0 else { return }
-    defer { Darwin.close(sourceDescriptor) }
-    var sourceStatus = stat()
-    #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
-    let replacement = Data("quarantined entry replacement".utf8)
-    let mutationSucceeded = Mutex(false)
-    let movedBasename = "moved-quarantined-executable-\(UUID().uuidString)"
-
-    var snapshot: MCPExecutableSnapshot? = try MCPExecutableSnapshot.create(
-      from: sourceDescriptor,
-      initialStatus: sourceStatus,
-      afterSourceValidation: nil,
-      cleanupAuditHooks: .init(
-        afterQuarantinedEntryIdentityValidation: { parentDescriptor, basename in
-          let renamed =
-            movedBasename.withCString { movedName in
-              basename.withCString { name in
-                renameat(parentDescriptor, name, parentDescriptor, movedName)
-              }
-            } == 0
-          let descriptor = basename.withCString { name in
-            openat(
-              parentDescriptor,
-              name,
-              O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-              0o600
-            )
-          }
-          guard renamed, descriptor >= 0 else {
-            if descriptor >= 0 { Darwin.close(descriptor) }
-            return
-          }
-          defer { Darwin.close(descriptor) }
-          mutationSucceeded.withLock {
-            $0 = replacement.withUnsafeBytes { bytes in
-              Darwin.write(descriptor, bytes.baseAddress, bytes.count) == bytes.count
-            }
-          }
-        }
-      )
+      afterSourceValidation: nil
     )
     let executablePath = try #require(snapshot?.executablePath)
     let snapshotRoot = URL(fileURLWithPath: executablePath).deletingLastPathComponent()
     defer { try? FileManager.default.removeItem(at: snapshotRoot) }
+    let movedOwnedPath = snapshotRoot.appendingPathComponent("moved-owned-executable").path
+    #expect(Darwin.rename(executablePath, movedOwnedPath) == 0)
+    let replacement = Data("unrelated replacement".utf8)
+    #expect(Self.createFile(atPath: executablePath, contents: replacement))
 
     snapshot = nil
 
-    #expect(mutationSucceeded.withLock { $0 })
     #expect(try Data(contentsOf: URL(fileURLWithPath: executablePath)) == replacement)
-    #expect(
-      FileManager.default.fileExists(
-        atPath: snapshotRoot.appendingPathComponent(movedBasename).path
-      )
-    )
-  }
-
-  @Test("Root cleanup retains a replacement installed at the quarantined rmdir window")
-  func rootCleanupRetainsQuarantinedFinalWindowReplacement() throws {
-    let fixtureDirectory = try makeFixtureDirectory()
-    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
-    let source = fixtureDirectory.appendingPathComponent("server")
-    try writeExecutable(to: source)
-    let sourceDescriptor = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-    #expect(sourceDescriptor >= 0)
-    guard sourceDescriptor >= 0 else { return }
-    defer { Darwin.close(sourceDescriptor) }
-    var sourceStatus = stat()
-    #expect(fstat(sourceDescriptor, &sourceStatus) == 0)
-    let mutationSucceeded = Mutex(false)
-    let movedBasename = ".hex-mcp-moved-quarantined-root.\(UUID().uuidString)"
-
-    var snapshot: MCPExecutableSnapshot? = try MCPExecutableSnapshot.create(
-      from: sourceDescriptor,
-      initialStatus: sourceStatus,
-      afterSourceValidation: nil,
-      cleanupAuditHooks: .init(
-        afterQuarantinedRootIdentityValidation: { parentDescriptor, basename in
-          let renamed =
-            movedBasename.withCString { movedName in
-              basename.withCString { name in
-                renameat(parentDescriptor, name, parentDescriptor, movedName)
-              }
-            } == 0
-          let replaced =
-            basename.withCString { name in
-              mkdirat(parentDescriptor, name, 0o700)
-            } == 0
-          mutationSucceeded.withLock { $0 = renamed && replaced }
-        }
-      )
-    )
-    let executablePath = try #require(snapshot?.executablePath)
-    let snapshotRoot = URL(fileURLWithPath: executablePath).deletingLastPathComponent()
-    let movedRoot = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
-      .appendingPathComponent(movedBasename, isDirectory: true)
-    defer {
-      try? FileManager.default.removeItem(at: snapshotRoot)
-      try? FileManager.default.removeItem(at: movedRoot)
-    }
-
-    snapshot = nil
-
-    #expect(mutationSucceeded.withLock { $0 })
-    var isDirectory: ObjCBool = false
-    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path, isDirectory: &isDirectory))
-    #expect(isDirectory.boolValue)
-    #expect(try FileManager.default.contentsOfDirectory(atPath: movedRoot.path).isEmpty)
+    var movedStatus = stat()
+    #expect(lstat(movedOwnedPath, &movedStatus) == 0)
+    #expect(movedStatus.st_size == 0)
+    #expect(movedStatus.st_mode & 0o777 == 0)
   }
 
   private func makeFixtureDirectory() throws -> URL {
@@ -261,5 +92,18 @@ struct MCPExecutableSnapshotCleanupTests {
       [.posixPermissions: 0o700],
       ofItemAtPath: url.path
     )
+  }
+
+  private static func createFile(atPath path: String, contents: Data) -> Bool {
+    let descriptor = Darwin.open(
+      path,
+      O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+      0o600
+    )
+    guard descriptor >= 0 else { return false }
+    defer { Darwin.close(descriptor) }
+    return contents.withUnsafeBytes { bytes in
+      Darwin.write(descriptor, bytes.baseAddress, bytes.count) == bytes.count
+    }
   }
 }
