@@ -59,7 +59,8 @@ public struct MCPServerConfiguration: Sendable {
     guard Self.validArguments(arguments) else {
       throw MCPServerConfigurationError.invalidArguments
     }
-    guard Self.validEnvironment(environment) else {
+    let safeEnvironment = try MCPProcessEnvironment.validatedExplicit(environment)
+    guard Self.validEnvironment(safeEnvironment) else {
       throw MCPServerConfigurationError.invalidEnvironment
     }
     guard
@@ -85,7 +86,7 @@ public struct MCPServerConfiguration: Sendable {
     self.executableURL = executableURL.standardizedFileURL
     self.arguments = arguments
     self.workingDirectory = workingDirectory.standardizedFileURL
-    self.environment = environment
+    self.environment = safeEnvironment
     self.clientName = clientName
     self.clientVersion = clientVersion
     self.requestTimeoutMilliseconds = requestTimeoutMilliseconds

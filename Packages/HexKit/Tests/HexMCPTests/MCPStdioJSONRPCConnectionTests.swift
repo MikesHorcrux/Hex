@@ -322,6 +322,98 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(Self.isRetainedHardenedRegularFile(atPath: launchPath))
   }
 
+  @Test("Rejects absolute and escaping framework binary symlink targets")
+  func rejectsUnsafeFrameworkBinarySymlinkTargets() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    for (index, target) in ["/bin/sh", "../outside"].enumerated() {
+      let caseDirectory = fixtureDirectory.appendingPathComponent(
+        "case-\(index)",
+        isDirectory: true
+      )
+      try FileManager.default.createDirectory(
+        at: caseDirectory,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+      )
+      let bundle = try makeRuntimeDependencyBundle(in: caseDirectory)
+      let frameworkAlias = bundle.dependency
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("MCPFixture")
+      #expect(Darwin.unlink(frameworkAlias.path) == 0)
+      #expect(Darwin.symlink(target, frameworkAlias.path) == 0)
+      let configuration = try MCPServerConfiguration(
+        serverID: "unsafe-framework-\(index)",
+        executableURL: bundle.executable,
+        arguments: [],
+        workingDirectory: URL(fileURLWithPath: "/"),
+        environment: ["PATH": "/usr/bin:/bin"],
+        requestTimeoutMilliseconds: 2_000,
+        shutdownGraceMilliseconds: 50,
+        maximumMessageBytes: 4 * 1_024
+      )
+      let session = LocalMCPClientSession(configuration: configuration)
+
+      await #expect(throws: MCPClientSessionError.connectionClosed) {
+        try await session.connect()
+      }
+      await session.disconnect()
+    }
+  }
+
+  @Test("Rejects a framework symlink swapped to an escaping target during snapshotting")
+  func rejectsFrameworkSymlinkSwapDuringSnapshot() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let bundle = try makeRuntimeDependencyBundle(in: fixtureDirectory)
+    let frameworkAlias = bundle.dependency
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .appendingPathComponent("MCPFixture")
+    let observedSnapshotPath = Mutex<String?>(nil)
+    let swapSucceeded = Mutex(false)
+    let configuration = try MCPServerConfiguration(
+      serverID: "swapped-framework",
+      executableURL: bundle.executable,
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { configuration in
+        try MCPStdioProcessSpawner.spawn(
+          configuration,
+          afterSourceValidation: { snapshotPath in
+            observedSnapshotPath.withLock { $0 = snapshotPath }
+            let removed = Darwin.unlink(frameworkAlias.path) == 0
+            let replaced = Darwin.symlink("../outside", frameworkAlias.path) == 0
+            swapSucceeded.withLock { $0 = removed && replaced }
+          }
+        )
+      }
+    )
+    let session = LocalMCPClientSession(configuration: configuration, connection: connection)
+
+    await #expect(throws: MCPClientSessionError.connectionClosed) {
+      try await session.connect()
+    }
+    #expect(swapSucceeded.withLock { $0 })
+    let snapshotPath = try #require(observedSnapshotPath.withLock { $0 })
+    let snapshotRoot = URL(fileURLWithPath: snapshotPath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    defer { try? FileManager.default.removeItem(at: snapshotRoot) }
+    #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
+  }
+
   @Test("Builds the installed Xcode bridge closure without launching it")
   func snapshotsInstalledXcodeBridgeRuntimeClosure() throws {
     let configuration = try MCPServerConfiguration.xcode(
@@ -747,6 +839,42 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(response == .object(["reply": .string("empty-result")]))
   }
 
+  @Test("Replies to a peer ping with a fractional number ID")
+  func repliesToFractionalNumberPeerPing() async throws {
+    let program =
+      #"NR == 1 { print "{\"jsonrpc\":\"2.0\",\"id\":-1.25,\"method\":\"ping\"}"; fflush(); next } NR == 2 { status = index($0, "\"id\":-1.25") && index($0, "\"result\":{}") ? "fractional-id" : "unexpected"; print "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"reply\":\"" status "\"}}"; fflush(); }"#
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: try configuration(program: program)
+    )
+    try await connection.connect()
+    defer { Task { await connection.disconnect() } }
+
+    let response = try await connection.request(
+      method: "test/fractional-ping",
+      params: .object([:])
+    )
+
+    #expect(response == .object(["reply": .string("fractional-id")]))
+  }
+
+  @Test("Replies to a peer ping with a null ID and ignores absent IDs")
+  func repliesToNullIDAndIgnoresNotification() async throws {
+    let program =
+      #"NR == 1 { print "{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}"; print "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\"}"; fflush(); next } NR == 2 { status = index($0, "\"id\":null") && index($0, "\"result\":{}") ? "null-id" : "unexpected"; print "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"reply\":\"" status "\"}}"; fflush(); }"#
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: try configuration(program: program)
+    )
+    try await connection.connect()
+    defer { Task { await connection.disconnect() } }
+
+    let response = try await connection.request(
+      method: "test/null-ping",
+      params: .object([:])
+    )
+
+    #expect(response == .object(["reply": .string("null-id")]))
+  }
+
   @Test("Answers an unsupported server request with a negative integer ID")
   func answersUnsupportedServerRequestWithNegativeIntegerID() async throws {
     let program =
@@ -936,6 +1064,162 @@ struct MCPStdioJSONRPCConnectionTests {
     await firstShutdown.completion.value
     await closer.close(firstFixture)
     await closer.close(secondFixture)
+  }
+
+  @Test("Cancelling a queued notification only removes that generation's write")
+  func cancellingQueuedNotificationPreservesActiveWrite() async throws {
+    let fixture = try PipeProcessFixture(processID: 10_003)
+    let closer = PipeDescriptorCloser()
+    let configuration = try MCPServerConfiguration(
+      serverID: "queued-cancellation",
+      executableURL: URL(fileURLWithPath: "/bin/cat"),
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024 * 1_024
+    )
+    try Self.fillPipe(fixture.inputWriteDescriptor)
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { _ in fixture.spawnedProcess },
+      terminateProcess: { _ in await closer.close(fixture) }
+    )
+
+    try await connection.connect()
+    let generation = await connection.generation
+    let activeWrite = Task {
+      try await connection.notify(
+        method: "active",
+        params: .object(["payload": .string(String(repeating: "x", count: 1_800_000))])
+      )
+    }
+    var active = false
+    for _ in 0..<500 {
+      if await connection.activeWriterGeneration == generation,
+        await connection.writeQueue.isEmpty
+      {
+        active = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(active)
+
+    let queuedWrite = Task {
+      try await connection.notify(method: "queued", params: nil)
+    }
+    var queued = false
+    for _ in 0..<500 {
+      if await connection.writeQueue.count == 1 {
+        queued = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(queued)
+    queuedWrite.cancel()
+    await #expect(throws: CancellationError.self) {
+      try await queuedWrite.value
+    }
+    #expect(await connection.activeWriterGeneration == generation)
+    #expect(await connection.writeQueue.isEmpty)
+
+    await connection.disconnect()
+    _ = await activeWrite.result
+    await closer.close(fixture)
+  }
+
+  @Test("Times out a backpressured notification without leaving its continuation pending")
+  func timesOutBackpressuredNotification() async throws {
+    let fixture = try PipeProcessFixture(processID: 10_004)
+    let closer = PipeDescriptorCloser()
+    let configuration = try MCPServerConfiguration(
+      serverID: "write-timeout",
+      executableURL: URL(fileURLWithPath: "/bin/cat"),
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 1,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024 * 1_024
+    )
+    try Self.fillPipe(fixture.inputWriteDescriptor)
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { _ in fixture.spawnedProcess },
+      terminateProcess: { _ in await closer.close(fixture) }
+    )
+
+    try await connection.connect()
+    await #expect(throws: MCPClientSessionError.requestTimedOut) {
+      try await connection.notify(
+        method: "timeout",
+        params: .object(["payload": .string(String(repeating: "x", count: 1_800_000))])
+      )
+    }
+    if case .disconnected = await connection.state {
+      // The timed-out writer closes its generation before returning.
+    } else {
+      Issue.record("Timed-out notification left the connection active")
+    }
+    await connection.disconnect()
+    await closer.close(fixture)
+  }
+
+  @Test("Parses a bounded response burst with one buffer compaction")
+  func parsesBoundedResponseBurst() async throws {
+    let fixture = try PipeProcessFixture(processID: 10_005)
+    let closer = PipeDescriptorCloser()
+    let configuration = try MCPServerConfiguration(
+      serverID: "burst-parser",
+      executableURL: URL(fileURLWithPath: "/bin/cat"),
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 16 * 1_024
+    )
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { _ in fixture.spawnedProcess },
+      terminateProcess: { _ in await closer.close(fixture) }
+    )
+    try await connection.connect()
+    let generation = await connection.generation
+    let requestCount = 64
+    let requests = (1...requestCount).map { _ in
+      Task {
+        try await connection.request(method: "burst", params: .object([:]))
+      }
+    }
+    var allPending = false
+    for _ in 0..<500 {
+      if await connection.pendingRequests.count == requestCount {
+        allPending = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(allPending)
+
+    var burst = Data()
+    for id in 1...requestCount {
+      burst.append(
+        contentsOf: "{\"jsonrpc\":\"2.0\",\"id\":\(id),\"result\":{\"index\":\(id)}}\n".utf8
+      )
+    }
+    await connection.received(burst, from: .output, generation: generation)
+    var indexes = Set<Int64>()
+    for request in requests {
+      let response = try await request.value
+      indexes.insert(response.mcpObject?["index"]?.mcpInteger ?? -1)
+    }
+    #expect(indexes == Set((1...requestCount).map(Int64.init)))
+    await connection.disconnect()
+    await closer.close(fixture)
   }
 
   @Test("Reentrant shutdown shares completion and cannot clobber a replacement")
@@ -1226,7 +1510,29 @@ struct MCPStdioJSONRPCConnectionTests {
       withIntermediateDirectories: false,
       attributes: [.posixPermissions: 0o700]
     )
-    let dependency = dependencyFramework.appendingPathComponent("MCPFixture")
+    let versionsDirectory = dependencyFramework.appendingPathComponent(
+      "Versions",
+      isDirectory: true
+    )
+    let versionDirectory = versionsDirectory.appendingPathComponent("A", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: versionDirectory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let dependency = versionDirectory.appendingPathComponent("MCPFixture")
+    let currentVersion = versionsDirectory.appendingPathComponent("Current")
+    let frameworkBinaryAlias = dependencyFramework.appendingPathComponent("MCPFixture")
+    let versionResources = versionDirectory.appendingPathComponent(
+      "Resources",
+      isDirectory: true
+    )
+    let resourcesAlias = dependencyFramework.appendingPathComponent("Resources")
+    try FileManager.default.createDirectory(
+      at: versionResources,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
     let externalFrameworkDirectory = directory.appendingPathComponent(
       "External/MCPFixture.framework",
       isDirectory: true
@@ -1292,6 +1598,13 @@ struct MCPStdioJSONRPCConnectionTests {
         externalDependency.path,
       ]
     )
+    guard
+      Darwin.symlink("A", currentVersion.path) == 0,
+      Darwin.symlink("Versions/Current/MCPFixture", frameworkBinaryAlias.path) == 0,
+      Darwin.symlink("Versions/Current/Resources", resourcesAlias.path) == 0
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
     try runFixtureCompiler(
       arguments: [
         "--sdk", "macosx", "clang", serverSource.path,

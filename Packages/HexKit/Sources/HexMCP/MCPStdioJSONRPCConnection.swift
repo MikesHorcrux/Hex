@@ -2,6 +2,8 @@ import Foundation
 import HexCore
 
 actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
+  static let maximumQueuedWriteOperations = 64
+
   let configuration: MCPServerConfiguration
   var state = MCPConnectionState.disconnected
   var generation = UInt64(0)
@@ -12,7 +14,9 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
   var retainedErrorOutput = Data()
   var readerTasks: [Task<Void, Never>] = []
   var writeQueue: [MCPWriteOperation] = []
+  var queuedWriteByteCount = 0
   var activeWriterGeneration: UInt64?
+  var activeWriteOperations: [UInt64: MCPWriteOperation] = [:]
   var shutdown: MCPConnectionShutdown?
   let spawnProcess: @Sendable (MCPServerConfiguration) throws -> MCPSpawnedProcess
   let terminateProcess: @Sendable (MCPSpawnedProcess) async -> Void
@@ -161,12 +165,14 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
     guard case .connected = state, Self.validMethod(method) else {
       throw MCPClientSessionError.connectionClosed
     }
+    let writeGeneration = generation
     var object: [String: JSONValue] = [
       "jsonrpc": .string("2.0"),
       "method": .string(method),
     ]
     if let params { object["params"] = params }
-    try await enqueueWrite(try encodedMessage(.object(object)), generation: generation)
+    let data = try encodedMessage(.object(object))
+    try await enqueueCancellableWrite(data, generation: writeGeneration)
   }
 
   func disconnect() async {

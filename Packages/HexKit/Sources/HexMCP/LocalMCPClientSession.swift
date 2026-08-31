@@ -88,10 +88,7 @@ public actor LocalMCPClientSession: MCPClientSession {
     let supportsTaskAugmentedToolCalls =
       initialization?.protocolVersion == .november2025
       && initialization?.supportsTaskAugmentedToolCalls == true
-    let usesTaskSupportMetadata = initialization?.protocolVersion == .november2025
-    if usesTaskSupportMetadata {
-      discoveredToolTaskSupport = nil
-    }
+    discoveredToolTaskSupport = nil
 
     for _ in 0..<configuration.maximumToolPages {
       try Task.checkCancellation()
@@ -143,13 +140,11 @@ public actor LocalMCPClientSession: MCPClientSession {
     guard MCPToolCatalogBuilder.isValidToolName(call.name) else {
       throw MCPClientSessionError.protocolViolation
     }
-    if initialization?.protocolVersion == .november2025 {
-      guard
-        let taskSupport = discoveredToolTaskSupport?[call.name],
-        taskSupport != .required
-      else {
-        throw MCPClientSessionError.toolsUnavailable
-      }
+    guard
+      let taskSupport = discoveredToolTaskSupport?[call.name],
+      taskSupport != .required
+    else {
+      throw MCPClientSessionError.toolsUnavailable
     }
     guard
       MCPJSONValueValidator.isValid(

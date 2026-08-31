@@ -271,21 +271,26 @@ extension MCPExecutableSnapshot {
         else {
           throw MCPClientSessionError.connectionClosed
         }
-        if let source = try openSourceRegularFile(
+        if let source = try openRuntimeDependencyFile(
           sourcePath,
           beneath: sourceRootDescriptor,
           requireExecutable: false,
           missingIsAllowed: true
         ) {
           guard let snapshotPath, !externalPathPrecedesSnapshotPath else {
-            Darwin.close(source.descriptor)
+            Darwin.close(source.file.descriptor)
             throw MCPClientSessionError.connectionClosed
           }
+          let resolvedSnapshotPath = try mappedSnapshotPath(
+            for: source.relativePath,
+            sourceCandidate: sourcePath,
+            snapshotCandidate: snapshotPath
+          )
           return ResolvedDependency(
-            sourceRelativePath: sourcePath,
-            snapshotRelativePath: snapshotPath,
-            descriptor: source.descriptor,
-            status: source.status
+            sourceRelativePath: source.relativePath,
+            snapshotRelativePath: resolvedSnapshotPath,
+            descriptor: source.file.descriptor,
+            status: source.file.status
           )
         }
       }
@@ -321,21 +326,240 @@ extension MCPExecutableSnapshot {
     else {
       throw MCPClientSessionError.connectionClosed
     }
-    if let source = try openSourceRegularFile(
+    if let source = try openRuntimeDependencyFile(
       sourcePath,
       beneath: sourceRootDescriptor,
       requireExecutable: false,
       missingIsAllowed: true
     ) {
+      let resolvedSnapshotPath = try mappedSnapshotPath(
+        for: source.relativePath,
+        sourceCandidate: sourcePath,
+        snapshotCandidate: snapshotPath
+      )
       return ResolvedDependency(
-        sourceRelativePath: sourcePath,
-        snapshotRelativePath: snapshotPath,
-        descriptor: source.descriptor,
-        status: source.status
+        sourceRelativePath: source.relativePath,
+        snapshotRelativePath: resolvedSnapshotPath,
+        descriptor: source.file.descriptor,
+        status: source.file.status
       )
     }
     if dependency.isRequired { throw MCPClientSessionError.connectionClosed }
     return nil
+  }
+
+  private static func openRuntimeDependencyFile(
+    _ relativePath: String,
+    beneath rootDescriptor: Int32,
+    requireExecutable: Bool,
+    missingIsAllowed: Bool
+  ) throws -> (
+    relativePath: String,
+    file: (descriptor: Int32, status: stat)
+  )? {
+    guard let normalized = normalizeRelativePath(relativePath, relativeTo: ""),
+      normalized == relativePath
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    guard let packageRoot = frameworkPackagePath(containing: relativePath) else {
+      guard let file = try openSourceRegularFile(
+        relativePath,
+        beneath: rootDescriptor,
+        requireExecutable: requireExecutable,
+        missingIsAllowed: missingIsAllowed
+      ) else {
+        return nil
+      }
+      return (relativePath: relativePath, file: file)
+    }
+    guard let resolvedPath = try resolveFrameworkRelativePath(
+      relativePath,
+      packageRoot: packageRoot,
+      beneath: rootDescriptor,
+      missingIsAllowed: missingIsAllowed
+    ) else {
+      return nil
+    }
+    guard let file = try openSourceRegularFile(
+      resolvedPath,
+      beneath: rootDescriptor,
+      requireExecutable: requireExecutable,
+      missingIsAllowed: missingIsAllowed
+    ) else {
+      return nil
+    }
+    return (relativePath: resolvedPath, file: file)
+  }
+
+  private static func mappedSnapshotPath(
+    for resolvedSourcePath: String,
+    sourceCandidate: String,
+    snapshotCandidate: String
+  ) throws -> String {
+    let sourcePackagePath = frameworkPackagePath(containing: sourceCandidate)
+    let resolvedSourcePackagePath = frameworkPackagePath(containing: resolvedSourcePath)
+    let snapshotPackagePath = frameworkPackagePath(containing: snapshotCandidate)
+    if sourcePackagePath == nil,
+      resolvedSourcePackagePath == nil,
+      snapshotPackagePath == nil
+    {
+      return snapshotCandidate
+    }
+    guard let sourcePackagePath,
+      let resolvedSourcePackagePath,
+      let snapshotPackagePath,
+      resolvedSourcePackagePath == sourcePackagePath,
+      resolvedSourcePath == resolvedSourcePackagePath
+        || resolvedSourcePath.hasPrefix(resolvedSourcePackagePath + "/")
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    let sourceSuffix = resolvedSourcePath.dropFirst(resolvedSourcePackagePath.count)
+    guard
+      sourceCandidate == sourcePackagePath
+        || sourceCandidate.hasPrefix(sourcePackagePath + "/"),
+      snapshotCandidate == snapshotPackagePath
+        || snapshotCandidate.hasPrefix(snapshotPackagePath + "/"),
+      sourceSuffix.isEmpty || sourceSuffix.first == "/"
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    return snapshotPackagePath + String(sourceSuffix)
+  }
+
+  private static func resolveFrameworkRelativePath(
+    _ relativePath: String,
+    packageRoot: String,
+    beneath rootDescriptor: Int32,
+    missingIsAllowed: Bool
+  ) throws -> String? {
+    var currentPath = relativePath
+    var visited = Set<String>()
+    for _ in 0..<maximumSnapshotPathDepth {
+      guard visited.insert(currentPath).inserted else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      guard let normalized = normalizeRelativePath(currentPath, relativeTo: ""),
+        normalized == currentPath,
+        normalized == packageRoot || normalized.hasPrefix(packageRoot + "/")
+      else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      var descriptor = fcntl(rootDescriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
+      guard descriptor >= 0 else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      var pathComponents = normalized.split(separator: "/").map(String.init)
+      guard !pathComponents.isEmpty else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      var resolvedComponents: [String] = []
+      var followedSymlink = false
+      defer { Darwin.close(descriptor) }
+
+      pathTraversal: for index in pathComponents.indices {
+        let component = pathComponents[index]
+        var componentStatus = stat()
+        let statusResult = component.withCString { name in
+          fstatat(descriptor, name, &componentStatus, AT_SYMLINK_NOFOLLOW)
+        }
+        guard statusResult == 0 else {
+          let missing = errno == ENOENT || errno == ENOTDIR
+          if missingIsAllowed && missing { return nil }
+          throw MCPClientSessionError.connectionClosed
+        }
+        let componentPath = (resolvedComponents + [component]).joined(separator: "/")
+        switch componentStatus.st_mode & S_IFMT {
+        case S_IFLNK:
+          guard
+            componentStatus.st_uid == 0 || componentStatus.st_uid == geteuid(),
+            componentStatus.st_nlink == 1,
+            componentStatus.st_size > 0,
+            componentStatus.st_size <= off_t(maximumSymbolicLinkBytes)
+          else {
+            throw MCPClientSessionError.connectionClosed
+          }
+          var targetBytes = [CChar](repeating: 0, count: maximumSymbolicLinkBytes + 1)
+          let targetCount = component.withCString { name in
+            readlinkat(descriptor, name, &targetBytes, maximumSymbolicLinkBytes)
+          }
+          guard
+            targetCount > 0,
+            targetCount < maximumSymbolicLinkBytes,
+            off_t(targetCount) == componentStatus.st_size,
+            let target = String(
+              bytes: targetBytes.prefix(targetCount).map { UInt8(bitPattern: $0) },
+              encoding: .utf8
+            ),
+            !target.hasPrefix("/"),
+            let resolvedTarget = normalizeRelativePath(
+              target,
+              relativeTo: directoryPath(of: componentPath)
+            ),
+            resolvedTarget == packageRoot
+              || resolvedTarget.hasPrefix(packageRoot + "/")
+          else {
+            throw MCPClientSessionError.connectionClosed
+          }
+          var finalStatus = stat()
+          let finalStatusResult = component.withCString { name in
+            fstatat(descriptor, name, &finalStatus, AT_SYMLINK_NOFOLLOW)
+          }
+          guard
+            finalStatusResult == 0,
+            sameSourceIdentityAndMetadata(componentStatus, finalStatus)
+          else {
+            throw MCPClientSessionError.connectionClosed
+          }
+          let remaining = pathComponents.dropFirst(index + 1).joined(separator: "/")
+          currentPath = remaining.isEmpty
+            ? resolvedTarget
+            : resolvedTarget + "/" + remaining
+          followedSymlink = true
+          break pathTraversal
+        case S_IFDIR:
+          guard isAcceptableSourceDirectory(componentStatus) else {
+            throw MCPClientSessionError.connectionClosed
+          }
+          guard index < pathComponents.index(before: pathComponents.endIndex) else {
+            return currentPath
+          }
+          let nextDescriptor = component.withCString { name in
+            openat(
+              descriptor,
+              name,
+              O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+            )
+          }
+          guard nextDescriptor >= 0 else {
+            throw MCPClientSessionError.connectionClosed
+          }
+          var openedStatus = stat()
+          guard
+            fstat(nextDescriptor, &openedStatus) == 0,
+            sameSourceIdentityAndMetadata(componentStatus, openedStatus)
+          else {
+            Darwin.close(nextDescriptor)
+            throw MCPClientSessionError.connectionClosed
+          }
+          Darwin.close(descriptor)
+          descriptor = nextDescriptor
+          resolvedComponents.append(component)
+        case S_IFREG:
+          guard index == pathComponents.index(before: pathComponents.endIndex) else {
+            throw MCPClientSessionError.connectionClosed
+          }
+          return currentPath
+        default:
+          throw MCPClientSessionError.connectionClosed
+        }
+      }
+      if !followedSymlink {
+        return currentPath
+      }
+    }
+    throw MCPClientSessionError.connectionClosed
   }
 
   private static func expandedRunpaths(

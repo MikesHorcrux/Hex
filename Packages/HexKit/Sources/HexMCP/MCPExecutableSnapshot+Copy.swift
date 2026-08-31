@@ -397,6 +397,33 @@ extension MCPExecutableSnapshot {
     else {
       throw MCPClientSessionError.connectionClosed
     }
+    var finalSourceStatus = stat()
+    var finalTargetBytes = [CChar](repeating: 0, count: maximumSymbolicLinkBytes + 1)
+    let finalTargetCount = name.withCString { childName in
+      readlinkat(sourceParentDescriptor, childName, &finalTargetBytes, maximumSymbolicLinkBytes)
+    }
+    let finalSourceStatusResult = name.withCString { childName in
+      fstatat(
+        sourceParentDescriptor,
+        childName,
+        &finalSourceStatus,
+        AT_SYMLINK_NOFOLLOW
+      )
+    }
+    guard
+      finalSourceStatusResult == 0,
+      sameSourceIdentityAndMetadata(initialStatus, finalSourceStatus),
+      finalTargetCount > 0,
+      finalTargetCount < maximumSymbolicLinkBytes,
+      finalTargetCount == targetCount,
+      let finalTarget = String(
+        bytes: finalTargetBytes.prefix(finalTargetCount).map { UInt8(bitPattern: $0) },
+        encoding: .utf8
+      ),
+      finalTarget == target
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
     copyState.createdEntries.append(
       CreatedEntry(
         relativePath: destinationRelativePath, kind: .symbolicLink, status: createdStatus)

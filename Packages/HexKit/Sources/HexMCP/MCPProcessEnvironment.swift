@@ -1,27 +1,28 @@
 import Foundation
 
 public enum MCPProcessEnvironment {
+  private static let allowedNames = [
+    "DEVELOPER_DIR",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "MCP_XCODE_PID",
+    "MCP_XCODE_SESSION_ID",
+    "PATH",
+    "SHELL",
+    "TMPDIR",
+    "TOOLCHAINS",
+    "USER",
+  ]
+  private static let allowedNameSet = Set(allowedNames)
+
   public static func sanitized(
     from source: [String: String] = ProcessInfo.processInfo.environment,
     overrides: [String: String] = [:]
   ) throws -> [String: String] {
-    let allowedNames = [
-      "DEVELOPER_DIR",
-      "HOME",
-      "LANG",
-      "LC_ALL",
-      "LC_CTYPE",
-      "LOGNAME",
-      "MCP_XCODE_PID",
-      "MCP_XCODE_SESSION_ID",
-      "PATH",
-      "SHELL",
-      "TMPDIR",
-      "TOOLCHAINS",
-      "USER",
-    ]
-    let allowedSet = Set(allowedNames)
-    guard overrides.keys.allSatisfy(allowedSet.contains) else {
+    guard overrides.keys.allSatisfy(allowedNameSet.contains) else {
       throw MCPServerConfigurationError.invalidEnvironment
     }
     var result: [String: String] = [:]
@@ -34,5 +35,12 @@ public enum MCPProcessEnvironment {
       result["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
     }
     return result
+  }
+
+  static func validatedExplicit(_ values: [String: String]) throws -> [String: String] {
+    guard values.keys.allSatisfy(allowedNameSet.contains) else {
+      throw MCPServerConfigurationError.invalidEnvironment
+    }
+    return values
   }
 }

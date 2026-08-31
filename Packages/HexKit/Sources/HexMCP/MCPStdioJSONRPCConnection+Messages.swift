@@ -51,9 +51,13 @@ extension MCPStdioJSONRPCConnection {
 
   private func receiveOutput(_ data: Data) async throws {
     outputBuffer.append(data)
-    while let newline = outputBuffer.firstIndex(of: 0x0A) {
-      var line = Data(outputBuffer[..<newline])
-      outputBuffer.removeSubrange(...newline)
+    var cursor = outputBuffer.startIndex
+    var messages: [JSONValue] = []
+    while cursor < outputBuffer.endIndex,
+      let newline = outputBuffer[cursor...].firstIndex(of: 0x0A)
+    {
+      var line = Data(outputBuffer[cursor..<newline])
+      cursor = outputBuffer.index(after: newline)
       if line.last == 0x0D { line.removeLast() }
       guard !line.isEmpty else {
         throw MCPClientSessionError.protocolViolation
@@ -68,10 +72,16 @@ extension MCPStdioJSONRPCConnection {
       } catch {
         throw MCPClientSessionError.protocolViolation
       }
-      try await handleMessage(value)
+      messages.append(value)
+    }
+    if cursor != outputBuffer.startIndex {
+      outputBuffer.removeSubrange(outputBuffer.startIndex..<cursor)
     }
     guard outputBuffer.count <= configuration.maximumMessageBytes else {
       throw MCPClientSessionError.limitExceeded
+    }
+    for message in messages {
+      try await handleMessage(message)
     }
   }
 
@@ -136,7 +146,7 @@ extension MCPStdioJSONRPCConnection {
   }
 
   private func sendResult(id: JSONValue, result: JSONValue) async throws {
-    try await enqueueWrite(
+    try await enqueueCancellableWrite(
       try encodedMessage(
         .object([
           "jsonrpc": .string("2.0"),
@@ -152,7 +162,7 @@ extension MCPStdioJSONRPCConnection {
     guard method.utf8.count <= 128, !method.contains("\0") else {
       throw MCPClientSessionError.protocolViolation
     }
-    try await enqueueWrite(
+    try await enqueueCancellableWrite(
       try encodedMessage(
         .object([
           "jsonrpc": .string("2.0"),
@@ -172,7 +182,11 @@ extension MCPStdioJSONRPCConnection {
     case .integer:
       return true
     case .string(let id):
-      return !id.isEmpty && id.utf8.count <= 128 && !id.contains("\0")
+      return id.utf8.count <= 128 && !id.contains("\0")
+    case .number(let number):
+      return number.isFinite
+    case .null:
+      return true
     default:
       return false
     }

@@ -24,6 +24,19 @@ struct MCPServerConfigurationTests {
     #expect(environment["SSH_AUTH_SOCK"] == nil)
   }
 
+  @Test("Public configurations reject secret-bearing environment variables")
+  func publicConfigurationRejectsUnallowlistedEnvironment() {
+    #expect(throws: MCPServerConfigurationError.invalidEnvironment) {
+      try MCPServerConfiguration(
+        serverID: "fixture",
+        executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+        arguments: [],
+        workingDirectory: URL(fileURLWithPath: "/"),
+        environment: ["OPENAI_API_KEY": "should-never-reach-spawn"]
+      )
+    }
+  }
+
   @Test("Xcode factory resolves the local bridge without starting it")
   func createsInertXcodeConfiguration() throws {
     let sessionID = "9F3D9682-3DCA-4FE2-A9FB-7AB03A35E61B"

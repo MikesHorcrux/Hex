@@ -20,6 +20,7 @@ extension MCPStdioJSONRPCConnection {
         request.timeoutTask.cancel()
         request.continuation.resume(throwing: error)
       }
+      failActiveWrite(with: error, generation: shutdownGeneration)
       failQueuedWrites(with: error, generation: shutdownGeneration)
       let spawned = process
       process = nil
@@ -58,6 +59,14 @@ extension MCPStdioJSONRPCConnection {
     else {
       return
     }
+    failActiveWrite(
+      with: MCPClientSessionError.connectionClosed,
+      generation: generation
+    )
+    failQueuedWrites(
+      with: MCPClientSessionError.connectionClosed,
+      generation: generation
+    )
     outputBuffer = Data()
     retainedErrorOutput = Data()
     activeWriterGeneration = nil

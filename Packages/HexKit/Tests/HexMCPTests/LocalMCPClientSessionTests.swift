@@ -148,6 +148,7 @@ struct LocalMCPClientSessionTests {
     let connection = ScriptedConnection(
       responses: [
         initializationResponse(),
+        toolPage(name: "echo", nextCursor: nil),
         .object([
           "content": .array([]),
           "structuredContent": .array([.string("not an object")]),
@@ -160,6 +161,7 @@ struct LocalMCPClientSessionTests {
       connection: connection
     )
     try await session.connect()
+    _ = try await session.listTools()
 
     await #expect(throws: MCPClientSessionError.protocolViolation) {
       try await session.callTool(MCPRemoteToolCall(name: "echo", arguments: [:]))
@@ -211,6 +213,33 @@ struct LocalMCPClientSessionTests {
     try await session.connect()
 
     #expect(await session.initialization?.supportsTaskAugmentedToolCalls == true)
+    let tools = try await session.listTools()
+    #expect(tools.isEmpty)
+    await #expect(throws: MCPClientSessionError.toolsUnavailable) {
+      try await session.callTool(MCPRemoteToolCall(name: "long_job", arguments: [:]))
+    }
+    #expect(!(await connection.methods()).contains("tools/call"))
+  }
+
+  @Test(
+    "Rejects required-task calls for every negotiated protocol revision",
+    arguments: MCPProtocolVersion.allCases
+  )
+  func rejectsRequiredTaskCallsAcrossProtocolRevisions(
+    protocolVersion: MCPProtocolVersion
+  ) async throws {
+    let connection = ScriptedConnection(
+      responses: [
+        initializationResponse(protocolVersion: protocolVersion.rawValue),
+        toolPage(name: "long_job", taskSupport: "required"),
+      ]
+    )
+    let session = LocalMCPClientSession(
+      configuration: try configuration(),
+      connection: connection
+    )
+    try await session.connect()
+
     let tools = try await session.listTools()
     #expect(tools.isEmpty)
     await #expect(throws: MCPClientSessionError.toolsUnavailable) {
