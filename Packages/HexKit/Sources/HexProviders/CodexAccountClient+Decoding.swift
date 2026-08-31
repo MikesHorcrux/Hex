@@ -1,0 +1,194 @@
+import Foundation
+import HexCore
+
+extension CodexAccountClient {
+  func decodeAccountSnapshot(_ value: JSONValue) throws -> CodexAccountSnapshot {
+    guard case .object(let object) = value,
+      hasOnlyKeys(object, allowed: ["account", "requiresOpenaiAuth"]),
+      case .boolean(let requiresAuthentication)? = object["requiresOpenaiAuth"]
+    else {
+      throw CodexAccountClientError.malformedResponse
+    }
+
+    let account: CodexAccount?
+    switch object["account"] {
+    case .none, .some(.null):
+      account = nil
+    case .some(let value):
+      account = try decodeAccount(value)
+    }
+    return CodexAccountSnapshot(
+      account: account,
+      requiresOpenAIAuthentication: requiresAuthentication
+    )
+  }
+
+  func decodeAccount(_ value: JSONValue) throws -> CodexAccount {
+    guard case .object(let object) = value,
+      case .string(let type)? = object["type"]
+    else {
+      throw CodexAccountClientError.malformedResponse
+    }
+
+    switch type {
+    case "apiKey":
+      guard hasOnlyKeys(object, allowed: ["type"]) else {
+        throw CodexAccountClientError.malformedResponse
+      }
+      return .apiKey
+    case "chatgpt":
+      guard hasOnlyKeys(object, allowed: ["email", "planType", "type"]) else {
+        throw CodexAccountClientError.malformedResponse
+      }
+      let email = try decodeOptionalEmail(object["email"])
+      guard case .string(let planValue)? = object["planType"] else {
+        throw CodexAccountClientError.malformedResponse
+      }
+      return .chatGPT(email: email, plan: try CodexAccountPlan(rawValue: planValue))
+    case "amazonBedrock":
+      if Set(object.keys) == Set(["type"]) {
+        return .amazonBedrock(usesCodexManagedCredentials: false)
+      }
+      if Set(object.keys) == Set(["type", "usesCodexManagedCredentials"]),
+        case .boolean(let usesManagedCredentials)? = object["usesCodexManagedCredentials"]
+      {
+        return .amazonBedrock(usesCodexManagedCredentials: usesManagedCredentials)
+      }
+      if Set(object.keys) == Set(["credentialSource", "type"]),
+        case .string(let credentialSource)? = object["credentialSource"]
+      {
+        switch credentialSource {
+        case "codexManaged":
+          return .amazonBedrock(usesCodexManagedCredentials: true)
+        case "awsManaged":
+          return .amazonBedrock(usesCodexManagedCredentials: false)
+        default:
+          break
+        }
+      }
+      throw CodexAccountClientError.malformedResponse
+    default:
+      throw CodexAccountClientError.malformedResponse
+    }
+  }
+
+  func decodeLoginChallenge(
+    _ value: JSONValue,
+    expectedMode: CodexChatGPTLoginMode
+  ) throws -> CodexLoginChallenge {
+    guard case .object(let object) = value,
+      case .string(let type)? = object["type"],
+      case .string(let rawLoginID)? = object["loginId"]
+    else {
+      throw CodexAccountClientError.malformedResponse
+    }
+    let loginID = try CodexLoginID(rawValue: rawLoginID)
+
+    switch (expectedMode, type) {
+    case (.browser, "chatgpt"):
+      guard hasOnlyKeys(object, allowed: ["authUrl", "loginId", "type"]),
+        case .string(let rawURL)? = object["authUrl"]
+      else {
+        throw CodexAccountClientError.malformedResponse
+      }
+      return .browser(
+        loginID: loginID,
+        authorizationURL: try decodeSecureURL(rawURL)
+      )
+    case (.deviceCode, "chatgptDeviceCode"):
+      guard
+        hasOnlyKeys(
+          object,
+          allowed: ["loginId", "type", "userCode", "verificationUrl"]
+        ),
+        case .string(let userCode)? = object["userCode"],
+        !userCode.isEmpty,
+        userCode.utf8.count <= 128,
+        !userCode.unicodeScalars.contains(where: isUnsafePresentationScalar),
+        case .string(let rawURL)? = object["verificationUrl"]
+      else {
+        throw CodexAccountClientError.malformedResponse
+      }
+      return .deviceCode(
+        loginID: loginID,
+        userCode: userCode,
+        verificationURL: try decodeSecureURL(rawURL)
+      )
+    default:
+      throw CodexAccountClientError.malformedResponse
+    }
+  }
+
+  func decodeCancellationStatus(_ value: JSONValue) throws -> CodexLoginCancellationStatus {
+    guard case .object(let object) = value,
+      hasOnlyKeys(object, allowed: ["status"]),
+      case .string(let status)? = object["status"]
+    else {
+      throw CodexAccountClientError.malformedResponse
+    }
+    switch status {
+    case "canceled":
+      return .cancelled
+    case "notFound":
+      return .notFound
+    default:
+      throw CodexAccountClientError.malformedResponse
+    }
+  }
+
+  private func decodeOptionalEmail(_ value: JSONValue?) throws -> String? {
+    switch value {
+    case .some(.null):
+      return nil
+    case .some(.string(let email))
+    where !email.isEmpty && email.utf8.count <= 320
+      && !email.unicodeScalars.contains(where: isUnsafePresentationScalar):
+      return email
+    default:
+      throw CodexAccountClientError.malformedResponse
+    }
+  }
+
+  private func decodeSecureURL(_ rawValue: String) throws -> URL {
+    guard !rawValue.isEmpty,
+      rawValue.utf8.count <= 4_096,
+      !rawValue.unicodeScalars.contains(where: isUnsafePresentationScalar),
+      let components = URLComponents(string: rawValue),
+      components.scheme?.lowercased() == "https",
+      let host = components.host,
+      isAllowedAuthorizationHost(host),
+      components.port == nil || components.port == 443,
+      components.user == nil,
+      components.password == nil,
+      let url = components.url
+    else {
+      throw CodexAccountClientError.malformedResponse
+    }
+    return url
+  }
+
+  private func hasOnlyKeys(
+    _ object: [String: JSONValue],
+    allowed: Set<String>
+  ) -> Bool {
+    object.keys.allSatisfy(allowed.contains)
+  }
+
+  private func isAllowedAuthorizationHost(_ host: String) -> Bool {
+    switch host.lowercased() {
+    case "auth.openai.com", "chat.openai.com", "chatgpt.com":
+      true
+    default:
+      false
+    }
+  }
+
+  private func isUnsafePresentationScalar(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.properties.generalCategory {
+    case .control, .format, .lineSeparator, .paragraphSeparator:
+      true
+    default:
+      false
+    }
+  }
+}
