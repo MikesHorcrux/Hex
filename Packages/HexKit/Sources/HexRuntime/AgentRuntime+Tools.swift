@@ -23,28 +23,53 @@ extension AgentRuntime {
     runID: AgentRunID,
     workingDirectory: URL?,
     priorConversation: [Message],
-    priorSerializedToolResultBytes: Int
+    priorSerializedToolResultBytes: Int,
+    seenAuthorizationRequestIDs: inout Set<AuthorizationRequestID>
   ) async throws -> (
     results: [ToolResult],
     messages: [Message],
     totalSerializedToolResultBytes: Int
   ) {
+    var authorizationRequests: [AuthorizationRequest] = []
+    var executionContexts: [ToolExecutionContext] = []
+    authorizationRequests.reserveCapacity(calls.count)
+    executionContexts.reserveCapacity(calls.count)
+
+    for call in calls {
+      let context = ToolExecutionContext(runID: runID, workingDirectory: workingDirectory)
+      let request: AuthorizationRequest
+      do {
+        request = try await toolExecutor.authorizationRequest(for: call, in: context)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        if Task.isCancelled {
+          throw CancellationError()
+        }
+        throw AgentRuntimeError.authorizationFailure(
+          "The tool could not describe its authorization requirements."
+        )
+      }
+      try Task.checkCancellation()
+      guard
+        request.runID == runID,
+        request.toolCallID == call.id,
+        seenAuthorizationRequestIDs.insert(request.id).inserted
+      else {
+        throw AgentRuntimeError.authorizationFailure(
+          "The tool returned an invalid authorization correlation."
+        )
+      }
+      try await append(.authorizationRequested(request), to: runID)
+      authorizationRequests.append(request)
+      executionContexts.append(context)
+    }
+
     var decisions: [AuthorizationDecision] = []
     decisions.reserveCapacity(calls.count)
     var reservedDeniedResultBytes = priorSerializedToolResultBytes
 
-    for call in calls {
-      let request = AuthorizationRequest(
-        runID: runID,
-        toolCallID: call.id,
-        capability: CapabilityID(rawValue: "tool.\(call.name)"),
-        operation: "execute",
-        details: [:],
-        explanation: "Authorize execution of the requested tool."
-      )
-      try await append(.authorizationRequested(request), to: runID)
-      try Task.checkCancellation()
-
+    for (call, request) in zip(calls, authorizationRequests) {
       let decision: AuthorizationDecision
       do {
         decision = try await authorizationProvider.authorize(request)
@@ -80,7 +105,10 @@ extension AgentRuntime {
     results.reserveCapacity(calls.count)
     messages.reserveCapacity(calls.count)
 
-    for (call, decision) in zip(calls, decisions) {
+    for index in calls.indices {
+      let call = calls[index]
+      let decision = decisions[index]
+      let context = executionContexts[index]
       let result: ToolResult
       switch decision {
       case .allow:
@@ -88,10 +116,7 @@ extension AgentRuntime {
         runsWithStartedTools.insert(runID)
         try Task.checkCancellation()
         do {
-          result = try await toolExecutor.execute(
-            call,
-            in: ToolExecutionContext(runID: runID, workingDirectory: workingDirectory)
-          )
+          result = try await toolExecutor.execute(call, in: context)
         } catch is CancellationError {
           throw CancellationError()
         } catch {

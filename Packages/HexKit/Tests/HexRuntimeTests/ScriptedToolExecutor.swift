@@ -4,6 +4,9 @@ actor ScriptedToolExecutor: ToolExecutor {
   private let tools: [ToolDefinition]
   private let discoveryFails: Bool
   private var behaviors: [ToolExecutorBehavior]
+  private var authorizationBehaviors: [ToolAuthorizationBehavior]
+  private var capturedAuthorizationCalls: [ToolCall] = []
+  private var capturedAuthorizationContexts: [ToolExecutionContext] = []
   private var capturedCalls: [ToolCall] = []
   private var capturedContexts: [ToolExecutionContext] = []
   private var capturedDiscoveryCount = 0
@@ -11,10 +14,12 @@ actor ScriptedToolExecutor: ToolExecutor {
   init(
     tools: [ToolDefinition],
     behaviors: [ToolExecutorBehavior] = [],
+    authorizationBehaviors: [ToolAuthorizationBehavior] = [],
     discoveryFails: Bool = false
   ) {
     self.tools = tools
     self.behaviors = behaviors
+    self.authorizationBehaviors = authorizationBehaviors
     self.discoveryFails = discoveryFails
   }
 
@@ -24,6 +29,42 @@ actor ScriptedToolExecutor: ToolExecutor {
       throw ScriptedToolExecutorError.discovery
     }
     return tools
+  }
+
+  func authorizationRequest(
+    for call: ToolCall,
+    in context: ToolExecutionContext
+  ) async throws -> AuthorizationRequest {
+    capturedAuthorizationCalls.append(call)
+    capturedAuthorizationContexts.append(context)
+    let behavior =
+      authorizationBehaviors.isEmpty
+      ? .defaultDescription
+      : authorizationBehaviors.removeFirst()
+
+    switch behavior {
+    case .defaultDescription:
+      return AuthorizationRequest(
+        runID: context.runID,
+        toolCallID: call.id,
+        capability: CapabilityID(rawValue: "tool.\(call.name)"),
+        operation: "execute",
+        explanation: "Authorize execution of the requested tool."
+      )
+    case .request(let request):
+      return request
+    case .throwing:
+      throw ScriptedToolExecutorError.authorizationDescription
+    case .suspend:
+      try await Task.sleep(for: .seconds(60))
+      return AuthorizationRequest(
+        runID: context.runID,
+        toolCallID: call.id,
+        capability: CapabilityID(rawValue: "tool.\(call.name)"),
+        operation: "execute",
+        explanation: "Authorize execution of the requested tool."
+      )
+    }
   }
 
   func execute(
@@ -60,6 +101,14 @@ actor ScriptedToolExecutor: ToolExecutor {
 
   func calls() -> [ToolCall] {
     capturedCalls
+  }
+
+  func authorizationCalls() -> [ToolCall] {
+    capturedAuthorizationCalls
+  }
+
+  func authorizationContexts() -> [ToolExecutionContext] {
+    capturedAuthorizationContexts
   }
 
   func contexts() -> [ToolExecutionContext] {

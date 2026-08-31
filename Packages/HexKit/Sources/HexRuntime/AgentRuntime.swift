@@ -33,6 +33,23 @@ public actor AgentRuntime {
       runsWithStartedTools.remove(request.runID)
     }
 
+    do {
+      let result = try await performRun(request)
+      await authorizationProvider.endRun(request.runID)
+      return result
+    } catch is CancellationError {
+      await authorizationProvider.endRun(request.runID)
+      throw CancellationError()
+    } catch let error as AgentRuntimeError {
+      await authorizationProvider.endRun(request.runID)
+      throw error
+    } catch {
+      await authorizationProvider.endRun(request.runID)
+      throw AgentRuntimeError.invalidState("The runtime encountered an unexpected failure.")
+    }
+  }
+
+  private func performRun(_ request: AgentRunRequest) async throws -> AgentRunResult {
     var didStart = false
     do {
       try configuration.budget.validate()

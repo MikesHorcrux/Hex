@@ -11,6 +11,7 @@ extension AgentRuntime {
     var conversation = request.initialMessages
     var turns: [InferenceTurn] = []
     var seenToolCallIDs = try initialToolCallIDs(in: conversation)
+    var seenAuthorizationRequestIDs = Set<AuthorizationRequestID>()
     var totalToolCalls = 0
     var totalToolResultBytes = 0
     var totalReportedTokens: UInt64 = 0
@@ -38,6 +39,7 @@ extension AgentRuntime {
       let inferenceRequest = InferenceRequest(
         providerID: inferenceProvider.descriptor.id,
         modelID: request.modelID,
+        previousProviderResponseID: turns.last?.providerResponseID,
         messages: conversation,
         tools: tools,
         toolChoice: effectiveToolChoice,
@@ -151,7 +153,8 @@ extension AgentRuntime {
           runID: request.runID,
           workingDirectory: request.workingDirectory,
           priorConversation: conversation,
-          priorSerializedToolResultBytes: totalToolResultBytes
+          priorSerializedToolResultBytes: totalToolResultBytes,
+          seenAuthorizationRequestIDs: &seenAuthorizationRequestIDs
         )
         totalToolResultBytes = toolOutput.totalSerializedToolResultBytes
         conversation.append(contentsOf: toolOutput.messages)

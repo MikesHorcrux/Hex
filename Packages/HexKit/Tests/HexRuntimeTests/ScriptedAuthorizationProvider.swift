@@ -3,6 +3,7 @@ import HexCore
 actor ScriptedAuthorizationProvider: AuthorizationProvider {
   private var mode: AuthorizationProviderMode
   private var capturedRequests: [AuthorizationRequest] = []
+  private var endedRuns: [AgentRunID] = []
 
   init(mode: AuthorizationProviderMode = .decisions([])) {
     self.mode = mode
@@ -25,5 +26,13 @@ actor ScriptedAuthorizationProvider: AuthorizationProvider {
 
   func requests() -> [AuthorizationRequest] {
     capturedRequests
+  }
+
+  func endRun(_ runID: AgentRunID) async {
+    endedRuns.append(runID)
+  }
+
+  func endedRunIDs() -> [AgentRunID] {
+    endedRuns
   }
 }
