@@ -18,6 +18,7 @@ final class MCPExecutableSnapshot: Sendable {
   private let directoryStatus: stat
   private let executableDescriptor: Int32
   private let entries: [SnapshotEntry]
+  private let cleanupAuditHooks: CleanupAuditHooks?
 
   private init(
     executablePath: String,
@@ -27,7 +28,8 @@ final class MCPExecutableSnapshot: Sendable {
     directoryDescriptor: Int32,
     directoryStatus: stat,
     executableDescriptor: Int32,
-    entries: [SnapshotEntry]
+    entries: [SnapshotEntry],
+    cleanupAuditHooks: CleanupAuditHooks?
   ) {
     self.executablePath = executablePath
     self.status = status
@@ -37,15 +39,21 @@ final class MCPExecutableSnapshot: Sendable {
     self.directoryStatus = directoryStatus
     self.executableDescriptor = executableDescriptor
     self.entries = entries
+    self.cleanupAuditHooks = cleanupAuditHooks
   }
 
   deinit {
     Darwin.close(executableDescriptor)
-    Self.removeCreatedEntries(entries.map(\.created), from: directoryDescriptor)
+    Self.removeCreatedEntries(
+      entries.map(\.created),
+      from: directoryDescriptor,
+      auditHooks: cleanupAuditHooks
+    )
     Self.removePrivateDirectory(
       parentDescriptor: parentDescriptor,
       basename: directoryBasename,
-      directoryStatus: directoryStatus
+      directoryStatus: directoryStatus,
+      auditHooks: cleanupAuditHooks
     )
     Darwin.close(directoryDescriptor)
     Darwin.close(parentDescriptor)
@@ -55,7 +63,8 @@ final class MCPExecutableSnapshot: Sendable {
     from sourceDescriptor: Int32,
     initialStatus: stat,
     sourcePath: String? = nil,
-    afterSourceValidation: (@Sendable (_ snapshotPath: String) -> Void)?
+    afterSourceValidation: (@Sendable (_ snapshotPath: String) -> Void)?,
+    cleanupAuditHooks: CleanupAuditHooks? = nil
   ) throws -> MCPExecutableSnapshot {
     guard isAcceptableSource(initialStatus) else {
       throw MCPClientSessionError.connectionClosed
@@ -68,11 +77,16 @@ final class MCPExecutableSnapshot: Sendable {
     defer {
       if !completed {
         if executableDescriptor >= 0 { Darwin.close(executableDescriptor) }
-        removeCreatedEntries(copyState.createdEntries, from: privateDirectory.descriptor)
+        removeCreatedEntries(
+          copyState.createdEntries,
+          from: privateDirectory.descriptor,
+          auditHooks: cleanupAuditHooks
+        )
         removePrivateDirectory(
           parentDescriptor: privateDirectory.parentDescriptor,
           basename: privateDirectory.basename,
-          directoryStatus: privateDirectory.initialStatus
+          directoryStatus: privateDirectory.initialStatus,
+          auditHooks: cleanupAuditHooks
         )
         Darwin.close(privateDirectory.descriptor)
         Darwin.close(privateDirectory.parentDescriptor)
@@ -132,7 +146,8 @@ final class MCPExecutableSnapshot: Sendable {
       directoryDescriptor: privateDirectory.descriptor,
       directoryStatus: finalDirectoryStatus,
       executableDescriptor: executableDescriptor,
-      entries: snapshotEntries
+      entries: snapshotEntries,
+      cleanupAuditHooks: cleanupAuditHooks
     )
   }
 
@@ -250,5 +265,34 @@ final class MCPExecutableSnapshot: Sendable {
   struct SnapshotEntry: Sendable {
     let created: CreatedEntry
     let status: stat
+  }
+
+  struct CleanupAuditHooks: Sendable {
+    let afterEntryIdentityValidation:
+      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
+    let afterRootIdentityValidation:
+      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
+    let afterQuarantinedEntryIdentityValidation:
+      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
+    let afterQuarantinedRootIdentityValidation:
+      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
+
+    init(
+      afterEntryIdentityValidation:
+        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil,
+      afterRootIdentityValidation:
+        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil,
+      afterQuarantinedEntryIdentityValidation:
+        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil,
+      afterQuarantinedRootIdentityValidation:
+        (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)? = nil
+    ) {
+      self.afterEntryIdentityValidation = afterEntryIdentityValidation
+      self.afterRootIdentityValidation = afterRootIdentityValidation
+      self.afterQuarantinedEntryIdentityValidation =
+        afterQuarantinedEntryIdentityValidation
+      self.afterQuarantinedRootIdentityValidation =
+        afterQuarantinedRootIdentityValidation
+    }
   }
 }

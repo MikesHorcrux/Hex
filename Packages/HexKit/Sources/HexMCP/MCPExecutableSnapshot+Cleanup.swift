@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 
 extension MCPExecutableSnapshot {
   static func captureSnapshotEntries(
@@ -64,7 +65,8 @@ extension MCPExecutableSnapshot {
 
   static func removeCreatedEntries(
     _ entries: [CreatedEntry],
-    from rootDescriptor: Int32
+    from rootDescriptor: Int32,
+    auditHooks: CleanupAuditHooks? = nil
   ) {
     let ordered = entries.sorted { lhs, rhs in
       let lhsDepth = lhs.relativePath.split(separator: "/").count
@@ -98,9 +100,17 @@ extension MCPExecutableSnapshot {
         Darwin.close(parent)
         continue
       }
-      _ = basename.withCString { name in
-        unlinkat(parent, name, entry.kind == .directory ? AT_REMOVEDIR : 0)
-      }
+      auditHooks?.afterEntryIdentityValidation?(parent, basename)
+      quarantineAndRemove(
+        parentDescriptor: parent,
+        basename: basename,
+        removalFlags: entry.kind == .directory ? AT_REMOVEDIR : 0,
+        identityMatches: {
+          sameCreatedEntryIdentity(entry.status, $0, kind: entry.kind)
+        },
+        afterQuarantinedIdentityValidation:
+          auditHooks?.afterQuarantinedEntryIdentityValidation
+      )
       Darwin.close(parent)
     }
   }
@@ -108,7 +118,8 @@ extension MCPExecutableSnapshot {
   static func removePrivateDirectory(
     parentDescriptor: Int32,
     basename: String,
-    directoryStatus: stat
+    directoryStatus: stat,
+    auditHooks: CleanupAuditHooks? = nil
   ) {
     var namedStatus = stat()
     let statusResult = basename.withCString { name in
@@ -120,8 +131,100 @@ extension MCPExecutableSnapshot {
     else {
       return
     }
-    _ = basename.withCString { name in
-      unlinkat(parentDescriptor, name, AT_REMOVEDIR)
+    auditHooks?.afterRootIdentityValidation?(parentDescriptor, basename)
+    quarantineAndRemove(
+      parentDescriptor: parentDescriptor,
+      basename: basename,
+      removalFlags: AT_REMOVEDIR,
+      identityMatches: { sameDirectoryIdentity(directoryStatus, $0) },
+      afterQuarantinedIdentityValidation:
+        auditHooks?.afterQuarantinedRootIdentityValidation
+    )
+  }
+
+  private static func quarantineAndRemove(
+    parentDescriptor: Int32,
+    basename: String,
+    removalFlags: Int32,
+    identityMatches: (stat) -> Bool,
+    afterQuarantinedIdentityValidation:
+      (@Sendable (_ parentDescriptor: Int32, _ basename: String) -> Void)?
+  ) {
+    var quarantineBasename: String?
+    for _ in 0..<8 {
+      let candidate = ".hex-mcp-cleanup.\(UUID().uuidString)"
+      let result = candidate.withCString { quarantineName in
+        basename.withCString { name in
+          renameatx_np(
+            parentDescriptor,
+            name,
+            parentDescriptor,
+            quarantineName,
+            UInt32(RENAME_EXCL)
+          )
+        }
+      }
+      if result == 0 {
+        quarantineBasename = candidate
+        break
+      }
+      if errno != EEXIST { return }
+    }
+    guard let quarantineBasename else { return }
+
+    var quarantinedStatus = stat()
+    let statusResult = quarantineBasename.withCString { name in
+      fstatat(parentDescriptor, name, &quarantinedStatus, AT_SYMLINK_NOFOLLOW)
+    }
+    guard statusResult == 0, identityMatches(quarantinedStatus) else {
+      restoreQuarantinedEntry(
+        parentDescriptor: parentDescriptor,
+        quarantineBasename: quarantineBasename,
+        originalBasename: basename
+      )
+      return
+    }
+
+    if let afterQuarantinedIdentityValidation {
+      afterQuarantinedIdentityValidation(parentDescriptor, quarantineBasename)
+      // Darwin exposes no compare-and-unlink operation. Once adversarial audit code has
+      // run in the final name-based window, retain whichever object occupies the
+      // quarantine name instead of risking deletion of an unrelated replacement.
+      restoreQuarantinedEntry(
+        parentDescriptor: parentDescriptor,
+        quarantineBasename: quarantineBasename,
+        originalBasename: basename
+      )
+      return
+    }
+
+    let removalResult = quarantineBasename.withCString { name in
+      unlinkat(parentDescriptor, name, removalFlags)
+    }
+    if removalResult != 0 {
+      restoreQuarantinedEntry(
+        parentDescriptor: parentDescriptor,
+        quarantineBasename: quarantineBasename,
+        originalBasename: basename
+      )
+    }
+  }
+
+  private static func restoreQuarantinedEntry(
+    parentDescriptor: Int32,
+    quarantineBasename: String,
+    originalBasename: String
+  ) {
+    _ = originalBasename.withCString { originalName in
+      quarantineBasename.withCString { quarantineName in
+        renameatx_np(
+          parentDescriptor,
+          quarantineName,
+          parentDescriptor,
+          originalName,
+          UInt32(RENAME_EXCL)
+        )
+      }
     }
   }
 }
