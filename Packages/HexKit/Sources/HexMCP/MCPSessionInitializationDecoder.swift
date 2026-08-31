@@ -24,11 +24,41 @@ enum MCPSessionInitializationDecoder {
       }
       throw MCPClientSessionError.protocolViolation
     }
+    let supportsTaskAugmentedToolCalls = try supportsTaskAugmentedToolCalls(
+      capabilities: capabilities,
+      protocolVersion: version
+    )
     return MCPSessionInitialization(
       protocolVersion: version,
       serverName: serverName,
-      serverVersion: serverVersion
+      serverVersion: serverVersion,
+      supportsTaskAugmentedToolCalls: supportsTaskAugmentedToolCalls
     )
+  }
+
+  private static func supportsTaskAugmentedToolCalls(
+    capabilities: [String: JSONValue],
+    protocolVersion: MCPProtocolVersion
+  ) throws -> Bool {
+    guard protocolVersion == .november2025, let encodedTasks = capabilities["tasks"] else {
+      return false
+    }
+    guard let tasks = encodedTasks.mcpObject else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    guard let encodedRequests = tasks["requests"] else { return false }
+    guard let requests = encodedRequests.mcpObject else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    guard let encodedTools = requests["tools"] else { return false }
+    guard let tools = encodedTools.mcpObject else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    guard let encodedCall = tools["call"] else { return false }
+    guard encodedCall.mcpObject != nil else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    return true
   }
 
   private static func validIdentity(_ value: String) -> Bool {

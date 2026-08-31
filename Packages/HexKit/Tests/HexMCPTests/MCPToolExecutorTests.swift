@@ -121,6 +121,38 @@ struct MCPToolExecutorTests {
     await executor.stop()
   }
 
+  @Test("Omits required-task routes even when a custom session returns them")
+  func omitsRequiredTaskRoutesFromCustomSessions() async throws {
+    let session = FakeSession(
+      serverID: "fixture",
+      tools: [
+        MCPRemoteTool(
+          name: "long_job",
+          inputSchema: ["type": .string("object")],
+          taskSupport: .required,
+          supportsTaskAugmentedToolCalls: true
+        ),
+        MCPRemoteTool(
+          name: "ordinary_job",
+          inputSchema: ["type": .string("object")]
+        ),
+      ],
+      result: MCPRemoteToolResult(content: [.text("ordinary")], isError: false)
+    )
+    let executor = try MCPToolExecutor(sessions: [session])
+    try await executor.start()
+
+    #expect(try await executor.availableTools().map(\.name) == ["mcp.fixture.ordinary_job"])
+    await #expect(throws: MCPToolExecutorError.unknownTool) {
+      try await executor.execute(
+        ToolCall(name: "mcp.fixture.long_job", arguments: [:]),
+        in: ToolExecutionContext(runID: AgentRunID())
+      )
+    }
+    #expect(await session.receivedCalls().isEmpty)
+    await executor.stop()
+  }
+
   @Test("Rolls back connected sessions when a later startup step fails")
   func rollsBackFailedStartup() async throws {
     let first = LifecycleSession(serverID: "a", shouldFailConnect: false)

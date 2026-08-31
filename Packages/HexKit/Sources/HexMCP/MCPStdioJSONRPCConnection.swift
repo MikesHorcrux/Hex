@@ -13,13 +13,34 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
   var readerTasks: [Task<Void, Never>] = []
   var writeQueue: [MCPWriteOperation] = []
   var activeWriterGeneration: UInt64?
+  var shutdown: MCPConnectionShutdown?
+  let terminateProcess: @Sendable (MCPSpawnedProcess) async -> Void
 
   init(configuration: MCPServerConfiguration) {
     self.configuration = configuration
+    let shutdownGraceMilliseconds = configuration.shutdownGraceMilliseconds
+    self.terminateProcess = { spawned in
+      await MCPStdioJSONRPCConnection.terminate(
+        spawned,
+        shutdownGraceMilliseconds: shutdownGraceMilliseconds
+      )
+    }
+  }
+
+  init(
+    configuration: MCPServerConfiguration,
+    terminateProcess: @escaping @Sendable (MCPSpawnedProcess) async -> Void
+  ) {
+    self.configuration = configuration
+    self.terminateProcess = terminateProcess
   }
 
   func connect() async throws {
     try Task.checkCancellation()
+    if let shutdown {
+      await shutdown.completion.value
+      try Task.checkCancellation()
+    }
     guard case .disconnected = state else {
       throw MCPClientSessionError.alreadyConnected
     }
@@ -117,10 +138,7 @@ actor MCPStdioJSONRPCConnection: MCPJSONRPCConnection {
   }
 
   func disconnect() async {
-    guard case .disconnected = state else {
-      await closeConnection(error: MCPClientSessionError.connectionClosed)
-      return
-    }
+    await closeConnection(error: MCPClientSessionError.connectionClosed)
   }
 
   func encodedMessage(_ value: JSONValue) throws -> Data {

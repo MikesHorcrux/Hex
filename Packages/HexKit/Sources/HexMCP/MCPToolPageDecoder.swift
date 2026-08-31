@@ -4,7 +4,8 @@ import HexCore
 enum MCPToolPageDecoder {
   static func decode(
     _ value: JSONValue,
-    remainingToolCapacity: Int
+    remainingToolCapacity: Int,
+    supportsTaskAugmentedToolCalls: Bool
   ) throws -> MCPToolPage {
     guard
       let object = value.mcpObject,
@@ -30,11 +31,19 @@ enum MCPToolPageDecoder {
       nextCursor = nil
     }
 
-    let tools = try encodedTools.map(decodeTool)
+    let tools = try encodedTools.map { encodedTool in
+      try decodeTool(
+        encodedTool,
+        supportsTaskAugmentedToolCalls: supportsTaskAugmentedToolCalls
+      )
+    }
     return MCPToolPage(tools: tools, nextCursor: nextCursor)
   }
 
-  private static func decodeTool(_ value: JSONValue) throws -> MCPRemoteTool {
+  private static func decodeTool(
+    _ value: JSONValue,
+    supportsTaskAugmentedToolCalls: Bool
+  ) throws -> MCPRemoteTool {
     guard
       let object = value.mcpObject,
       let name = object["name"]?.mcpString,
@@ -65,6 +74,30 @@ enum MCPToolPageDecoder {
     } else {
       description = nil
     }
-    return MCPRemoteTool(name: name, description: description, inputSchema: schema)
+    let taskSupport = try decodeTaskSupport(from: object)
+    return MCPRemoteTool(
+      name: name,
+      description: description,
+      inputSchema: schema,
+      taskSupport: taskSupport,
+      supportsTaskAugmentedToolCalls: supportsTaskAugmentedToolCalls
+    )
+  }
+
+  private static func decodeTaskSupport(
+    from object: [String: JSONValue]
+  ) throws -> MCPToolTaskSupport {
+    guard let encodedExecution = object["execution"] else { return .forbidden }
+    guard let execution = encodedExecution.mcpObject else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    guard let encodedTaskSupport = execution["taskSupport"] else { return .forbidden }
+    guard
+      let rawTaskSupport = encodedTaskSupport.mcpString,
+      let taskSupport = MCPToolTaskSupport(rawValue: rawTaskSupport)
+    else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    return taskSupport
   }
 }

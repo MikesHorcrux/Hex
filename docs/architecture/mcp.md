@@ -3,10 +3,12 @@
 `HexMCP` is a protocol adapter, not an agent runtime or an agent SDK. The Hex runtime still owns the
 model loop, tool authorization, execution ordering, journaling, and cancellation policy.
 
-The first transport is local stdio JSON-RPC for tools such as Xcode's `mcpbridge`. It supports
-the initialize/initialized handshake and tool discovery/calls for protocol revisions from
-`2024-11-05` through `2025-11-25`. A future stateless MCP revision should be added as a separate
-negotiation path instead of silently changing the local legacy handshake.
+The first transport is local stdio JSON-RPC for tools such as Xcode's `mcpbridge`. It supports the
+initialize/initialized handshake, peer ping replies, and discovery/calls for ordinary non-task tools
+for protocol revisions from `2024-11-05` through `2025-11-25`. The client does not implement the
+experimental task lifecycle in `2025-11-25`; tools that require negotiated task augmentation are not
+published and cannot be called directly. A future stateless MCP revision should be added as a
+separate negotiation path instead of silently changing the local legacy handshake.
 
 ## Boundary rules
 

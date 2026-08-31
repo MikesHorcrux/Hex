@@ -95,7 +95,11 @@ extension MCPStdioJSONRPCConnection {
         guard validServerRequestID(requestID) else {
           throw MCPClientSessionError.protocolViolation
         }
-        try await sendMethodNotFound(id: requestID, method: method)
+        if method == "ping" {
+          try await sendResult(id: requestID, result: .object([:]))
+        } else {
+          try await sendMethodNotFound(id: requestID, method: method)
+        }
       }
       return
     }
@@ -129,6 +133,19 @@ extension MCPStdioJSONRPCConnection {
       throw MCPClientSessionError.protocolViolation
     }
     pending.continuation.resume(throwing: MCPClientSessionError.remoteError(code: code))
+  }
+
+  private func sendResult(id: JSONValue, result: JSONValue) async throws {
+    try await enqueueWrite(
+      try encodedMessage(
+        .object([
+          "jsonrpc": .string("2.0"),
+          "id": id,
+          "result": result,
+        ])
+      ),
+      generation: generation
+    )
   }
 
   private func sendMethodNotFound(id: JSONValue, method: String) async throws {

@@ -4,7 +4,15 @@ import Foundation
 
 extension MCPStdioJSONRPCConnection {
   func closeConnection(error: any Error) async {
+    guard let shutdown = beginShutdown(error: error) else { return }
+    await shutdown.completion.value
+  }
+
+  func beginShutdown(error: any Error) -> MCPConnectionShutdown? {
+    if let shutdown { return shutdown }
     guard case .disconnected = state else {
+      let shutdownID = UUID()
+      let shutdownGeneration = generation
       state = .closing
       let pending = pendingRequests
       pendingRequests = [:]
@@ -20,25 +28,54 @@ extension MCPStdioJSONRPCConnection {
       for task in tasks {
         task.cancel()
       }
-      if let spawned {
-        await terminate(spawned)
+      let terminateProcess = self.terminateProcess
+      let completion = Task { [weak self] in
+        if let spawned {
+          await terminateProcess(spawned)
+        }
+        await self?.finishShutdown(
+          id: shutdownID,
+          generation: shutdownGeneration
+        )
       }
-      outputBuffer = Data()
-      retainedErrorOutput = Data()
-      activeWriterGeneration = nil
-      state = .disconnected
-      return
+      let createdShutdown = MCPConnectionShutdown(
+        id: shutdownID,
+        generation: shutdownGeneration,
+        completion: completion
+      )
+      shutdown = createdShutdown
+      return createdShutdown
     }
+    return nil
   }
 
-  private func terminate(_ spawned: MCPSpawnedProcess) async {
+  func finishShutdown(id: UUID, generation: UInt64) {
+    guard
+      self.generation == generation,
+      shutdown?.id == id,
+      shutdown?.generation == generation,
+      case .closing = state
+    else {
+      return
+    }
+    outputBuffer = Data()
+    retainedErrorOutput = Data()
+    activeWriterGeneration = nil
+    state = .disconnected
+    shutdown = nil
+  }
+
+  static func terminate(
+    _ spawned: MCPSpawnedProcess,
+    shutdownGraceMilliseconds: UInt64
+  ) async {
     Darwin.close(spawned.inputDescriptor)
     if Darwin.kill(-spawned.processID, SIGTERM) != 0 {
       _ = Darwin.kill(spawned.processID, SIGTERM)
     }
     var reaped = false
     let start = DispatchTime.now().uptimeNanoseconds
-    let graceNanoseconds = configuration.shutdownGraceMilliseconds * 1_000_000
+    let graceNanoseconds = shutdownGraceMilliseconds * 1_000_000
     let (deadline, overflowed) = start.addingReportingOverflow(graceNanoseconds)
 
     if !overflowed {

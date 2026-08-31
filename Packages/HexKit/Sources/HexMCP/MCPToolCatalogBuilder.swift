@@ -18,6 +18,7 @@ enum MCPToolCatalogBuilder {
         guard remoteNames.insert(tool.name).inserted else {
           throw MCPToolExecutorError.duplicateTool
         }
+        guard !tool.requiresTaskExecution else { continue }
         let exposedName = "mcp.\(session.serverID).\(tool.name)"
         let description = tool.description?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedDescription =
