@@ -5,7 +5,7 @@ struct WorkspaceRelativePath: Equatable, Sendable {
     guard
       !rawValue.isEmpty,
       rawValue.utf8.count <= 4_096,
-      !rawValue.contains("\0"),
+      WorkspacePathScalarPolicy.isPromptSafe(rawValue),
       !rawValue.hasPrefix("/")
     else {
       throw WorkspaceFileSystemError.invalidPath
@@ -22,6 +22,7 @@ struct WorkspaceRelativePath: Equatable, Sendable {
           && component != "."
           && component != ".."
           && component.utf8.count <= 255
+          && WorkspacePathScalarPolicy.isPromptSafe(String(component))
       })
     else {
       throw WorkspaceFileSystemError.invalidPath

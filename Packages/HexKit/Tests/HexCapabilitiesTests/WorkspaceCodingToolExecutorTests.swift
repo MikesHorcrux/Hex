@@ -86,6 +86,73 @@ struct WorkspaceCodingToolExecutorTests {
   }
 
   @Test
+  func rejectsSymlinkedWorkingDirectoryBeforeAndAfterRetarget() async throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.container) }
+    let directoryA = fixture.root.appending(path: "A", directoryHint: .isDirectory)
+    let directoryB = fixture.root.appending(path: "B", directoryHint: .isDirectory)
+    let workingDirectory = fixture.root.appending(path: "current", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directoryA, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: directoryB, withIntermediateDirectories: false)
+    try FileManager.default.createSymbolicLink(at: workingDirectory, withDestinationURL: directoryA)
+    let executor = try WorkspaceCodingToolExecutor(
+      fileSystem: WorkspaceFileSystem(root: fixture.root)
+    )
+    let context = ToolExecutionContext(runID: AgentRunID(), workingDirectory: workingDirectory)
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "symlink-working-directory"),
+      name: "workspace_write_text_file",
+      arguments: [
+        "path": .string("New.swift"),
+        "content": .string("agent bytes"),
+      ]
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.invalidWorkingDirectory) {
+      _ = try await executor.authorizationRequest(for: call, in: context)
+    }
+    try FileManager.default.removeItem(at: workingDirectory)
+    try FileManager.default.createSymbolicLink(at: workingDirectory, withDestinationURL: directoryB)
+    let result = try await executor.execute(call, in: context)
+
+    #expect(result.status == .failure)
+    #expect(result.output == .object(["error": .string("invalid_working_directory")]))
+    #expect(!FileManager.default.fileExists(atPath: directoryA.appending(path: "New.swift").path))
+    #expect(!FileManager.default.fileExists(atPath: directoryB.appending(path: "New.swift").path))
+  }
+
+  @Test
+  func rejectsPromptUnsafePathScalarsBeforeAuthorization() async throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.container) }
+    let executor = try WorkspaceCodingToolExecutor(
+      fileSystem: WorkspaceFileSystem(root: fixture.root)
+    )
+    let context = ToolExecutionContext(runID: AgentRunID(), workingDirectory: fixture.root)
+    let unsafePaths = [
+      "line\nfeed.swift",
+      "escape-\u{001B}.swift",
+      "override-\u{202E}.swift",
+      "isolate-\u{2066}.swift",
+      "pop-isolate-\u{2069}.swift",
+      "mark-\u{200E}.swift",
+      "right-mark-\u{200F}.swift",
+      "arabic-mark-\u{061C}.swift",
+    ]
+
+    for (index, path) in unsafePaths.enumerated() {
+      let call = ToolCall(
+        id: ToolCallID(rawValue: "unsafe-path-\(index)"),
+        name: "workspace_read_text_file",
+        arguments: ["path": .string(path)]
+      )
+      await #expect(throws: WorkspaceFileSystemError.invalidPath) {
+        _ = try await executor.authorizationRequest(for: call, in: context)
+      }
+    }
+  }
+
+  @Test
   func executesReadSearchCreateAndRevisionGuardedReplace() async throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.container) }

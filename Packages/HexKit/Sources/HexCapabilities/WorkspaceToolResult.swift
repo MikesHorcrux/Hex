@@ -21,22 +21,24 @@ enum WorkspaceToolResult {
     _ entries: [WorkspaceDirectoryEntry],
     callID: ToolCallID
   ) -> ToolResult {
-    let values = entries.map { entry in
-      var value: [String: JSONValue] = [
-        "path": .string(entry.path),
-        "name": .string(entry.name),
-        "kind": .string(entry.kind.rawValue),
-      ]
-      if let byteCount = entry.byteCount {
-        value["byte_count"] = .integer(Int64(byteCount))
-      }
-      return JSONValue.object(value)
-    }
+    let values = entries.map(directoryEntry)
     return ToolResult(
       toolCallID: callID,
       status: .success,
       output: .object(["entries": .array(values)])
     )
+  }
+
+  static func directoryEntry(_ entry: WorkspaceDirectoryEntry) -> JSONValue {
+    var value: [String: JSONValue] = [
+      "path": .string(entry.path),
+      "name": .string(entry.name),
+      "kind": .string(entry.kind.rawValue),
+    ]
+    if let byteCount = entry.byteCount {
+      value["byte_count"] = .integer(Int64(byteCount))
+    }
+    return .object(value)
   }
 
   static func search(

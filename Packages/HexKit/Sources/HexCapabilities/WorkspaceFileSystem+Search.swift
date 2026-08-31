@@ -69,10 +69,24 @@ extension WorkspaceFileSystem {
         }
         fileCount += 1
         let fileComponents = components + [entry.name]
-        let data = try readData(
-          components: fileComponents,
-          maximumBytes: configuration.maximumReadBytes
+        let (remainingSearchBytes, remainingBytesOverflowed) =
+          configuration.maximumSearchBytes.subtractingReportingOverflow(totalBytes)
+        guard !remainingBytesOverflowed, remainingSearchBytes >= 0 else {
+          throw WorkspaceFileSystemError.capacityExceeded
+        }
+        let effectiveReadLimit = min(
+          configuration.maximumReadBytes,
+          remainingSearchBytes
         )
+        let data: Data
+        do {
+          data = try readData(
+            components: fileComponents,
+            maximumBytes: effectiveReadLimit
+          )
+        } catch WorkspaceFileSystemError.fileTooLarge {
+          throw WorkspaceFileSystemError.capacityExceeded
+        }
         let (candidateBytes, overflowed) = totalBytes.addingReportingOverflow(data.count)
         guard !overflowed, candidateBytes <= configuration.maximumSearchBytes else {
           throw WorkspaceFileSystemError.capacityExceeded

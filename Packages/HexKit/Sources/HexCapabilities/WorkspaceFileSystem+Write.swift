@@ -104,6 +104,18 @@ extension WorkspaceFileSystem {
   }
 
   private func openRegularFileFromParent(named name: String, parent: Int32) throws -> Int32 {
+    try openRegularFileFromParentAllowingLinkCount(
+      named: name,
+      parent: parent,
+      expectedLinkCount: 1
+    )
+  }
+
+  private func openRegularFileFromParentAllowingLinkCount(
+    named name: String,
+    parent: Int32,
+    expectedLinkCount: nlink_t
+  ) throws -> Int32 {
     let status = try entryStatus(named: name, in: parent)
     guard status.st_mode & S_IFMT != S_IFLNK else {
       throw WorkspaceFileSystemError.symbolicLinkRejected
@@ -125,7 +137,7 @@ extension WorkspaceFileSystem {
       Darwin.close(descriptor)
       throw WorkspaceFileSystemError.notRegularFile
     }
-    guard openedStatus.st_nlink == 1 else {
+    guard openedStatus.st_nlink == expectedLinkCount else {
       Darwin.close(descriptor)
       throw WorkspaceFileSystemError.hardLinkRejected
     }
@@ -209,19 +221,26 @@ extension WorkspaceFileSystem {
     if let replacedStatus {
       let currentStatus = try entryStatus(named: name, in: parentDescriptor)
       guard
-        currentStatus.st_mode & S_IFMT == S_IFREG,
-        currentStatus.st_dev == replacedStatus.st_dev,
-        currentStatus.st_ino == replacedStatus.st_ino,
-        currentStatus.st_size == replacedStatus.st_size,
-        currentStatus.st_nlink == 1,
-        currentStatus.st_mtimespec.tv_sec == replacedStatus.st_mtimespec.tv_sec,
-        currentStatus.st_mtimespec.tv_nsec == replacedStatus.st_mtimespec.tv_nsec,
-        currentStatus.st_ctimespec.tv_sec == replacedStatus.st_ctimespec.tv_sec,
-        currentStatus.st_ctimespec.tv_nsec == replacedStatus.st_ctimespec.tv_nsec
+        replacementStatusMatches(
+          currentStatus,
+          expected: replacedStatus,
+          comparesChangeTime: true
+        )
       else {
         throw WorkspaceFileSystemError.revisionConflict
       }
       try replacementPublicationHook?()
+      let postHookStatus = try entryStatus(named: name, in: parentDescriptor)
+      guard
+        replacementStatusMatches(
+          postHookStatus,
+          expected: replacedStatus,
+          comparesChangeTime: true
+        )
+      else {
+        throw WorkspaceFileSystemError.revisionConflict
+      }
+      try replacementPostValidationHook?()
       guard
         renameatx_np(
           parentDescriptor,
@@ -245,13 +264,34 @@ extension WorkspaceFileSystem {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
       do {
+        try validateDirectoryDescriptor(
+          parentDescriptor,
+          components: parentComponents
+        )
         try validatePublishedReplacement(
           named: name,
           temporaryName: temporaryName,
           in: parentDescriptor,
           expectedStatus: replacedStatus,
           expectedRevision: expectedRevision,
-          publishedStatus: publishedStatus
+          publishedStatus: publishedStatus,
+          publishedData: data
+        )
+        guard fsync(parentDescriptor) == 0 else {
+          throw WorkspaceFileSystemError.outcomeUncertain
+        }
+        try validateDirectoryDescriptor(
+          parentDescriptor,
+          components: parentComponents
+        )
+        try validatePublishedReplacement(
+          named: name,
+          temporaryName: temporaryName,
+          in: parentDescriptor,
+          expectedStatus: replacedStatus,
+          expectedRevision: expectedRevision,
+          publishedStatus: publishedStatus,
+          publishedData: data
         )
       } catch let validationError {
         do {
@@ -262,24 +302,60 @@ extension WorkspaceFileSystem {
             displacedStatus: displacedStatus,
             publishedStatus: publishedStatus
           )
-          shouldRemoveTemporary = true
+          shouldRemoveTemporary = false
         } catch {
           throw WorkspaceFileSystemError.outcomeUncertain
         }
-        if validationError is CancellationError {
-          throw validationError
-        }
-        throw WorkspaceFileSystemError.revisionConflict
+        throw validationError
       }
       guard unlinkat(parentDescriptor, temporaryName, 0) == 0 else {
         throw WorkspaceFileSystemError.outcomeUncertain
       }
     } else {
+      try creationPublicationHook?()
       guard linkat(parentDescriptor, temporaryName, parentDescriptor, name, 0) == 0 else {
         if errno == EEXIST {
           throw WorkspaceFileSystemError.destinationExists
         }
         throw WorkspaceFileSystemError.ioFailure
+      }
+      do {
+        try validateDirectoryDescriptor(
+          parentDescriptor,
+          components: parentComponents
+        )
+        try validatePublishedCreation(
+          named: name,
+          in: parentDescriptor,
+          publishedStatus: publishedStatus,
+          publishedData: data
+        )
+        guard fsync(parentDescriptor) == 0 else {
+          throw WorkspaceFileSystemError.outcomeUncertain
+        }
+        try validateDirectoryDescriptor(
+          parentDescriptor,
+          components: parentComponents
+        )
+        try validatePublishedCreation(
+          named: name,
+          in: parentDescriptor,
+          publishedStatus: publishedStatus,
+          publishedData: data
+        )
+      } catch let validationError {
+        do {
+          try removeRejectedCreation(
+            named: name,
+            temporaryName: temporaryName,
+            in: parentDescriptor,
+            publishedStatus: publishedStatus
+          )
+          shouldRemoveTemporary = false
+        } catch {
+          throw WorkspaceFileSystemError.outcomeUncertain
+        }
+        throw validationError
       }
       guard unlinkat(parentDescriptor, temporaryName, 0) == 0 else {
         throw WorkspaceFileSystemError.outcomeUncertain
@@ -287,36 +363,6 @@ extension WorkspaceFileSystem {
       shouldRemoveTemporary = false
     }
     guard fsync(parentDescriptor) == 0 else {
-      throw WorkspaceFileSystemError.outcomeUncertain
-    }
-    do {
-      try validateDirectoryDescriptor(
-        parentDescriptor,
-        components: parentComponents
-      )
-      let finalStatus = try entryStatus(named: name, in: parentDescriptor)
-      guard
-        finalStatus.st_mode & S_IFMT == S_IFREG,
-        finalStatus.st_dev == publishedStatus.st_dev,
-        finalStatus.st_ino == publishedStatus.st_ino,
-        finalStatus.st_size == publishedStatus.st_size,
-        finalStatus.st_nlink == 1
-      else {
-        throw WorkspaceFileSystemError.outcomeUncertain
-      }
-      let finalDescriptor = try openRegularFileFromParent(
-        named: name,
-        parent: parentDescriptor
-      )
-      defer { Darwin.close(finalDescriptor) }
-      let finalData = try readData(
-        from: finalDescriptor,
-        maximumBytes: configuration.maximumWriteBytes
-      )
-      guard finalData == data else {
-        throw WorkspaceFileSystemError.outcomeUncertain
-      }
-    } catch {
       throw WorkspaceFileSystemError.outcomeUncertain
     }
   }
@@ -327,7 +373,8 @@ extension WorkspaceFileSystem {
     in parentDescriptor: Int32,
     expectedStatus: stat,
     expectedRevision: String?,
-    publishedStatus: stat
+    publishedStatus: stat,
+    publishedData: Data
   ) throws {
     guard let expectedRevision else {
       throw WorkspaceFileSystemError.revisionConflict
@@ -338,7 +385,8 @@ extension WorkspaceFileSystem {
       currentPublishedStatus.st_dev == publishedStatus.st_dev,
       currentPublishedStatus.st_ino == publishedStatus.st_ino,
       currentPublishedStatus.st_size == publishedStatus.st_size,
-      currentPublishedStatus.st_nlink == 1
+      currentPublishedStatus.st_nlink == 1,
+      currentPublishedStatus.st_mode == publishedStatus.st_mode
     else {
       throw WorkspaceFileSystemError.revisionConflict
     }
@@ -351,12 +399,11 @@ extension WorkspaceFileSystem {
     var displacedStatus = stat()
     guard
       fstat(displacedDescriptor, &displacedStatus) == 0,
-      displacedStatus.st_dev == expectedStatus.st_dev,
-      displacedStatus.st_ino == expectedStatus.st_ino,
-      displacedStatus.st_size == expectedStatus.st_size,
-      displacedStatus.st_nlink == 1,
-      displacedStatus.st_mtimespec.tv_sec == expectedStatus.st_mtimespec.tv_sec,
-      displacedStatus.st_mtimespec.tv_nsec == expectedStatus.st_mtimespec.tv_nsec
+      replacementStatusMatches(
+        displacedStatus,
+        expected: expectedStatus,
+        comparesChangeTime: false
+      )
     else {
       throw WorkspaceFileSystemError.revisionConflict
     }
@@ -367,6 +414,88 @@ extension WorkspaceFileSystem {
     guard revision(for: displacedData) == expectedRevision else {
       throw WorkspaceFileSystemError.revisionConflict
     }
+    let currentPublishedDescriptor = try openRegularFileFromParent(
+      named: name,
+      parent: parentDescriptor
+    )
+    defer { Darwin.close(currentPublishedDescriptor) }
+    let currentPublishedData = try readData(
+      from: currentPublishedDescriptor,
+      maximumBytes: configuration.maximumWriteBytes
+    )
+    guard currentPublishedData == publishedData else {
+      throw WorkspaceFileSystemError.revisionConflict
+    }
+  }
+
+  private func validatePublishedCreation(
+    named name: String,
+    in parentDescriptor: Int32,
+    publishedStatus: stat,
+    publishedData: Data
+  ) throws {
+    let currentStatus = try entryStatus(named: name, in: parentDescriptor)
+    guard
+      currentStatus.st_mode == publishedStatus.st_mode,
+      currentStatus.st_dev == publishedStatus.st_dev,
+      currentStatus.st_ino == publishedStatus.st_ino,
+      currentStatus.st_size == publishedStatus.st_size,
+      currentStatus.st_nlink == 2
+    else {
+      throw WorkspaceFileSystemError.revisionConflict
+    }
+    let currentDescriptor = try openRegularFileFromParentAllowingLinkCount(
+      named: name,
+      parent: parentDescriptor,
+      expectedLinkCount: 2
+    )
+    defer { Darwin.close(currentDescriptor) }
+    let currentData = try readData(
+      from: currentDescriptor,
+      maximumBytes: configuration.maximumWriteBytes
+    )
+    guard currentData == publishedData else {
+      throw WorkspaceFileSystemError.revisionConflict
+    }
+  }
+
+  private func removeRejectedCreation(
+    named name: String,
+    temporaryName: String,
+    in parentDescriptor: Int32,
+    publishedStatus: stat
+  ) throws {
+    let currentStatus = try entryStatus(named: name, in: parentDescriptor)
+    guard
+      currentStatus.st_dev == publishedStatus.st_dev,
+      currentStatus.st_ino == publishedStatus.st_ino,
+      currentStatus.st_nlink == 2,
+      unlinkat(parentDescriptor, name, 0) == 0,
+      unlinkat(parentDescriptor, temporaryName, 0) == 0,
+      fsync(parentDescriptor) == 0
+    else {
+      throw WorkspaceFileSystemError.outcomeUncertain
+    }
+  }
+
+  private func replacementStatusMatches(
+    _ status: stat,
+    expected: stat,
+    comparesChangeTime: Bool
+  ) -> Bool {
+    let stableIdentityMatches =
+      status.st_mode == expected.st_mode
+      && status.st_dev == expected.st_dev
+      && status.st_ino == expected.st_ino
+      && status.st_size == expected.st_size
+      && status.st_nlink == 1
+      && status.st_mtimespec.tv_sec == expected.st_mtimespec.tv_sec
+      && status.st_mtimespec.tv_nsec == expected.st_mtimespec.tv_nsec
+    guard stableIdentityMatches, comparesChangeTime else {
+      return stableIdentityMatches
+    }
+    return status.st_ctimespec.tv_sec == expected.st_ctimespec.tv_sec
+      && status.st_ctimespec.tv_nsec == expected.st_ctimespec.tv_nsec
   }
 
   private func restoreRejectedReplacement(
@@ -399,7 +528,9 @@ extension WorkspaceFileSystem {
     guard
       restoredStatus.st_dev == displacedStatus.st_dev,
       restoredStatus.st_ino == displacedStatus.st_ino,
-      restoredStatus.st_nlink == 1
+      restoredStatus.st_nlink == 1,
+      unlinkat(parentDescriptor, temporaryName, 0) == 0,
+      fsync(parentDescriptor) == 0
     else {
       throw WorkspaceFileSystemError.outcomeUncertain
     }

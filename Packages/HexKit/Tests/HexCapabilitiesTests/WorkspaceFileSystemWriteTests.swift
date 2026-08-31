@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -315,6 +316,110 @@ struct WorkspaceFileSystemWriteTests {
     }
 
     #expect(try String(contentsOf: destination, encoding: .utf8) == externalContent)
+  }
+
+  @Test
+  func movedParentReplacementIsRolledBackWithoutContentLoss() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let parent = root.appending(path: "Sources", directoryHint: .isDirectory)
+    let movedParent = FileManager.default.temporaryDirectory.appending(
+      path: "hex-moved-sources-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    defer { try? FileManager.default.removeItem(at: movedParent) }
+    let destination = parent.appending(path: "Move.swift")
+    try Data("original".utf8).write(to: destination)
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: {
+        try FileManager.default.moveItem(at: parent, to: movedParent)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+      }
+    )
+    let initial = try await fileSystem.readTextFile(at: "Sources/Move.swift", relativeTo: nil)
+
+    await #expect(throws: WorkspaceFileSystemError.revisionConflict) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/Move.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(
+      try String(contentsOf: movedParent.appending(path: "Move.swift"), encoding: .utf8)
+        == "original")
+    #expect(!FileManager.default.fileExists(atPath: parent.appending(path: "Move.swift").path))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: movedParent.path) == ["Move.swift"])
+    #expect(try FileManager.default.contentsOfDirectory(atPath: parent.path).isEmpty)
+  }
+
+  @Test
+  func movedParentCreationIsRemovedBeforeFailure() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let parent = root.appending(path: "Sources", directoryHint: .isDirectory)
+    let movedParent = FileManager.default.temporaryDirectory.appending(
+      path: "hex-moved-create-sources-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    defer { try? FileManager.default.removeItem(at: movedParent) }
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      creationPublicationHook: {
+        try FileManager.default.moveItem(at: parent, to: movedParent)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+      }
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.revisionConflict) {
+      _ = try await fileSystem.writeTextFile(
+        "agent creation",
+        at: "Sources/New.swift",
+        expectedRevision: nil,
+        relativeTo: nil
+      )
+    }
+
+    #expect(!FileManager.default.fileExists(atPath: movedParent.appending(path: "New.swift").path))
+    #expect(!FileManager.default.fileExists(atPath: parent.appending(path: "New.swift").path))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: movedParent.path).isEmpty)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: parent.path).isEmpty)
+  }
+
+  @Test
+  func concurrentPermissionChangeIsPreservedAndFailsClosed() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Mode.swift")
+    try Data("original".utf8).write(to: destination)
+    #expect(chmod(destination.path, mode_t(0o644)) == 0)
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      replacementPostValidationHook: {
+        guard chmod(destination.path, mode_t(0o600)) == 0 else {
+          throw WorkspaceFileSystemError.ioFailure
+        }
+      }
+    )
+    let initial = try await fileSystem.readTextFile(at: "Sources/Mode.swift", relativeTo: nil)
+
+    await #expect(throws: WorkspaceFileSystemError.revisionConflict) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/Mode.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+    #expect(attributes[.posixPermissions] as? NSNumber == NSNumber(value: 0o600))
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "original")
   }
 
   private func makeRoot() throws -> URL {

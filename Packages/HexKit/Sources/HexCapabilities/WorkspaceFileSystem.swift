@@ -8,6 +8,9 @@ public actor WorkspaceFileSystem {
   let rootInode: UInt64
   let configuration: WorkspaceFileSystemConfiguration
   let replacementPublicationHook: (@Sendable () throws -> Void)?
+  let replacementPostValidationHook: (@Sendable () throws -> Void)?
+  let creationPublicationHook: (@Sendable () throws -> Void)?
+  let readDataPreflightHook: (@Sendable (Int) -> Void)?
 
   public init(
     root: URL,
@@ -16,14 +19,20 @@ public actor WorkspaceFileSystem {
     try self.init(
       root: root,
       configuration: configuration,
-      replacementPublicationHook: nil
+      replacementPublicationHook: nil,
+      replacementPostValidationHook: nil,
+      creationPublicationHook: nil,
+      readDataPreflightHook: nil
     )
   }
 
   init(
     root: URL,
     configuration: WorkspaceFileSystemConfiguration = .standard,
-    replacementPublicationHook: (@Sendable () throws -> Void)?
+    replacementPublicationHook: (@Sendable () throws -> Void)?,
+    replacementPostValidationHook: (@Sendable () throws -> Void)? = nil,
+    creationPublicationHook: (@Sendable () throws -> Void)? = nil,
+    readDataPreflightHook: (@Sendable (Int) -> Void)? = nil
   ) throws {
     guard root.isFileURL, root.path.hasPrefix("/"), !root.path.contains("\0") else {
       throw WorkspaceFileSystemError.invalidRoot
@@ -47,6 +56,9 @@ public actor WorkspaceFileSystem {
     rootInode = UInt64(status.st_ino)
     self.configuration = configuration
     self.replacementPublicationHook = replacementPublicationHook
+    self.replacementPostValidationHook = replacementPostValidationHook
+    self.creationPublicationHook = creationPublicationHook
+    self.readDataPreflightHook = readDataPreflightHook
   }
 
   deinit {

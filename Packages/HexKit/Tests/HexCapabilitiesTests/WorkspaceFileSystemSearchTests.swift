@@ -1,6 +1,8 @@
 import Foundation
-import HexCapabilities
+import Synchronization
 import Testing
+
+@testable import HexCapabilities
 
 @Suite("Workspace file-system search")
 struct WorkspaceFileSystemSearchTests {
@@ -86,5 +88,36 @@ struct WorkspaceFileSystemSearchTests {
     await #expect(throws: WorkspaceFileSystemError.capacityExceeded) {
       _ = try await fileSystem.searchText("needle", under: ".", relativeTo: nil)
     }
+  }
+
+  @Test
+  func passesRemainingGlobalByteBudgetIntoFileReadPreflight() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "hex-workspace-search-read-budget-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data(repeating: 0x61, count: 16 * 1_024 * 1_024).write(
+      to: root.appending(path: "large.swift")
+    )
+    let observedReadLimits = Mutex<[Int]>([])
+    let configuration = try WorkspaceFileSystemConfiguration(
+      maximumReadBytes: 16 * 1_024 * 1_024,
+      maximumSearchBytes: 1
+    )
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      configuration: configuration,
+      replacementPublicationHook: nil,
+      readDataPreflightHook: { maximumBytes in
+        observedReadLimits.withLock { $0.append(maximumBytes) }
+      }
+    )
+
+    await #expect(throws: WorkspaceFileSystemError.capacityExceeded) {
+      _ = try await fileSystem.searchText("a", under: ".", relativeTo: nil)
+    }
+    #expect(observedReadLimits.withLock { $0 } == [1])
   }
 }
