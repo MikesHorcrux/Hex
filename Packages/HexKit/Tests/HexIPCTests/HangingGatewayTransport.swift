@@ -12,6 +12,7 @@ actor HangingGatewayTransport: HexGatewayTransport {
       AsyncThrowingStream<GatewayEventEnvelope, any Error>,
       any Error
     >] = [:]
+  private var pendingOrder: [UUID] = []
 
   init(holdsStreamAcquisition: Bool = false) {
     self.holdsStreamAcquisition = holdsStreamAcquisition
@@ -70,18 +71,44 @@ actor HangingGatewayTransport: HexGatewayTransport {
       let requestID = UUID()
       return try await withCheckedThrowingContinuation { continuation in
         pendingContinuations[requestID] = continuation
+        pendingOrder.append(requestID)
       }
     }
     return installStream()
   }
 
   func resolvePendingStreams() {
-    let requestIDs = Array(pendingContinuations.keys)
+    let requestIDs = pendingOrder
+    pendingOrder.removeAll(keepingCapacity: true)
     for requestID in requestIDs {
       pendingContinuations.removeValue(forKey: requestID)?.resume(
         returning: installStream()
       )
     }
+  }
+
+  func resolveNextPendingStream() {
+    guard !pendingOrder.isEmpty else {
+      return
+    }
+    let requestID = pendingOrder.removeFirst()
+    pendingContinuations.removeValue(forKey: requestID)?.resume(
+      returning: installStream()
+    )
+  }
+
+  func failNextPendingStream(message: String) {
+    guard !pendingOrder.isEmpty else {
+      return
+    }
+    let requestID = pendingOrder.removeFirst()
+    pendingContinuations.removeValue(forKey: requestID)?.resume(
+      throwing: GatewayFailure(
+        code: .transportUnavailable,
+        message: message,
+        isRetryable: true
+      )
+    )
   }
 
   func waitForPendingStreamCount(_ expectedCount: Int) async {
@@ -115,6 +142,7 @@ actor HangingGatewayTransport: HexGatewayTransport {
     connectedLease = nil
     let pending = Array(pendingContinuations.values)
     pendingContinuations.removeAll()
+    pendingOrder.removeAll(keepingCapacity: true)
     let activeContinuations = Array(continuations.values)
     continuations.removeAll()
     for continuation in activeContinuations {

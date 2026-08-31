@@ -25,18 +25,33 @@ extension HexGatewayClient {
     let reservationID = try reserveEventStream(
       runID: runID,
       invocationID: invocationID,
-      generationID: connection.generationID
+      generationID: connection.generationID,
+      lease: connection.lease
     )
     defer {
-      releaseEventStreamReservation(reservationID)
+      releaseEventStreamReservation(
+        reservationID,
+        generationID: connection.generationID,
+        lease: connection.lease
+      )
     }
 
     let upstream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
     do {
-      upstream = try await transport.eventRecords(
-        after: cursor,
-        lease: connection.lease
-      )
+      upstream = try await withTaskCancellationHandler {
+        try await transport.eventRecords(
+          after: cursor,
+          lease: connection.lease
+        )
+      } onCancel: {
+        Task {
+          await self.releaseEventStreamReservation(
+            reservationID,
+            generationID: connection.generationID,
+            lease: connection.lease
+          )
+        }
+      }
     } catch {
       try Task.checkCancellation()
       try requireCurrentConnectedGeneration(connection.generationID)
@@ -283,7 +298,8 @@ extension HexGatewayClient {
   func reserveEventStream(
     runID: AgentRunID,
     invocationID: GatewayRunInvocationID,
-    generationID: GatewayClientConnectionGenerationID
+    generationID: GatewayClientConnectionGenerationID,
+    lease: GatewayTransportConnectionLease
   ) throws -> UUID {
     let activeCount = eventStreams.values.count { $0.runID == runID }
     let reservationCount = eventStreamReservations.values.count { $0.runID == runID }
@@ -305,12 +321,24 @@ extension HexGatewayClient {
     eventStreamReservations[reservationID] = GatewayClientEventStreamReservation(
       runID: runID,
       invocationID: invocationID,
-      generationID: generationID
+      generationID: generationID,
+      lease: lease
     )
     return reservationID
   }
 
-  func releaseEventStreamReservation(_ reservationID: UUID) {
+  func releaseEventStreamReservation(
+    _ reservationID: UUID,
+    generationID: GatewayClientConnectionGenerationID,
+    lease: GatewayTransportConnectionLease
+  ) {
+    guard
+      let reservation = eventStreamReservations[reservationID],
+      reservation.generationID == generationID,
+      reservation.lease == lease
+    else {
+      return
+    }
     eventStreamReservations.removeValue(forKey: reservationID)
   }
 
