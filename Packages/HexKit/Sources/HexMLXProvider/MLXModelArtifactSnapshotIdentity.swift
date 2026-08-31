@@ -40,7 +40,7 @@ struct MLXModelArtifactSnapshotIdentity: Sendable {
 
   func matches(_ status: stat) -> Bool {
     let permissions = status.st_mode & mode_t(0o7777)
-    status.st_size >= 0
+    return status.st_size >= 0
       && UInt64(status.st_dev) == device
       && UInt64(status.st_ino) == inode
       && status.st_uid == owner
