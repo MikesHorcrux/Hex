@@ -11,6 +11,11 @@ extension CodexAppServerConnection {
     do {
       try await receiveOutput(data, generation: messageGeneration)
     } catch {
+      guard generation == messageGeneration,
+        state == .handshaking || state == .ready
+      else {
+        return
+      }
       await closeConnection(error: sanitized(error))
     }
   }
@@ -38,12 +43,22 @@ extension CodexAppServerConnection {
     while cursor < data.endIndex,
       let newline = data[cursor...].firstIndex(of: 0x0A)
     {
+      try validateActiveGeneration(messageGeneration)
       try appendOutput(data[cursor..<newline])
       try await consumeOutputLine(generation: messageGeneration)
       cursor = data.index(after: newline)
     }
     if cursor < data.endIndex {
+      try validateActiveGeneration(messageGeneration)
       try appendOutput(data[cursor...])
+    }
+  }
+
+  private func validateActiveGeneration(_ messageGeneration: UInt64) throws {
+    guard generation == messageGeneration,
+      state == .handshaking || state == .ready
+    else {
+      throw CodexAppServerConnectionError.connectionClosed
     }
   }
 
@@ -100,6 +115,7 @@ extension CodexAppServerConnection {
           try await notificationHandler.handle(
             CodexAppServerNotification(method: method, parameters: object["params"])
           )
+          try validateActiveGeneration(messageGeneration)
         }
       }
       return

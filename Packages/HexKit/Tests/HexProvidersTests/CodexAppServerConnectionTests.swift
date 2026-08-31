@@ -249,6 +249,55 @@ struct CodexAppServerConnectionTests {
   }
 
   @Test
+  func staleNotificationChunkCannotCloseAReplacementConnection() async throws {
+    let channel = TestCodexAppServerChannel()
+    let handler = GatedCodexAppServerNotificationHandler()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel,
+      notificationHandler: handler
+    )
+    try await finishHandshake(connection: connection, channel: channel)
+
+    var staleChunk = try encodedLine(
+      .object([
+        "method": .string("account/updated"),
+        "params": .object([:]),
+      ])
+    )
+    staleChunk.append(
+      try encodedLine(
+        .object([
+          "method": .string("account/updated"),
+          "params": .object([:]),
+        ])
+      )
+    )
+    await channel.yield(staleChunk)
+    await handler.waitUntilStarted()
+
+    await connection.disconnect()
+    let reconnecting = Task { try await connection.connect() }
+    _ = await channel.frame(at: 2)
+    await channel.yield(
+      try encodedLine(
+        .object([
+          "id": .integer(1),
+          "result": initializationResult(),
+        ])
+      )
+    )
+    _ = await channel.frame(at: 3)
+    try await reconnecting.value
+
+    await handler.release()
+    try await Task.sleep(for: .milliseconds(20))
+
+    #expect(await channel.closeCount() == 1)
+    await connection.disconnect()
+  }
+
+  @Test
   func rejectsDuplicateMembersUnknownResponsesAndWireHeaders() async throws {
     let hostileLines = [
       Data("{\"id\":2,\"id\":2,\"result\":{}}\n".utf8),
