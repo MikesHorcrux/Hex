@@ -90,7 +90,42 @@ struct GatewayEventOrderingTests {
   }
 
   @Test
-  func reportsPostTerminalViolationToExistingSubscriber() async throws {
+  func terminalRecordCompletesLiveAndLateReplayBeforeDriverReturns() async throws {
+    let driver = ControllableGatewayRunDriver()
+    let service = HexGatewayService(driver: driver)
+    let transport = InProcessHexGatewayTransport(service: service)
+    _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
+    let runID = GatewayTestValues.runID()
+    _ = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    await driver.waitUntilStarted(runID)
+    let liveStream = try await transport.eventRecords(
+      after: GatewayEventCursor(runID: runID)
+    )
+    let records = [
+      GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted),
+      GatewayTestValues.record(runID: runID, sequence: 2, event: .runCompleted),
+    ]
+
+    for record in records {
+      await driver.yieldAndWait(record)
+    }
+
+    #expect(await driver.isRunning(runID))
+    #expect(await collectBeforeDeadline(liveStream) == records)
+    #expect(await driver.isRunning(runID))
+
+    let lateReplay = try await transport.eventRecords(
+      after: GatewayEventCursor(runID: runID)
+    )
+    #expect(await collectBeforeDeadline(lateReplay) == records)
+    #expect(await driver.isRunning(runID))
+
+    await driver.finish(runID)
+    await driver.waitUntilStopped(runID)
+  }
+
+  @Test
+  func reportsPostTerminalViolationToLaterSubscriber() async throws {
     let driver = ControllableGatewayRunDriver()
     let service = HexGatewayService(driver: driver)
     let transport = InProcessHexGatewayTransport(service: service)
@@ -99,14 +134,19 @@ struct GatewayEventOrderingTests {
     let request = GatewayTestValues.request(runID: runID)
     _ = try await transport.startRun(request)
     await driver.waitUntilStarted(runID)
-    let stream = try await transport.eventRecords(after: GatewayEventCursor(runID: runID))
+    let initialStream = try await transport.eventRecords(
+      after: GatewayEventCursor(runID: runID)
+    )
+    let acceptedRecords = [
+      GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted),
+      GatewayTestValues.record(runID: runID, sequence: 2, event: .runCompleted),
+    ]
 
-    await driver.yieldAndWait(
-      GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
-    )
-    await driver.yieldAndWait(
-      GatewayTestValues.record(runID: runID, sequence: 2, event: .runCompleted)
-    )
+    for record in acceptedRecords {
+      await driver.yieldAndWait(record)
+    }
+    #expect(await collectBeforeDeadline(initialStream) == acceptedRecords)
+
     await driver.yieldAndWait(
       GatewayTestValues.record(
         runID: runID,
@@ -114,10 +154,15 @@ struct GatewayEventOrderingTests {
         event: .messageAppended(request.initialMessages[0])
       )
     )
+    await driver.waitUntilStopped(runID)
+
+    let laterStream = try await transport.eventRecords(
+      after: GatewayEventCursor(runID: runID)
+    )
 
     do {
-      _ = try await GatewayTestValues.collect(stream)
-      Issue.record("Expected a live post-terminal violation.")
+      _ = try await GatewayTestValues.collect(laterStream)
+      Issue.record("Expected the internally recorded post-terminal violation.")
     } catch let failure as GatewayFailure {
       #expect(failure.code == .eventAfterTerminal)
     }
@@ -166,6 +211,27 @@ struct GatewayEventOrderingTests {
       #expect(failure.code == code)
     } catch {
       Issue.record("Unexpected error: \(error)")
+    }
+  }
+
+  private func collectBeforeDeadline(
+    _ stream: AsyncThrowingStream<AgentEventRecord, any Error>
+  ) async -> [AgentEventRecord]? {
+    await withTaskGroup(of: [AgentEventRecord]?.self) { group in
+      group.addTask {
+        try? await GatewayTestValues.collect(stream)
+      }
+      group.addTask {
+        try? await Task.sleep(for: .seconds(1))
+        return nil
+      }
+
+      guard let result = await group.next() else {
+        group.cancelAll()
+        return nil
+      }
+      group.cancelAll()
+      return result
     }
   }
 }

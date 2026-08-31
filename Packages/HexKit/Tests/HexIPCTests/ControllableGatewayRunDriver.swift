@@ -90,6 +90,10 @@ actor ControllableGatewayRunDriver: HexGatewayRunDriver {
     invocationCounts[runID, default: 0]
   }
 
+  func isRunning(_ runID: AgentRunID) -> Bool {
+    continuations[runID] != nil
+  }
+
   func request(for runID: AgentRunID) -> GatewayStartRunRequest? {
     requests[runID]
   }

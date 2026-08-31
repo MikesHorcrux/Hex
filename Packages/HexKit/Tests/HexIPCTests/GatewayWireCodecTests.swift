@@ -1,9 +1,55 @@
 import Foundation
+import HexCore
 import HexIPC
 import Testing
 
 @Suite("Gateway wire codec")
 struct GatewayWireCodecTests {
+  @Test
+  func standardEnvelopeFitsRuntimeEventsWithBoundedReplayAndForwarding() throws {
+    let configuration = GatewayConfiguration.standard
+    let runtimeStandardJournalEventBytes = 7_340_032
+    let recordEnvelopeReserveBytes = 1_048_576
+
+    #expect(configuration.maximumWireBytes == 8_388_608)
+    #expect(
+      configuration.maximumWireBytes
+        >= runtimeStandardJournalEventBytes + recordEnvelopeReserveBytes
+    )
+    #expect(configuration.maximumRetainedRecordsPerRun == 8)
+    #expect(configuration.maximumRetainedWireBytesPerRun == 33_554_432)
+    #expect(configuration.subscriberBufferCapacity == 8)
+    #expect(configuration.maximumSubscribersPerRun == 2)
+    #expect(configuration.maximumRememberedRuns == 4)
+
+    let bufferedWireBytesPerSubscriber =
+      configuration.maximumWireBytes * configuration.subscriberBufferCapacity
+    let serviceSubscriberWireBytes =
+      bufferedWireBytesPerSubscriber * configuration.maximumSubscribersPerRun
+    let transportSubscriberWireBytes = serviceSubscriberWireBytes
+    let retainedWireBytes =
+      configuration.maximumRetainedWireBytesPerRun * configuration.maximumRememberedRuns
+    #expect(
+      serviceSubscriberWireBytes + transportSubscriberWireBytes + retainedWireBytes
+        == 402_653_184
+    )
+
+    let multiMiBRuntimeRecord = GatewayTestValues.record(
+      runID: GatewayTestValues.runID(),
+      sequence: 2,
+      event: .messageAppended(
+        Message(
+          role: .assistant,
+          content: [.text(String(repeating: "x", count: 2_097_152))]
+        )
+      )
+    )
+    let codec = GatewayWireCodec(configuration: configuration)
+    let encodedRecord = try codec.encode(multiMiBRuntimeRecord)
+    #expect(encodedRecord.count > 1_048_576)
+    #expect(try codec.decode(AgentEventRecord.self, from: encodedRecord) == multiMiBRuntimeRecord)
+  }
+
   @Test
   func roundTripsVersionedDTOsAndEventSchema() throws {
     let codec = GatewayWireCodec(configuration: .standard)
@@ -94,6 +140,124 @@ struct GatewayWireCodecTests {
         maximumRetainedRecordsPerRun: 1,
         subscriberBufferCapacity: 1,
         maximumSessions: 0
+      ) == nil
+    )
+  }
+
+  @Test
+  func rejectsAttackerSizedAndAboveHardCapBounds() {
+    let attackerSizedConfigurations = [
+      GatewayConfiguration(
+        maximumWireBytes: Int.max,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: Int.max,
+        subscriberBufferCapacity: Int.max
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        maximumRetainedWireBytesPerRun: Int.max,
+        subscriberBufferCapacity: 1
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: Int.max
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumSubscribersPerRun: Int.max
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumSessions: Int.max
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumRememberedRuns: Int.max
+      ),
+    ]
+    #expect(attackerSizedConfigurations.allSatisfy { $0 == nil })
+
+    let aboveHardCapConfigurations = [
+      GatewayConfiguration(
+        maximumWireBytes: 16_777_217,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 257,
+        subscriberBufferCapacity: 257
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        maximumRetainedWireBytesPerRun: 134_217_729,
+        subscriberBufferCapacity: 1,
+        maximumRememberedRuns: 1
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 257
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumSubscribersPerRun: 5
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumSessions: 65
+      ),
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1,
+        maximumRememberedRuns: 129
+      ),
+    ]
+    #expect(aboveHardCapConfigurations.allSatisfy { $0 == nil })
+  }
+
+  @Test
+  func rejectsUnsafeComposedBufferAndReplayBudgets() {
+    #expect(
+      GatewayConfiguration(
+        maximumWireBytes: 8_388_608,
+        maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 9
+      ) == nil
+    )
+    #expect(
+      GatewayConfiguration(
+        maximumWireBytes: 8_388_608,
+        maximumRetainedRecordsPerRun: 8,
+        subscriberBufferCapacity: 8,
+        maximumSubscribersPerRun: 3
+      ) == nil
+    )
+    #expect(
+      GatewayConfiguration(
+        maximumWireBytes: 1,
+        maximumRetainedRecordsPerRun: 1,
+        maximumRetainedWireBytesPerRun: 33_554_432,
+        subscriberBufferCapacity: 1,
+        maximumRememberedRuns: 5
       ) == nil
     )
   }

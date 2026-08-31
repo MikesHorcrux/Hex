@@ -57,7 +57,7 @@ extension HexGatewayService {
       return stream
     }
 
-    if state.phase == .terminal, state.task == nil {
+    if state.phase == .terminal {
       continuation.finish()
       return stream
     }
@@ -223,6 +223,17 @@ extension HexGatewayService {
     }
     for subscriberID in subscribersToRemove {
       state.subscribers.removeValue(forKey: subscriberID)
+    }
+
+    // The durable terminal record is the public stream completion commit point. The driver task may
+    // still be unwinding (or may be defective and never return), but consumers must not wait on its
+    // lifecycle after they have received the terminal fact. State keeps the terminal sequence so any
+    // later driver output still fails internally as an event-after-terminal violation.
+    if state.phase == .terminal {
+      for subscriber in state.subscribers.values {
+        subscriber.continuation.finish()
+      }
+      state.subscribers.removeAll()
     }
 
     runs[runID] = state
