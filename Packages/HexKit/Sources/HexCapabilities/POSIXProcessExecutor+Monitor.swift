@@ -140,7 +140,7 @@ extension POSIXProcessExecutor {
   /// Signals the owned group before reaping the leader, then waits for that leader. The group
   /// signal is also performed for ordinary completion so descendants that detached their output
   /// cannot outlive a successful result. `setsid`/`setpgid` called by the child can escape this
-  /// group; containing that deliberate escape requires a Darwin primitive beyond posix_spawn.
+  /// group; this accepted residual requires a Darwin primitive beyond `posix_spawn` to contain.
   func terminateAndReap(
     _ processID: pid_t,
     leaderHasExited: Bool = false

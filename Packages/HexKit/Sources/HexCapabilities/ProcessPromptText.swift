@@ -7,35 +7,35 @@ enum ProcessPromptText {
   static func renderArguments(
     _ arguments: [String],
     maximumBytes: Int
-  ) -> (values: [String], truncated: Bool) {
+  ) -> [String]? {
     guard maximumBytes > 0 else {
-      return ([], !arguments.isEmpty)
+      return arguments.isEmpty ? [] : nil
     }
 
-    let perArgumentMaximum = min(maximumBytes, 4 * 1_024)
     var values: [String] = []
     values.reserveCapacity(arguments.count)
     var usedBytes = 0
-    var truncated = false
 
     for argument in arguments {
-      let complete = render(argument, quoted: true)
-      var value = boundedPrefix(complete, maximumBytes: perArgumentMaximum)
-      if value.utf8.count < complete.utf8.count {
-        value += "…"
-        truncated = true
-      }
+      let value = render(argument, quoted: true)
       let separatorBytes = values.isEmpty ? 0 : 1
-      let requiredBytes = separatorBytes + value.utf8.count
-      guard requiredBytes <= maximumBytes - usedBytes else {
-        truncated = true
-        break
+      let (requiredBytes, requiredOverflowed) = separatorBytes.addingReportingOverflow(
+        value.utf8.count
+      )
+      guard
+        !requiredOverflowed,
+        usedBytes <= maximumBytes,
+        requiredBytes <= maximumBytes - usedBytes
+      else {
+        // Authorization must show the complete escaped vector. A partial or ellipsized argv could
+        // hide a dangerous argument, so callers must reject the request instead of approving it.
+        return nil
       }
       values.append(value)
       usedBytes += requiredBytes
     }
 
-    return (values, truncated)
+    return values
   }
 
   static func sanitizedUTF8Output(_ data: Data) -> (text: String, sanitized: Bool)? {
@@ -107,24 +107,5 @@ enum ProcessPromptText {
     }
     result += "\\u{\(String(scalar.value, radix: 16, uppercase: true))}"
     return true
-  }
-
-  private static func boundedPrefix(_ value: String, maximumBytes: Int) -> String {
-    guard value.utf8.count > maximumBytes else {
-      return value
-    }
-
-    var result = ""
-    result.reserveCapacity(maximumBytes)
-    var usedBytes = 0
-    for scalar in value.unicodeScalars {
-      let scalarBytes = String(scalar).utf8.count
-      guard usedBytes + scalarBytes <= maximumBytes else {
-        break
-      }
-      result.unicodeScalars.append(scalar)
-      usedBytes += scalarBytes
-    }
-    return result
   }
 }

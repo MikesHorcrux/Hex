@@ -43,7 +43,6 @@ struct ProcessRunToolTests {
       .string("\"%s\""),
       .string("\"\(commandArgument)\""),
     ]))
-    #expect(request.details["argv_truncated"] == .boolean(false))
     #expect(request.details["argv_count"] == .integer(3))
     #expect(request.details["argument_count"] == .integer(2))
     #expect(String(describing: request).contains(commandArgument))
@@ -271,6 +270,104 @@ struct ProcessRunToolTests {
     #expect(result.output == .object(["error": .string("invalid_arguments")]))
     let recorded = await executor.lastRequest
     #expect(recorded == nil)
+
+    let reused = try await tool.execute(authorizedCall, in: context)
+    #expect(reused.output == .object(["error": .string("authorization_required")]))
+  }
+
+  @Test
+  func rejectsAuthorizationWhenTheCompleteArgumentVectorExceedsTheDetailBudget() async throws {
+    let standard = CapabilityAuthorizationCenterConfiguration.standard
+    let authorizationConfiguration = try #require(
+      CapabilityAuthorizationCenterConfiguration(
+        maximumCapabilityBytes: standard.maximumCapabilityBytes,
+        maximumOperationBytes: standard.maximumOperationBytes,
+        maximumResourceBytes: standard.maximumResourceBytes,
+        maximumExplanationBytes: standard.maximumExplanationBytes,
+        maximumDetailsBytes: 512,
+        maximumRunGrants: standard.maximumRunGrants,
+        maximumSessionGrants: standard.maximumSessionGrants
+      )
+    )
+    let tool = ProcessRunTool(
+      executor: RecordingProcessExecutor(
+        result: ProcessExecutionResult(
+          termination: .exited(code: 0),
+          output: Data(),
+          durationMilliseconds: 0
+        )
+      ),
+      environment: [:],
+      authorizationConfiguration: authorizationConfiguration
+    )
+    let oversizedArgument = String(repeating: "x", count: 1_024)
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "call-process-oversized-authorization"),
+      name: "process_run",
+      arguments: [
+        "executable": .string("/usr/bin/true"),
+        "arguments": .array([.string(oversizedArgument)]),
+      ]
+    )
+
+    await #expect(throws: ProcessExecutionError.authorizationDetailsTooLarge) {
+      _ = try await tool.authorizationRequest(
+        for: call,
+        in: ToolExecutionContext(
+          runID: AgentRunID(),
+          workingDirectory: URL(fileURLWithPath: "/private/tmp")
+        )
+      )
+    }
+  }
+
+  @Test
+  func rejectsAuthorizationWhenEnvironmentNamesExceedTheDetailBudget() async throws {
+    let standard = CapabilityAuthorizationCenterConfiguration.standard
+    let authorizationConfiguration = try #require(
+      CapabilityAuthorizationCenterConfiguration(
+        maximumCapabilityBytes: standard.maximumCapabilityBytes,
+        maximumOperationBytes: standard.maximumOperationBytes,
+        maximumResourceBytes: standard.maximumResourceBytes,
+        maximumExplanationBytes: standard.maximumExplanationBytes,
+        maximumDetailsBytes: 512,
+        maximumRunGrants: standard.maximumRunGrants,
+        maximumSessionGrants: standard.maximumSessionGrants
+      )
+    )
+    var environment: [String: String] = [:]
+    for index in 0..<4 {
+      environment["HEX_\(String(repeating: "A", count: 200))_\(index)"] = "private"
+    }
+    let tool = ProcessRunTool(
+      executor: RecordingProcessExecutor(
+        result: ProcessExecutionResult(
+          termination: .exited(code: 0),
+          output: Data(),
+          durationMilliseconds: 0
+        )
+      ),
+      environment: environment,
+      authorizationConfiguration: authorizationConfiguration
+    )
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "call-process-environment-name-budget"),
+      name: "process_run",
+      arguments: [
+        "executable": .string("/usr/bin/true"),
+        "arguments": .array([]),
+      ]
+    )
+
+    await #expect(throws: ProcessExecutionError.authorizationDetailsTooLarge) {
+      _ = try await tool.authorizationRequest(
+        for: call,
+        in: ToolExecutionContext(
+          runID: AgentRunID(),
+          workingDirectory: URL(fileURLWithPath: "/private/tmp")
+        )
+      )
+    }
   }
 
   @Test

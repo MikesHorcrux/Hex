@@ -8,32 +8,37 @@ public struct ProcessRunTool: HostTool, Sendable {
   private let executor: any ProcessExecuting
   private let configuration: ProcessExecutionConfiguration
   private let environment: [String: String]
+  private let maximumAuthorizationDetailsBytes: Int
   private let authorizationLedger: ProcessAuthorizationLedger
   /// Keeps exact-invocation grants stable only for this tool lifetime without persisting a
   /// guessable digest of possibly sensitive arguments.
   private let authorizationKey: SymmetricKey
-
-  private static let maximumAuthorizationDisplayBytes = 16 * 1_024
 
   public init(
     executor: any ProcessExecuting,
     configuration: ProcessExecutionConfiguration = .standard,
     /// Host-selected environment; the model cannot supply arbitrary environment variables.
     environment: [String: String]? = nil,
+    /// Must match the configuration used by the injected authorization center. Process details
+    /// are rejected before a snapshot is recorded when they exceed this byte limit.
+    authorizationConfiguration: CapabilityAuthorizationCenterConfiguration = .standard,
     authorizationLedger: ProcessAuthorizationLedger? = nil
   ) {
     definition = ToolDefinition(
       name: "process_run",
       description:
-        "Run one non-interactive local executable with bounded combined output and no implicit shell.",
+        "Run one non-interactive local executable with bounded combined output and no implicit shell. "
+          + "Authorization shows the complete escaped argv; never put secrets in arguments. "
+          + "Injected environment values remain private and only names, count, and bytes are shown.",
       inputSchema: WorkspaceToolSchema.object(
         properties: [
           "executable": WorkspaceToolSchema.string(
-            "An absolute executable path. A shell is used only when explicitly selected here.",
+            "An absolute executable path. No shell interpolation is performed.",
             maximumLength: 4_096
           ),
           "arguments": WorkspaceToolSchema.stringArray(
-            "The exact argument vector passed to the executable.",
+            "The exact argument vector passed to the executable; every argument is displayed in "
+              + "authorization, so never put secrets here.",
             maximumItems: configuration.maximumArguments,
             maximumItemLength: configuration.maximumArgumentBytes
           ),
@@ -49,6 +54,12 @@ public struct ProcessRunTool: HostTool, Sendable {
     self.executor = executor
     self.configuration = configuration
     self.environment = environment ?? ProcessExecutionEnvironment.standard()
+    // The standard center cap is an upper bound even when a caller supplies a larger custom
+    // center cap; a smaller supplied cap is preserved and therefore remains fail-closed.
+    self.maximumAuthorizationDetailsBytes = min(
+      authorizationConfiguration.maximumDetailsBytes,
+      CapabilityAuthorizationCenterConfiguration.standard.maximumDetailsBytes
+    )
     self.authorizationLedger = authorizationLedger ?? ProcessAuthorizationLedger()
     authorizationKey = SymmetricKey(size: .bits256)
   }
@@ -57,65 +68,98 @@ public struct ProcessRunTool: HostTool, Sendable {
     for call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> AuthorizationRequest {
-    try Task.checkCancellation()
-    let request = try validatedRequest(for: call, in: context)
-    let identity = try ProcessExecutionIdentity.capture(for: request)
-    // Keep a bounded pending snapshot so the external authorization decision can be followed by
-    // an identity comparison; this is not itself an authorization grant.
-    try await authorizationLedger.record(
-      runID: context.runID,
-      toolCallID: call.id,
-      request: request,
-      identity: identity
-    )
-    try Task.checkCancellation()
-    let argumentBytes = request.arguments.reduce(0) { total, argument in
-      total + argument.utf8.count
-    }
-    guard let environmentBytes = ProcessExecutionEnvironment.byteCount(request.environment) else {
-      throw ProcessExecutionError.invalidRequest
-    }
-    let renderedArguments = ProcessPromptText.renderArguments(
-      [request.executable.path] + request.arguments,
-      maximumBytes: Self.maximumAuthorizationDisplayBytes
-    )
-    return AuthorizationRequest(
-      runID: context.runID,
-      toolCallID: call.id,
-      capability: CapabilityID(rawValue: "process.execute"),
-      operation: "run",
-      resource: ProcessAuthorizationResource.resource(
-        for: request,
-        identity: identity,
-        key: authorizationKey
-      ),
-      details: [
+    do {
+      try Task.checkCancellation()
+      let request = try validatedRequest(for: call, in: context)
+      let identity = try ProcessExecutionIdentity.capture(for: request)
+      let argumentBytes = request.arguments.reduce(0) { total, argument in
+        total + argument.utf8.count
+      }
+      guard let environmentBytes = ProcessExecutionEnvironment.byteCount(request.environment) else {
+        throw ProcessExecutionError.invalidRequest
+      }
+
+      guard let renderedArguments = ProcessPromptText.renderArguments(
+        [request.executable.path] + request.arguments,
+        maximumBytes: maximumAuthorizationDetailsBytes
+      ) else {
+        throw ProcessExecutionError.authorizationDetailsTooLarge
+      }
+      let environmentNames = request.environment.keys.sorted()
+      let environmentNamesBytes: Int
+      do {
+        environmentNamesBytes = try JSONEncoder().encode(environmentNames).count
+      } catch {
+        throw ProcessExecutionError.invalidRequest
+      }
+      guard environmentNamesBytes <= maximumAuthorizationDetailsBytes else {
+        throw ProcessExecutionError.authorizationDetailsTooLarge
+      }
+
+      let details: [String: JSONValue] = [
         "executable": .string(request.executable.path),
         "working_directory": .string(request.workingDirectory.path),
-        "argv": .array(renderedArguments.values.map { .string($0) }),
-        "argv_truncated": .boolean(renderedArguments.truncated),
+        "argv": .array(renderedArguments.map { .string($0) }),
         "argv_count": .integer(Int64(request.arguments.count + 1)),
         "argument_count": .integer(Int64(request.arguments.count)),
         "argument_bytes": .integer(Int64(argumentBytes)),
         "environment_names": .array(
-          request.environment.keys.sorted().map { .string($0) }
+          environmentNames.map { .string($0) }
         ),
         "environment_variable_count": .integer(Int64(request.environment.count)),
         "environment_bytes": .integer(Int64(environmentBytes)),
         "executable_identity": identityValue(identity.executable),
         "working_directory_identity": identityValue(identity.workingDirectory),
         "timeout_seconds": .integer(Int64(request.timeoutSeconds)),
-      ],
-      explanation: "Allow Hex to run this exact local process invocation."
-    )
+      ]
+      let detailsBytes: Int
+      do {
+        detailsBytes = try JSONEncoder().encode(details).count
+      } catch {
+        throw ProcessExecutionError.invalidRequest
+      }
+      guard detailsBytes <= maximumAuthorizationDetailsBytes else {
+        throw ProcessExecutionError.authorizationDetailsTooLarge
+      }
+
+      try Task.checkCancellation()
+      // Keep a bounded pending snapshot so the external authorization decision can be followed by
+      // an identity comparison; this is not itself an authorization grant. Recording is last so
+      // all prompt-size validation completes before state can become pending.
+      try await authorizationLedger.record(
+        runID: context.runID,
+        toolCallID: call.id,
+        request: request,
+        identity: identity
+      )
+      try Task.checkCancellation()
+      return AuthorizationRequest(
+        runID: context.runID,
+        toolCallID: call.id,
+        capability: CapabilityID(rawValue: "process.execute"),
+        operation: "run",
+        resource: ProcessAuthorizationResource.resource(
+          for: request,
+          identity: identity,
+          key: authorizationKey
+        ),
+        details: details,
+        explanation: "Allow Hex to run this exact local process invocation."
+      )
+    } catch {
+      // A cancelled or malformed authorization attempt must not leave an approval snapshot that a
+      // later retry could consume. The ledger operation itself is non-throwing and actor-owned.
+      await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
+      throw error
+    }
   }
 
   public func execute(
     _ call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> ToolResult {
-    try Task.checkCancellation()
     do {
+      try Task.checkCancellation()
       let request = try validatedRequest(for: call, in: context)
       guard let snapshot = await authorizationLedger.take(
         runID: context.runID,
@@ -134,6 +178,9 @@ public struct ProcessRunTool: HostTool, Sendable {
       try Task.checkCancellation()
       return ProcessToolResult.result(bounded(result), callID: call.id)
     } catch {
+      // This also covers validation/cancellation before take(), where a pending authorization may
+      // otherwise survive until the ledger TTL expires.
+      await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
       return try ProcessToolResult.failure(error, callID: call.id)
     }
   }

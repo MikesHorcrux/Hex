@@ -77,9 +77,10 @@ public struct ProcessExecutionIdentity: Equatable, Sendable {
   /// Capture the executable by path and the directory from the already-open directory descriptor.
   /// The descriptor makes the selected working directory stable even if its path is retargeted
   /// after validation. The executable still has the unavoidable final `posix_spawn` path lookup
-  /// race: a replacement after this `lstat` and before `posix_spawn`'s pathname lookup could still
-  /// be selected. Eliminating that residual requires an exec-by-descriptor API unavailable through
-  /// this `posix_spawn` interface; the immediate check narrows the window as far as possible.
+  /// race: a same-UID replacement after this last identity check and before `posix_spawn`'s
+  /// pathname lookup could still be selected. This accepted residual requires an exec-by-descriptor
+  /// API to eliminate, which is unavailable through this `posix_spawn` interface; the immediate
+  /// check narrows the window as far as possible.
   static func capture(
     executablePath: String,
     workingDirectoryDescriptor: Int32

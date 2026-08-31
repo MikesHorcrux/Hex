@@ -59,6 +59,8 @@ enum ProcessToolResult {
     switch error {
     case is ToolCallArgumentsError, ProcessExecutionError.invalidRequest:
       code = "invalid_arguments"
+    case ProcessExecutionError.authorizationDetailsTooLarge:
+      code = "authorization_details_too_large"
     case ProcessExecutionError.invalidConfiguration:
       code = "invalid_configuration"
     case ProcessExecutionError.authorizationRequired:

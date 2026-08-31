@@ -3,6 +3,8 @@ import Foundation
 public struct ProcessExecutionRequest: Equatable, Sendable {
   /// An executable path passed directly to `posix_spawn`; arguments are never shell-interpolated.
   public let executable: URL
+  /// Arguments are displayed in full (escaped) during authorization. Callers must never put
+  /// secrets in this vector; use the injected environment for private values instead.
   public let arguments: [String]
   public let workingDirectory: URL
   /// The complete environment passed to the child. An omitted environment is intentionally empty;
