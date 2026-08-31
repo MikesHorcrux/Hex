@@ -71,12 +71,18 @@ struct OpenAIResponsesStreamProcessor {
       throw OpenAIResponsesProviderError.malformedStream
     }
     try validateSequence(in: object)
+    if isOutputEvent(type) {
+      try beginOutput()
+    }
 
     switch type {
     case "response.created":
       return try processCreated(object)
-    case "response.queued", "response.in_progress":
-      try requireStreamingResponse(object)
+    case "response.queued":
+      try processQueued(object)
+      return emptyResult()
+    case "response.in_progress":
+      try processInProgress(object)
       return emptyResult()
     case "response.output_item.added":
       try processOutputItemAdded(object)
@@ -131,7 +137,13 @@ struct OpenAIResponsesStreamProcessor {
       return try processTerminal(object, expectedStatus: "completed")
     case "response.incomplete":
       return try processTerminal(object, expectedStatus: "incomplete")
-    case "response.failed", "response.cancelled", "error":
+    case "response.failed":
+      try processFailure(object, expectedStatus: "failed")
+      throw OpenAIResponsesProviderError.responseFailed
+    case "response.cancelled":
+      try processFailure(object, expectedStatus: "cancelled")
+      throw OpenAIResponsesProviderError.responseFailed
+    case "error":
       throw OpenAIResponsesProviderError.responseFailed
     default:
       throw OpenAIResponsesProviderError.malformedStream
@@ -160,11 +172,88 @@ struct OpenAIResponsesStreamProcessor {
       throw OpenAIResponsesProviderError.malformedStream
     }
     responseID = identifier
-    lifecycle = .streaming
+    lifecycle = status == "queued" ? .createdQueued : .createdInProgress
     return OpenAIResponsesProcessedEvent(
       events: [.started(providerResponseID: identifier)],
       terminalResult: nil
     )
+  }
+
+  private mutating func processQueued(_ object: [String: JSONValue]) throws {
+    try validateProgressResponse(object, expectedStatus: "queued")
+    guard lifecycle == .createdQueued else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+    lifecycle = .queued
+  }
+
+  private mutating func processInProgress(_ object: [String: JSONValue]) throws {
+    try validateProgressResponse(object, expectedStatus: "in_progress")
+    switch lifecycle {
+    case .createdQueued, .createdInProgress, .queued:
+      lifecycle = .inProgress
+    case .awaitingStart, .inProgress, .output, .terminal:
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+  }
+
+  private mutating func beginOutput() throws {
+    try requireStreaming()
+    lifecycle = .output
+  }
+
+  private func isOutputEvent(_ type: String) -> Bool {
+    switch type {
+    case "response.output_item.added",
+      "response.content_part.added",
+      "response.content_part.done",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.output_text.annotation.added",
+      "response.refusal.delta",
+      "response.refusal.done",
+      "response.reasoning_summary_part.added",
+      "response.reasoning_summary_part.done",
+      "response.reasoning_summary_text.delta",
+      "response.reasoning_summary_text.done",
+      "response.reasoning_text.delta",
+      "response.reasoning_text.done",
+      "response.function_call_arguments.delta",
+      "response.function_call_arguments.done",
+      "response.output_item.done":
+      true
+    default:
+      false
+    }
+  }
+
+  private mutating func processFailure(
+    _ object: [String: JSONValue],
+    expectedStatus: String
+  ) throws {
+    try requireStreaming()
+    let response = try requiredObject("response", in: object)
+    guard
+      try requiredString("id", in: response) == responseID,
+      try requiredString("status", in: response) == expectedStatus
+    else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+    lifecycle = .terminal
+  }
+
+  private func validateProgressResponse(
+    _ object: [String: JSONValue],
+    expectedStatus: String
+  ) throws {
+    try requireStreaming()
+    let response = try requiredObject("response", in: object)
+    guard
+      try requiredString("id", in: response) == responseID,
+      try requiredString("status", in: response) == expectedStatus
+    else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
   }
 
   private mutating func processOutputItemAdded(_ object: [String: JSONValue]) throws {
@@ -1125,16 +1214,8 @@ struct OpenAIResponsesStreamProcessor {
     return object
   }
 
-  private func requireStreamingResponse(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let response = try requiredObject("response", in: object)
-    guard try requiredString("id", in: response) == responseID else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-  }
-
   private func requireStreaming() throws {
-    guard lifecycle == .streaming else {
+    guard lifecycle.isStreaming else {
       throw OpenAIResponsesProviderError.malformedStream
     }
   }
