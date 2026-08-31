@@ -6,6 +6,16 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		484558424C44000000000001 /* HexCore in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000001 /* HexCore */; };
+		484558424C44000000000002 /* HexRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000002 /* HexRuntime */; };
+		484558424C44000000000003 /* HexPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000003 /* HexPersistence */; };
+		484558424C44000000000004 /* HexProviders in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000004 /* HexProviders */; };
+		484558424C44000000000005 /* HexCapabilities in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000005 /* HexCapabilities */; };
+		484558424C44000000000006 /* HexPersonality in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000006 /* HexPersonality */; };
+		484558424C44000000000007 /* HexIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000007 /* HexIPC */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		7FCF29593044FB770069F58B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +62,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				484558424C44000000000001 /* HexCore in Frameworks */,
+				484558424C44000000000002 /* HexRuntime in Frameworks */,
+				484558424C44000000000003 /* HexPersistence in Frameworks */,
+				484558424C44000000000004 /* HexProviders in Frameworks */,
+				484558424C44000000000005 /* HexCapabilities in Frameworks */,
+				484558424C44000000000006 /* HexPersonality in Frameworks */,
+				484558424C44000000000007 /* HexIPC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +129,13 @@
 			);
 			name = Hex;
 			packageProductDependencies = (
+				484558505244000000000001 /* HexCore */,
+				484558505244000000000002 /* HexRuntime */,
+				484558505244000000000003 /* HexPersistence */,
+				484558505244000000000004 /* HexProviders */,
+				484558505244000000000005 /* HexCapabilities */,
+				484558505244000000000006 /* HexPersonality */,
+				484558505244000000000007 /* HexIPC */,
 			);
 			productName = Hex;
 			productReference = 7FCF29493044FB760069F58B /* Hex.app */;
@@ -195,6 +219,9 @@
 			);
 			mainGroup = 7FCF29403044FB760069F58B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7FCF294A3044FB760069F58B /* Products */;
 			projectDirPath = "";
@@ -330,6 +357,8 @@
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -386,6 +415,8 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -417,7 +448,8 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -449,7 +481,8 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -469,7 +502,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hex.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hex";
 			};
 			name = Debug;
@@ -490,7 +524,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hex.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hex";
 			};
 			name = Release;
@@ -509,7 +544,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = Hex;
 			};
 			name = Debug;
@@ -528,7 +564,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = Hex;
 			};
 			name = Release;
@@ -573,6 +610,51 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/HexKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		484558505244000000000001 /* HexCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexCore;
+		};
+		484558505244000000000002 /* HexRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexRuntime;
+		};
+		484558505244000000000003 /* HexPersistence */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexPersistence;
+		};
+		484558505244000000000004 /* HexProviders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexProviders;
+		};
+		484558505244000000000005 /* HexCapabilities */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexCapabilities;
+		};
+		484558505244000000000006 /* HexPersonality */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexPersonality;
+		};
+		484558505244000000000007 /* HexIPC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexIPC;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 7FCF29413044FB760069F58B /* Project object */;
 }
