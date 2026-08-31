@@ -8,6 +8,7 @@ public actor AgentRuntime {
   let configuration: AgentRuntimeConfiguration
 
   private var activeRunIDs: Set<AgentRunID> = []
+  private var authorizationScopeRunIDs: Set<AgentRunID> = []
   var runsWithStartedTools: Set<AgentRunID> = []
 
   public init(
@@ -30,21 +31,22 @@ public actor AgentRuntime {
     }
     defer {
       activeRunIDs.remove(request.runID)
+      authorizationScopeRunIDs.remove(request.runID)
       runsWithStartedTools.remove(request.runID)
     }
 
     do {
       let result = try await performRun(request)
-      await authorizationProvider.endRun(request.runID)
+      await endAuthorizationScopeIfOwned(for: request.runID)
       return result
     } catch is CancellationError {
-      await authorizationProvider.endRun(request.runID)
+      await endAuthorizationScopeIfOwned(for: request.runID)
       throw CancellationError()
     } catch let error as AgentRuntimeError {
-      await authorizationProvider.endRun(request.runID)
+      await endAuthorizationScopeIfOwned(for: request.runID)
       throw error
     } catch {
-      await authorizationProvider.endRun(request.runID)
+      await endAuthorizationScopeIfOwned(for: request.runID)
       throw AgentRuntimeError.invalidState("The runtime encountered an unexpected failure.")
     }
   }
@@ -59,6 +61,7 @@ public actor AgentRuntime {
       try await requireUnusedRunID(request.runID)
 
       try await append(.runStarted, to: request.runID)
+      authorizationScopeRunIDs.insert(request.runID)
       didStart = true
       for message in request.initialMessages {
         try await append(.messageAppended(message), to: request.runID)
@@ -93,5 +96,12 @@ public actor AgentRuntime {
       }
       throw error
     }
+  }
+
+  private func endAuthorizationScopeIfOwned(for runID: AgentRunID) async {
+    guard authorizationScopeRunIDs.remove(runID) != nil else {
+      return
+    }
+    await authorizationProvider.endRun(runID)
   }
 }

@@ -102,6 +102,97 @@ struct AgentRuntimeAuthorizationLifecycleTests {
     #expect(await authorization.endedRunIDs() == [request.runID])
   }
 
+  @Test
+  func preflightFailureInAnotherRuntimeCannotEndActiveRunAuthority() async {
+    let authorization = ScriptedAuthorizationProvider()
+    let activeProvider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(),
+      models: [RuntimeTestFixture.model()],
+      scripts: [.suspend]
+    )
+    let runID = AgentRunID()
+    let activeRuntime = RuntimeTestFixture.runtime(
+      provider: activeProvider,
+      executor: ScriptedToolExecutor(tools: []),
+      authorization: authorization
+    )
+    let contenderRuntime = RuntimeTestFixture.runtime(
+      provider: ScriptedInferenceProvider(
+        descriptor: RuntimeTestFixture.descriptor(),
+        models: [RuntimeTestFixture.model()],
+        scripts: [.events(RuntimeTestFixture.textEvents())]
+      ),
+      executor: ScriptedToolExecutor(tools: []),
+      authorization: authorization
+    )
+    let activeTask = Task {
+      try await activeRuntime.run(RuntimeTestFixture.request(runID: runID))
+    }
+    await waitUntil { await activeProvider.requests().count == 1 }
+
+    do {
+      _ = try await contenderRuntime.run(
+        RuntimeTestFixture.request(runID: runID, messages: [])
+      )
+      Issue.record("Expected invalidRequest.")
+    } catch AgentRuntimeError.invalidRequest {
+      // Expected before durable run ownership.
+    } catch {
+      Issue.record("Expected invalidRequest, received: \(error)")
+    }
+
+    #expect(await authorization.endedRunIDs().isEmpty)
+    activeTask.cancel()
+    await expectCancellation(activeTask)
+    #expect(await authorization.endedRunIDs() == [runID])
+  }
+
+  @Test
+  func durableDuplicateInAnotherRuntimeCannotEndActiveRunAuthority() async {
+    let authorization = ScriptedAuthorizationProvider()
+    let journal = RecordingEventJournal()
+    let activeProvider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(),
+      models: [RuntimeTestFixture.model()],
+      scripts: [.suspend]
+    )
+    let runID = AgentRunID()
+    let activeRuntime = RuntimeTestFixture.runtime(
+      provider: activeProvider,
+      executor: ScriptedToolExecutor(tools: []),
+      authorization: authorization,
+      journal: journal
+    )
+    let contenderRuntime = RuntimeTestFixture.runtime(
+      provider: ScriptedInferenceProvider(
+        descriptor: RuntimeTestFixture.descriptor(),
+        models: [RuntimeTestFixture.model()],
+        scripts: [.events(RuntimeTestFixture.textEvents())]
+      ),
+      executor: ScriptedToolExecutor(tools: []),
+      authorization: authorization,
+      journal: journal
+    )
+    let activeTask = Task {
+      try await activeRuntime.run(RuntimeTestFixture.request(runID: runID))
+    }
+    await waitUntil { await activeProvider.requests().count == 1 }
+
+    do {
+      _ = try await contenderRuntime.run(RuntimeTestFixture.request(runID: runID))
+      Issue.record("Expected duplicateRun.")
+    } catch AgentRuntimeError.duplicateRun(let duplicateID) {
+      #expect(duplicateID == runID)
+    } catch {
+      Issue.record("Expected duplicateRun, received: \(error)")
+    }
+
+    #expect(await authorization.endedRunIDs().isEmpty)
+    activeTask.cancel()
+    await expectCancellation(activeTask)
+    #expect(await authorization.endedRunIDs() == [runID])
+  }
+
   private func expectCancellation(_ task: Task<AgentRunResult, any Error>) async {
     do {
       _ = try await task.value
