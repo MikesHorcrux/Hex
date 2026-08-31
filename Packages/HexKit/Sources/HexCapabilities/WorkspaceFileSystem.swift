@@ -38,6 +38,9 @@ public actor WorkspaceFileSystem {
       throw WorkspaceFileSystemError.invalidRoot
     }
     let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+    guard WorkspacePathScalarPolicy.isPromptSafe(canonicalRoot.path) else {
+      throw WorkspaceFileSystemError.invalidRoot
+    }
     let descriptor = Darwin.open(
       canonicalRoot.path,
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC

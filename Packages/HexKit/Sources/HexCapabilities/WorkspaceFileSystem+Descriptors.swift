@@ -170,7 +170,7 @@ extension WorkspaceFileSystem {
         component != "..",
         component.utf8.count <= 255,
         !component.contains("/"),
-        !component.contains("\0")
+        WorkspacePathScalarPolicy.isPromptSafe(component)
       else {
         throw error
       }
@@ -214,8 +214,12 @@ extension WorkspaceFileSystem {
     workingDirectory: URL?
   ) throws -> String {
     let components = try combinedComponents(path: path, workingDirectory: workingDirectory)
-    return components.reduce(rootURL) { partialURL, component in
+    let resource = components.reduce(rootURL) { partialURL, component in
       partialURL.appending(path: component)
     }.path
+    guard WorkspacePathScalarPolicy.isPromptSafe(resource) else {
+      throw WorkspaceFileSystemError.invalidPath
+    }
+    return resource
   }
 }

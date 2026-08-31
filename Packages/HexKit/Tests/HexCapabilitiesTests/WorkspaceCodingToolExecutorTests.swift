@@ -138,6 +138,19 @@ struct WorkspaceCodingToolExecutorTests {
       "mark-\u{200E}.swift",
       "right-mark-\u{200F}.swift",
       "arabic-mark-\u{061C}.swift",
+      "zero-width-space-\u{200B}.swift",
+      "zero-width-non-joiner-\u{200C}.swift",
+      "zero-width-joiner-\u{200D}.swift",
+      "word-joiner-\u{2060}.swift",
+      "deprecated-bidi-\u{206A}.swift",
+      "deprecated-bidi-\u{206B}.swift",
+      "deprecated-bidi-\u{206C}.swift",
+      "deprecated-bidi-\u{206D}.swift",
+      "deprecated-bidi-\u{206E}.swift",
+      "deprecated-bidi-\u{206F}.swift",
+      "byte-order-mark-\u{FEFF}.swift",
+      "line-separator-\u{2028}.swift",
+      "paragraph-separator-\u{2029}.swift",
     ]
 
     for (index, path) in unsafePaths.enumerated() {
@@ -148,6 +161,40 @@ struct WorkspaceCodingToolExecutorTests {
       )
       await #expect(throws: WorkspaceFileSystemError.invalidPath) {
         _ = try await executor.authorizationRequest(for: call, in: context)
+      }
+    }
+  }
+
+  @Test
+  func rejectsPromptUnsafeCanonicalWorkspaceRoots() async throws {
+    let unsafeRootFragments = [
+      "line\nfeed",
+      "escape-\u{001B}",
+      "override-\u{202E}",
+      "zero-width-space-\u{200B}",
+      "zero-width-non-joiner-\u{200C}",
+      "zero-width-joiner-\u{200D}",
+      "word-joiner-\u{2060}",
+      "deprecated-bidi-\u{206A}",
+      "deprecated-bidi-\u{206B}",
+      "deprecated-bidi-\u{206C}",
+      "deprecated-bidi-\u{206D}",
+      "deprecated-bidi-\u{206E}",
+      "deprecated-bidi-\u{206F}",
+      "byte-order-mark-\u{FEFF}",
+    ]
+
+    for (index, fragment) in unsafeRootFragments.enumerated() {
+      let container = FileManager.default.temporaryDirectory.appending(
+        path: "hex-unsafe-root-\(index)-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+      let root = container.appending(path: fragment, directoryHint: .isDirectory)
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: container) }
+
+      #expect(throws: WorkspaceFileSystemError.invalidRoot) {
+        _ = try WorkspaceFileSystem(root: root)
       }
     }
   }

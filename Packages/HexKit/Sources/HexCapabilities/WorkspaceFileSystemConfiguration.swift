@@ -94,6 +94,6 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
       && value != ".."
       && value.utf8.count <= 255
       && !value.contains("/")
-      && !value.contains("\0")
+      && WorkspacePathScalarPolicy.isPromptSafe(value)
   }
 }

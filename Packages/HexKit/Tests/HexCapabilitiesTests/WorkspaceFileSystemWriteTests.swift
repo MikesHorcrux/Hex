@@ -422,6 +422,153 @@ struct WorkspaceFileSystemWriteTests {
     #expect(try String(contentsOf: destination, encoding: .utf8) == "original")
   }
 
+  @Test
+  func postValidationIdentityReplacementIsPreservedAndFailsClosed() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Identity.swift")
+    try Data("original".utf8).write(to: destination)
+    let externalContent = "external replacement after validation"
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      replacementPostValidationHook: {
+        try Data(externalContent.utf8).write(to: destination, options: .atomic)
+      }
+    )
+    let initial = try await fileSystem.readTextFile(at: "Sources/Identity.swift", relativeTo: nil)
+
+    await #expect(throws: WorkspaceFileSystemError.revisionConflict) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/Identity.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == externalContent)
+  }
+
+  @Test
+  func postValidationExtendedAttributeMutationIsPreservedAndFailsClosed() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Metadata.swift")
+    try Data("original".utf8).write(to: destination)
+    let attributeName = "com.lunarmoth.hex.concurrent-metadata"
+    let attributeValue = Data("external metadata".utf8)
+    let fileSystem = try WorkspaceFileSystem(
+      root: root,
+      replacementPublicationHook: nil,
+      replacementPostValidationHook: {
+        try Self.setExtendedAttribute(
+          named: attributeName,
+          value: attributeValue,
+          at: destination
+        )
+      }
+    )
+    let initial = try await fileSystem.readTextFile(at: "Sources/Metadata.swift", relativeTo: nil)
+
+    await #expect(throws: WorkspaceFileSystemError.revisionConflict) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/Metadata.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "original")
+    #expect(try Self.extendedAttribute(named: attributeName, at: destination) == attributeValue)
+  }
+
+  @Test
+  func successfulReplacementPreservesExistingMetadata() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Metadata.swift")
+    try Data("original".utf8).write(to: destination)
+    let attributeName = "com.lunarmoth.hex.existing-metadata"
+    let attributeValue = Data("preserve me".utf8)
+    try Self.setExtendedAttribute(named: attributeName, value: attributeValue, at: destination)
+    #expect(chmod(destination.path, mode_t(0o640)) == 0)
+    let expectedFlags = UInt32(UF_NODUMP | UF_HIDDEN)
+    #expect(chflags(destination.path, expectedFlags) == 0)
+    let fileSystem = try WorkspaceFileSystem(root: root)
+    let initial = try await fileSystem.readTextFile(at: "Sources/Metadata.swift", relativeTo: nil)
+
+    _ = try await fileSystem.writeTextFile(
+      "agent replacement",
+      at: "Sources/Metadata.swift",
+      expectedRevision: initial.revision,
+      relativeTo: nil
+    )
+
+    #expect(try Self.extendedAttribute(named: attributeName, at: destination) == attributeValue)
+    var status = stat()
+    #expect(lstat(destination.path, &status) == 0)
+    #expect(status.st_mode & mode_t(0o7777) == mode_t(0o640))
+    #expect(status.st_flags == expectedFlags)
+  }
+
+  @Test
+  func rejectsDeletionBlockingFlagsBeforeCreatingTemporaryFiles() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/Immutable.swift")
+    try Data("original".utf8).write(to: destination)
+    #expect(chflags(destination.path, UInt32(UF_IMMUTABLE)) == 0)
+    defer { _ = chflags(destination.path, 0) }
+    let fileSystem = try WorkspaceFileSystem(root: root)
+    let initial = try await fileSystem.readTextFile(at: "Sources/Immutable.swift", relativeTo: nil)
+
+    await #expect(throws: WorkspaceFileSystemError.ioFailure) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/Immutable.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "original")
+    #expect(
+      try FileManager.default.contentsOfDirectory(
+        atPath: destination.deletingLastPathComponent().path
+      ) == ["Immutable.swift"]
+    )
+  }
+
+  @Test
+  func rejectsAccessControlListsBeforeCreatingTemporaryFiles() async throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let destination = root.appending(path: "Sources/ACL.swift")
+    try Data("original".utf8).write(to: destination)
+    try Self.setDenyDeleteAccessControlList(at: destination)
+    defer { try? Self.removeAccessControlList(at: destination) }
+    let fileSystem = try WorkspaceFileSystem(root: root)
+    let initial = try await fileSystem.readTextFile(at: "Sources/ACL.swift", relativeTo: nil)
+
+    await #expect(throws: WorkspaceFileSystemError.ioFailure) {
+      _ = try await fileSystem.writeTextFile(
+        "agent replacement",
+        at: "Sources/ACL.swift",
+        expectedRevision: initial.revision,
+        relativeTo: nil
+      )
+    }
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "original")
+    #expect(
+      try FileManager.default.contentsOfDirectory(
+        atPath: destination.deletingLastPathComponent().path
+      ) == ["ACL.swift"]
+    )
+  }
+
   private func makeRoot() throws -> URL {
     let root = FileManager.default.temporaryDirectory.appending(
       path: "hex-workspace-write-\(UUID().uuidString)",
@@ -432,5 +579,92 @@ struct WorkspaceFileSystemWriteTests {
       withIntermediateDirectories: true
     )
     return root
+  }
+
+  private static func setExtendedAttribute(
+    named name: String,
+    value: Data,
+    at url: URL
+  ) throws {
+    let result = try value.withUnsafeBytes { bytes in
+      try url.path.withCString { path in
+        try name.withCString { namePointer in
+          let result = setxattr(
+            path,
+            namePointer,
+            bytes.baseAddress,
+            bytes.count,
+            0,
+            0
+          )
+          guard result == 0 else {
+            throw WorkspaceFileSystemError.ioFailure
+          }
+          return result
+        }
+      }
+    }
+    #expect(result == 0)
+  }
+
+  private static func extendedAttribute(named name: String, at url: URL) throws -> Data {
+    let byteCount = url.path.withCString { path in
+      name.withCString { namePointer in
+        getxattr(path, namePointer, nil, 0, 0, 0)
+      }
+    }
+    guard byteCount >= 0 else {
+      throw WorkspaceFileSystemError.ioFailure
+    }
+    var value = Data(count: byteCount)
+    let readCount = value.withUnsafeMutableBytes { bytes in
+      url.path.withCString { path in
+        name.withCString { namePointer in
+          getxattr(path, namePointer, bytes.baseAddress, bytes.count, 0, 0)
+        }
+      }
+    }
+    guard readCount == byteCount else {
+      throw WorkspaceFileSystemError.ioFailure
+    }
+    return value
+  }
+
+  private static func setDenyDeleteAccessControlList(at url: URL) throws {
+    let descriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    guard descriptor >= 0 else {
+      throw WorkspaceFileSystemError.ioFailure
+    }
+    defer { Darwin.close(descriptor) }
+    let text = """
+      !#acl 1
+      group:ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C:everyone:12:deny:delete
+
+      """
+    let result = text.withCString { textPointer -> Int32 in
+      guard let acl = acl_from_text(textPointer) else {
+        return -1
+      }
+      defer { _ = acl_free(UnsafeMutableRawPointer(acl)) }
+      return acl_set_fd_np(descriptor, acl, ACL_TYPE_EXTENDED)
+    }
+    guard result == 0 else {
+      throw WorkspaceFileSystemError.ioFailure
+    }
+  }
+
+  private static func removeAccessControlList(at url: URL) throws {
+    let descriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    guard descriptor >= 0 else {
+      throw WorkspaceFileSystemError.ioFailure
+    }
+    defer { Darwin.close(descriptor) }
+    guard let acl = acl_init(1) else {
+      throw WorkspaceFileSystemError.ioFailure
+    }
+    defer { _ = acl_free(UnsafeMutableRawPointer(acl)) }
+    guard acl_set_fd_np(descriptor, acl, ACL_TYPE_EXTENDED) == 0 else {
+      throw WorkspaceFileSystemError.ioFailure
+    }
   }
 }
