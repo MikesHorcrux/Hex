@@ -13,6 +13,167 @@ struct MCPExecutableSnapshotTests {
     #expect(!requirement.contains("generic"))
   }
 
+  @Test("Allows only the exact standard Applications metadata")
+  func acceptsOnlyStandardApplicationsMetadata() {
+    let valid = metadata(
+      fileType: S_IFDIR,
+      permissions: 0o775,
+      uid: 0,
+      gid: MCPExecutableSnapshot.standardApplicationsGroupID
+    )
+    #expect(MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(valid))
+
+    let wrongGroup = metadata(
+      fileType: S_IFDIR,
+      permissions: 0o775,
+      uid: 0,
+      gid: MCPExecutableSnapshot.standardApplicationsGroupID + 1
+    )
+    #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(wrongGroup))
+
+    let wrongMode = metadata(
+      fileType: S_IFDIR,
+      permissions: 0o755,
+      uid: 0,
+      gid: MCPExecutableSnapshot.standardApplicationsGroupID
+    )
+    #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(wrongMode))
+
+    let wrongOwner = metadata(
+      fileType: S_IFDIR,
+      permissions: 0o775,
+      uid: geteuid(),
+      gid: MCPExecutableSnapshot.standardApplicationsGroupID
+    )
+    #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(wrongOwner))
+
+    let symlink = metadata(
+      fileType: S_IFLNK,
+      permissions: 0o777,
+      uid: 0,
+      gid: MCPExecutableSnapshot.standardApplicationsGroupID
+    )
+    #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(symlink))
+  }
+
+  @Test("Restricts trusted Xcode roots and descendant metadata")
+  func restrictsTrustedXcodeRootsAndDescendants() {
+    #expect(
+      MCPExecutableSnapshot.isExactTrustedXcodeBundlePath(
+        MCPExecutableSnapshot.standardXcodeBundlePath
+      )
+    )
+    #expect(!MCPExecutableSnapshot.isExactTrustedXcodeBundlePath("/tmp/Xcode.app"))
+    #expect(!MCPExecutableSnapshot.isExactTrustedXcodeBundlePath("/Applications/Other.app"))
+    #expect(!MCPExecutableSnapshot.isExactTrustedXcodeBundlePath("/Applications/Xcode.app/"))
+
+    let valid = metadata(fileType: S_IFDIR, permissions: 0o755, uid: 0, gid: 0)
+    #expect(MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(valid))
+
+    let nonRootOwner = geteuid() == 0 ? uid_t(501) : uid_t(0)
+    let userOwned = metadata(fileType: S_IFDIR, permissions: 0o755, uid: nonRootOwner, gid: 0)
+    #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(userOwned))
+
+    let groupWritable = metadata(fileType: S_IFDIR, permissions: 0o775, uid: 0, gid: 0)
+    #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(groupWritable))
+
+    let worldWritable = metadata(fileType: S_IFDIR, permissions: 0o757, uid: 0, gid: 0)
+    #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(worldWritable))
+
+    let setID = metadata(fileType: S_IFDIR, permissions: 0o4755, uid: 0, gid: 0)
+    #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(setID))
+  }
+
+  @Test("Allows hard-linked regular files only for trusted root-owned sources")
+  func allowsHardLinksOnlyForTrustedRootOwnedSources() {
+    let nonRootOwner = geteuid() == 0 ? uid_t(501) : uid_t(0)
+    let trusted = metadata(
+      fileType: S_IFREG,
+      permissions: 0o444,
+      uid: 0,
+      gid: 0,
+      linkCount: 2,
+      size: 1
+    )
+    #expect(
+      MCPExecutableSnapshot.isAcceptableRuntimeSource(
+        trusted,
+        requireExecutable: false,
+        allowsTrustedHardLinks: true
+      )
+    )
+
+    let userOwned = metadata(
+      fileType: S_IFREG,
+      permissions: 0o444,
+      uid: nonRootOwner,
+      gid: 0,
+      linkCount: 2,
+      size: 1
+    )
+    #expect(
+      !MCPExecutableSnapshot.isAcceptableRuntimeSource(
+        userOwned,
+        requireExecutable: false,
+        allowsTrustedHardLinks: true
+      )
+    )
+  }
+
+  @Test("Detects trusted Xcode ancestor and bundle identity swaps")
+  func detectsTrustedXcodeIdentitySwaps() {
+    let ancestor = metadata(
+      fileType: S_IFDIR,
+      permissions: 0o775,
+      uid: 0,
+      gid: MCPExecutableSnapshot.standardApplicationsGroupID,
+      inode: 10
+    )
+    let bundle = metadata(
+      fileType: S_IFDIR,
+      permissions: 0o755,
+      uid: 0,
+      gid: 0,
+      inode: 20
+    )
+    #expect(
+      MCPExecutableSnapshot.hasStableTrustedXcodePathIdentities(
+        ancestorInitialStatus: ancestor,
+        ancestorDescriptorStatus: ancestor,
+        ancestorPathStatus: ancestor,
+        bundleInitialStatus: bundle,
+        bundleDescriptorStatus: bundle,
+        bundlePathStatus: bundle
+      )
+    )
+
+    var swappedBundle = bundle
+    swappedBundle.st_ino += 1
+    #expect(
+      !MCPExecutableSnapshot.hasStableTrustedXcodePathIdentities(
+        ancestorInitialStatus: ancestor,
+        ancestorDescriptorStatus: ancestor,
+        ancestorPathStatus: ancestor,
+        bundleInitialStatus: bundle,
+        bundleDescriptorStatus: bundle,
+        bundlePathStatus: swappedBundle
+      )
+    )
+
+    var replacedAncestor = ancestor
+    replacedAncestor.st_mode = S_IFLNK | 0o777
+    #expect(
+      !MCPExecutableSnapshot.hasStableTrustedXcodePathIdentities(
+        ancestorInitialStatus: ancestor,
+        ancestorDescriptorStatus: ancestor,
+        ancestorPathStatus: replacedAncestor,
+        bundleInitialStatus: bundle,
+        bundleDescriptorStatus: bundle,
+        bundlePathStatus: bundle
+      )
+    )
+  }
+
   @Test("Parses and merges bounded fat Mach-O dependency graphs")
   func parsesFatMachODependencyGraph() throws {
     let firstSlice = thinImage(
@@ -328,6 +489,26 @@ struct MCPExecutableSnapshotTests {
     guard descriptor >= 0 else { throw MCPClientSessionError.connectionClosed }
     defer { Darwin.close(descriptor) }
     return try MCPMachOImage.read(from: descriptor, fileSize: off_t(bytes.count))
+  }
+
+  private func metadata(
+    fileType: mode_t,
+    permissions: mode_t,
+    uid: uid_t,
+    gid: gid_t,
+    inode: ino_t = 1,
+    linkCount: nlink_t = 1,
+    size: off_t = 0
+  ) -> stat {
+    var status = stat()
+    status.st_dev = 1
+    status.st_ino = inode
+    status.st_mode = fileType | permissions
+    status.st_nlink = linkCount
+    status.st_uid = uid
+    status.st_gid = gid
+    status.st_size = size
+    return status
   }
 
   private func thinImage(commands: [Data]) -> Data {

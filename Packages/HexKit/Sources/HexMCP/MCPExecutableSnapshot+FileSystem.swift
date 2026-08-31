@@ -126,7 +126,8 @@ extension MCPExecutableSnapshot {
   static func openSourceDirectory(
     _ relativePath: String,
     beneath rootDescriptor: Int32,
-    missingIsAllowed: Bool
+    missingIsAllowed: Bool,
+    requiresRootOwnership: Bool = false
   ) throws -> Int32? {
     guard let normalized = normalizeRelativePath(relativePath, relativeTo: ""),
       normalized == relativePath
@@ -152,7 +153,10 @@ extension MCPExecutableSnapshot {
       var status = stat()
       guard
         fstat(nextDescriptor, &status) == 0,
-        isAcceptableSourceDirectory(status)
+        isAcceptableSourceDirectory(
+          status,
+          requiresRootOwnership: requiresRootOwnership
+        )
       else {
         Darwin.close(nextDescriptor)
         Darwin.close(currentDescriptor)
@@ -182,7 +186,8 @@ extension MCPExecutableSnapshot {
       let parentDescriptor = try openSourceDirectory(
         parentPath,
         beneath: rootDescriptor,
-        missingIsAllowed: missingIsAllowed
+        missingIsAllowed: missingIsAllowed,
+        requiresRootOwnership: allowsTrustedHardLinks
       )
     else {
       return nil

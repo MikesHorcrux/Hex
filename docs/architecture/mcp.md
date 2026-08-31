@@ -28,11 +28,15 @@ of silently changing the local legacy handshake.
   if any single source directory contains more than 2,048 names. Every policy permits at most 512
   linked images. A linked framework is copied with its resources and relative symlinks so bundle
   lookups remain local to the snapshot. Paths are limited to 4,096 bytes, 255-byte components, and
-  64 components. Apple-signed, root-owned Xcode bundles are the sole exception to the source-file
-  hard-link rule: their hard-linked regular resources are admitted only after the complete bundle
-  path is opened without following symlinks and its nested code signature satisfies the non-generic
-  `anchor apple and identifier "com.apple.dt.Xcode"` requirement; all other bundles keep the
-  single-link requirement.
+  64 components. Apple-signed, root-owned Xcode bundles installed at the exact standard
+  `/Applications/Xcode.app` path are the sole exception to the source-file hard-link rule:
+  the `/Applications` ancestor must be the real root-owned `admin`-group directory with its exact
+  standard `0775` mode, while the bundle and every traversed descendant component must be
+  root-owned and free of group/world-write and set-id bits. Their hard-linked regular resources
+  are admitted only after the complete bundle path is opened without following symlinks, its
+  ancestor and bundle-root descriptor identities remain stable across signature validation, and its
+  nested code signature satisfies the non-generic `anchor apple and identifier
+  "com.apple.dt.Xcode"` requirement; all other bundles keep the single-link requirement.
 - Admit snapshots through atomic claims in the fixed, owner-only
   `/private/tmp/.hex-mcp-snapshots.v1` namespace. The standard policy permits 32 retained slots;
   each slot admits at most 2,048 entries, 8 MiB of pathname and symbolic-link metadata, and
