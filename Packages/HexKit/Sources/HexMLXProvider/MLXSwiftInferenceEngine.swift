@@ -25,12 +25,15 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     self.artifactSnapshot = artifactSnapshot
     self.maximumBufferedEvents = maximumBufferedEvents
     generationRuns = { request, maximumOutputTokens, maximumContextTokens in
-      try await Self.makeGenerationRun(
+      try artifactSnapshot.validateBoundPath()
+      let run = try await Self.makeGenerationRun(
         model: model,
         request: request,
         maximumOutputTokens: maximumOutputTokens,
         maximumContextTokens: maximumContextTokens
       )
+      try artifactSnapshot.validateBoundPath()
+      return run
     }
   }
 
@@ -39,6 +42,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     defaultMaximumOutputTokens: Int,
     maximumContextTokens: Int = 32_768,
     maximumBufferedEvents: Int = 64,
+    artifactSnapshot: MLXModelArtifactSnapshot? = nil,
     generationRuns:
       @escaping @Sendable (
         InferenceRequest,
@@ -50,7 +54,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     self.defaultMaximumOutputTokens = defaultMaximumOutputTokens
     self.maximumContextTokens = maximumContextTokens
     self.maximumBufferedEvents = maximumBufferedEvents
-    artifactSnapshot = nil
+    self.artifactSnapshot = artifactSnapshot
     self.generationRuns = generationRuns
   }
 
@@ -58,6 +62,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     _ request: InferenceRequest
   ) async throws -> MLXInferenceEngineRun {
     try Task.checkCancellation()
+    try artifactSnapshot?.validateBoundPath()
     let maximumOutputTokens = request.options.maxOutputTokens ?? defaultMaximumOutputTokens
     guard
       request.modelID == modelID,
@@ -134,6 +139,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
             }
           }
           await run.waitForTermination()
+          try artifactSnapshot?.validateBoundPath()
           try Task.checkCancellation()
         } onCancel: {
           run.cancel()

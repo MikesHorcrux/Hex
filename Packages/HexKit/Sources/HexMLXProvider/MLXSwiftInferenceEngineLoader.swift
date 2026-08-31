@@ -28,7 +28,19 @@ public struct MLXSwiftInferenceEngineLoader: MLXInferenceEngineLoader, Sendable 
     try validateDirectoryIdentity(configuration)
     let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(for: configuration)
     try Task.checkCancellation()
-    let container = try await loadContainer(snapshot.directory)
+    try snapshot.validateBoundPath()
+    let container: ModelContainer
+    do {
+      container = try await loadContainer(snapshot.directory)
+    } catch {
+      do {
+        try snapshot.validateBoundPath()
+      } catch {
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
+      }
+      throw error
+    }
+    try snapshot.validateBoundPath()
     try Task.checkCancellation()
     return MLXSwiftInferenceEngine(
       model: container,

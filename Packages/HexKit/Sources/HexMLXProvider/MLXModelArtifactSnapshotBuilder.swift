@@ -3,6 +3,24 @@ import Foundation
 import HexProviders
 
 struct MLXModelArtifactSnapshotBuilder {
+  private let namespace: MLXModelArtifactSnapshotNamespace
+  private let cloneArtifact: @Sendable (Int32, Int32, String) -> Int32
+
+  init(
+    namespace: MLXModelArtifactSnapshotNamespace = MLXModelArtifactSnapshotNamespace(),
+    cloneArtifact: @escaping @Sendable (Int32, Int32, String) -> Int32 = {
+      sourceDescriptor,
+      destinationDescriptor,
+      name in
+      name.withCString {
+        fclonefileat(sourceDescriptor, destinationDescriptor, $0, 0)
+      }
+    }
+  ) {
+    self.namespace = namespace
+    self.cloneArtifact = cloneArtifact
+  }
+
   func makeSnapshot(
     for configuration: MLXLocalModelConfiguration
   ) throws -> MLXModelArtifactSnapshot {
@@ -37,44 +55,54 @@ struct MLXModelArtifactSnapshotBuilder {
     }
     try validateManifest(artifacts)
 
-    let snapshotDirectory = FileManager.default.temporaryDirectory.appending(
-      path: "hex-mlx-model-\(UUID().uuidString)",
-      directoryHint: .isDirectory
-    )
-    try FileManager.default.createDirectory(
-      at: snapshotDirectory,
-      withIntermediateDirectories: false,
-      attributes: [.posixPermissions: 0o700]
-    )
+    let snapshotLocation = try namespace.makeSnapshotDirectory()
+    let snapshotDirectory = snapshotLocation.directory
+    let destinationDescriptor = snapshotLocation.fileDescriptor
+    var snapshotEntries: [MLXModelArtifactSnapshotEntry] = []
     var preserveSnapshot = false
     defer {
       if !preserveSnapshot {
-        try? FileManager.default.removeItem(at: snapshotDirectory)
+        for entry in snapshotEntries {
+          _ = ftruncate(entry.fileDescriptor, 0)
+          _ = fsync(entry.fileDescriptor)
+          _ = fchmod(entry.fileDescriptor, 0)
+          close(entry.fileDescriptor)
+        }
+        _ = fchmod(destinationDescriptor, 0)
+        close(destinationDescriptor)
       }
     }
 
-    let destinationDescriptor = snapshotDirectory.path.withCString {
-      open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
-    }
-    guard destinationDescriptor >= 0 else {
-      throw MLXLocalInferenceProviderError.invalidModelConfiguration
-    }
-    defer { close(destinationDescriptor) }
-
     for artifact in artifacts {
       try Task.checkCancellation()
-      try snapshot(artifact, into: destinationDescriptor)
+      snapshotEntries.append(try snapshot(artifact, into: destinationDescriptor))
     }
     try validateSourceStillMatches(
       artifacts,
       sourceDescriptor: sourceDescriptor,
       initialNames: initialNames
     )
-    guard fchmod(destinationDescriptor, 0o500) == 0 else {
+    var directoryStatus = stat()
+    guard
+      fchmod(destinationDescriptor, 0o500) == 0,
+      fstat(destinationDescriptor, &directoryStatus) == 0,
+      directoryStatus.st_mode & S_IFMT == S_IFDIR,
+      directoryStatus.st_uid == geteuid(),
+      directoryStatus.st_mode & mode_t(0o7777) == mode_t(0o500),
+      UInt64(directoryStatus.st_nlink) == UInt64(snapshotEntries.count + 2)
+    else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
+    let directoryIdentity = try MLXModelArtifactSnapshotIdentity(status: directoryStatus)
+    let snapshot = MLXModelArtifactSnapshot(
+      directory: snapshotDirectory,
+      directoryDescriptor: destinationDescriptor,
+      directoryIdentity: directoryIdentity,
+      entries: snapshotEntries
+    )
     preserveSnapshot = true
-    return MLXModelArtifactSnapshot(directory: snapshotDirectory)
+    try snapshot.validateBoundPath()
+    return snapshot
   }
 
   private func artifactNames(in directoryDescriptor: Int32) throws -> [String] {
@@ -206,40 +234,102 @@ struct MLXModelArtifactSnapshotBuilder {
   private func snapshot(
     _ artifact: MLXModelArtifact,
     into destinationDescriptor: Int32
-  ) throws {
+  ) throws -> MLXModelArtifactSnapshotEntry {
     try Task.checkCancellation()
-    let cloneResult = artifact.name.withCString {
-      fclonefileat(artifact.fileDescriptor, destinationDescriptor, $0, 0)
-    }
-    if cloneResult != 0 {
-      artifact.name.withCString {
-        _ = unlinkat(destinationDescriptor, $0, 0)
+    let cloneResult = cloneArtifact(
+      artifact.fileDescriptor,
+      destinationDescriptor,
+      artifact.name
+    )
+    let destinationFileDescriptor =
+      if cloneResult == 0 {
+        try openWritableClone(artifact, in: destinationDescriptor)
+      } else {
+        try copy(artifact, into: destinationDescriptor)
       }
-      try copy(artifact, into: destinationDescriptor)
+    var preserveDescriptor = false
+    defer {
+      if !preserveDescriptor {
+        _ = ftruncate(destinationFileDescriptor, 0)
+        _ = fsync(destinationFileDescriptor)
+        close(destinationFileDescriptor)
+      }
     }
-    let destinationFileDescriptor = artifact.name.withCString {
-      openat(destinationDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-    }
-    guard destinationFileDescriptor >= 0 else {
-      throw MLXLocalInferenceProviderError.invalidModelConfiguration
-    }
-    defer { close(destinationFileDescriptor) }
+
     var destinationStatus = stat()
     guard
       fstat(destinationFileDescriptor, &destinationStatus) == 0,
       destinationStatus.st_mode & S_IFMT == S_IFREG,
+      destinationStatus.st_uid == geteuid(),
+      UInt64(destinationStatus.st_nlink) == 1,
       destinationStatus.st_size >= 0,
       UInt64(destinationStatus.st_size) == artifact.size,
-      fchmod(destinationFileDescriptor, 0o400) == 0
+      fchmod(destinationFileDescriptor, 0o400) == 0,
+      fsync(destinationFileDescriptor) == 0,
+      fstat(destinationFileDescriptor, &destinationStatus) == 0,
+      destinationStatus.st_mode & S_IFMT == S_IFREG,
+      destinationStatus.st_uid == geteuid(),
+      destinationStatus.st_mode & mode_t(0o7777) == mode_t(0o400),
+      UInt64(destinationStatus.st_nlink) == 1,
+      destinationStatus.st_size >= 0,
+      UInt64(destinationStatus.st_size) == artifact.size
     else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
+    let identity = try MLXModelArtifactSnapshotIdentity(status: destinationStatus)
+    preserveDescriptor = true
+    return MLXModelArtifactSnapshotEntry(
+      name: artifact.name,
+      fileDescriptor: destinationFileDescriptor,
+      identity: identity
+    )
+  }
+
+  private func openWritableClone(
+    _ artifact: MLXModelArtifact,
+    in destinationDescriptor: Int32
+  ) throws -> Int32 {
+    let readDescriptor = artifact.name.withCString {
+      openat(destinationDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard readDescriptor >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { close(readDescriptor) }
+    var readStatus = stat()
+    guard
+      fstat(readDescriptor, &readStatus) == 0,
+      readStatus.st_mode & S_IFMT == S_IFREG,
+      readStatus.st_uid == geteuid(),
+      UInt64(readStatus.st_nlink) == 1,
+      readStatus.st_size >= 0,
+      UInt64(readStatus.st_size) == artifact.size,
+      fchmod(readDescriptor, 0o600) == 0
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    let writableDescriptor = artifact.name.withCString {
+      openat(destinationDescriptor, $0, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard writableDescriptor >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    var writableStatus = stat()
+    guard
+      fstat(writableDescriptor, &writableStatus) == 0,
+      writableStatus.st_dev == readStatus.st_dev,
+      writableStatus.st_ino == readStatus.st_ino
+    else {
+      close(writableDescriptor)
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    return writableDescriptor
   }
 
   private func copy(
     _ artifact: MLXModelArtifact,
     into destinationDescriptor: Int32
-  ) throws {
+  ) throws -> Int32 {
     guard lseek(artifact.fileDescriptor, 0, SEEK_SET) == 0 else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
@@ -247,14 +337,21 @@ struct MLXModelArtifactSnapshotBuilder {
       openat(
         destinationDescriptor,
         $0,
-        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+        O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
         S_IRUSR | S_IWUSR
       )
     }
     guard destinationFileDescriptor >= 0 else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
-    defer { close(destinationFileDescriptor) }
+    var preserveDescriptor = false
+    defer {
+      if !preserveDescriptor {
+        _ = ftruncate(destinationFileDescriptor, 0)
+        _ = fsync(destinationFileDescriptor)
+        close(destinationFileDescriptor)
+      }
+    }
 
     var buffer = [UInt8](repeating: 0, count: 1_024 * 1_024)
     var copiedBytes: UInt64 = 0
@@ -297,6 +394,8 @@ struct MLXModelArtifactSnapshotBuilder {
     else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
+    preserveDescriptor = true
+    return destinationFileDescriptor
   }
 
   private func validateSourceStillMatches(

@@ -1,25 +1,31 @@
 import Darwin
 import HexProviders
 
-struct MLXModelArtifact {
-  let name: String
-  let fileDescriptor: Int32
+struct MLXModelArtifactSnapshotIdentity: Sendable {
   let device: UInt64
   let inode: UInt64
+  let owner: uid_t
+  let group: gid_t
+  let fileType: mode_t
+  let permissions: mode_t
+  let linkCount: UInt64
   let size: UInt64
   let modifiedSeconds: Int
   let modifiedNanoseconds: Int
   let changedSeconds: Int
   let changedNanoseconds: Int
 
-  init(name: String, fileDescriptor: Int32, status: stat) throws {
-    guard status.st_size > 0, UInt64(status.st_nlink) == 1 else {
+  init(status: stat) throws {
+    guard status.st_size >= 0 else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
-    self.name = name
-    self.fileDescriptor = fileDescriptor
     device = UInt64(status.st_dev)
     inode = UInt64(status.st_ino)
+    owner = status.st_uid
+    group = status.st_gid
+    fileType = status.st_mode & S_IFMT
+    permissions = status.st_mode & mode_t(0o7777)
+    linkCount = UInt64(status.st_nlink)
     size = UInt64(status.st_size)
     modifiedSeconds = status.st_mtimespec.tv_sec
     modifiedNanoseconds = status.st_mtimespec.tv_nsec
@@ -28,11 +34,14 @@ struct MLXModelArtifact {
   }
 
   func matches(_ status: stat) -> Bool {
-    status.st_mode & S_IFMT == S_IFREG
-      && status.st_size >= 0
+    status.st_size >= 0
       && UInt64(status.st_dev) == device
       && UInt64(status.st_ino) == inode
-      && UInt64(status.st_nlink) == 1
+      && status.st_uid == owner
+      && status.st_gid == group
+      && status.st_mode & S_IFMT == fileType
+      && status.st_mode & mode_t(0o7777) == permissions
+      && UInt64(status.st_nlink) == linkCount
       && UInt64(status.st_size) == size
       && status.st_mtimespec.tv_sec == modifiedSeconds
       && status.st_mtimespec.tv_nsec == modifiedNanoseconds

@@ -112,6 +112,53 @@ struct MLXSwiftInferenceEngineTests {
   }
 
   @Test
+  func rejectsSnapshotReplacementBeforeInjectedGenerationStarts() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "hex-mlx-generation-snapshot-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(
+      at: modelDirectory,
+      withIntermediateDirectories: false
+    )
+    try Data("{\"model_type\":\"test\"}".utf8).write(
+      to: modelDirectory.appending(path: "config.json")
+    )
+    try Data("{}".utf8).write(to: modelDirectory.appending(path: "tokenizer.json"))
+    try Data("weights".utf8).write(
+      to: modelDirectory.appending(path: "model.safetensors")
+    )
+    let configuration = try MLXLocalModelConfiguration(
+      modelID: ModelID(rawValue: "model"),
+      displayName: "Model",
+      directory: modelDirectory,
+      maximumOutputTokens: 128
+    )
+    let generationAttempts = GenerationAttemptProbe()
+    let paths = try await exerciseReplacedSnapshotAtGenerationBoundary(
+      configuration: configuration,
+      root: root,
+      generationAttempts: generationAttempts
+    )
+    defer {
+      try? FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: paths.capturedSnapshot.path
+      )
+      try? FileManager.default.removeItem(at: paths.replacement)
+      try? FileManager.default.removeItem(at: root)
+    }
+
+    #expect(await generationAttempts.count() == 0)
+    #expect(
+      try Data(contentsOf: paths.replacement.appending(path: "sentinel"))
+        == Data("unrelated".utf8)
+    )
+  }
+
+  @Test
   func providerKeepsSlotUntilCancellationIgnoringPhysicalGenerationStops() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(
       path: "hex-mlx-physical-generation-\(UUID().uuidString)",
@@ -223,6 +270,50 @@ struct MLXSwiftInferenceEngineTests {
     #expect(await physicalGeneration.maximumConcurrentRunCount() == 1)
   }
 
+  private func exerciseReplacedSnapshotAtGenerationBoundary(
+    configuration: MLXLocalModelConfiguration,
+    root: URL,
+    generationAttempts: GenerationAttemptProbe
+  ) async throws -> (capturedSnapshot: URL, replacement: URL) {
+    let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(for: configuration)
+    let capturedSnapshot = root.appending(
+      path: "captured-snapshot",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: snapshot.directory.path
+    )
+    try FileManager.default.moveItem(at: snapshot.directory, to: capturedSnapshot)
+    try FileManager.default.createDirectory(
+      at: snapshot.directory,
+      withIntermediateDirectories: false
+    )
+    try Data("unrelated".utf8).write(
+      to: snapshot.directory.appending(path: "sentinel")
+    )
+    let engine = MLXSwiftInferenceEngine(
+      modelID: ModelID(rawValue: "model"),
+      defaultMaximumOutputTokens: 128,
+      artifactSnapshot: snapshot,
+      generationRuns: { _, _, _ in
+        await generationAttempts.record()
+        throw MLXLocalInferenceProviderError.generationFailed
+      }
+    )
+    let request = InferenceRequest(
+      providerID: ProviderID(rawValue: "mlx.local"),
+      modelID: ModelID(rawValue: "model"),
+      messages: [Message(role: .user, content: [.text("Hello")])],
+      options: InferenceOptions(maxOutputTokens: 128, temperature: 0)
+    )
+
+    await #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try await engine.start(request)
+    }
+    return (capturedSnapshot, snapshot.directory)
+  }
+
   private actor EngineEventRecorder {
     private var recordedEvents: [MLXInferenceEngineEvent] = []
     private var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
@@ -270,6 +361,18 @@ struct MLXSwiftInferenceEngineTests {
       for waiter in pendingWaiters {
         waiter.resume()
       }
+    }
+  }
+
+  private actor GenerationAttemptProbe {
+    private var attempts = 0
+
+    func record() {
+      attempts += 1
+    }
+
+    func count() -> Int {
+      attempts
     }
   }
 
