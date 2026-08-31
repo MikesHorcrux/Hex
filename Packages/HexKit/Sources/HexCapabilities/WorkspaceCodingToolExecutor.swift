@@ -16,12 +16,15 @@ public struct WorkspaceCodingToolExecutor: ToolExecutor, Sendable {
   public init(
     fileSystem: WorkspaceFileSystem,
     processExecutor: any ProcessExecuting,
-    processConfiguration: ProcessExecutionConfiguration = .standard
+    processConfiguration: ProcessExecutionConfiguration = .standard,
+    /// Host-selected environment for the optional process tool.
+    processEnvironment: [String: String]? = nil
   ) throws {
     executor = try HostToolExecutor(tools: [
       ProcessRunTool(
         executor: processExecutor,
-        configuration: processConfiguration
+        configuration: processConfiguration,
+        environment: processEnvironment
       ),
       WorkspaceListDirectoryTool(fileSystem: fileSystem),
       WorkspaceReadTextFileTool(fileSystem: fileSystem),

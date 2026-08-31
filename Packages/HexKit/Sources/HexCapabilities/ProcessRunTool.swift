@@ -7,13 +7,16 @@ public struct ProcessRunTool: HostTool, Sendable {
 
   private let executor: any ProcessExecuting
   private let configuration: ProcessExecutionConfiguration
+  private let environment: [String: String]
   /// Keeps exact-invocation grants stable only for this tool lifetime without persisting a
   /// guessable digest of possibly sensitive arguments.
   private let authorizationKey: SymmetricKey
 
   public init(
     executor: any ProcessExecuting,
-    configuration: ProcessExecutionConfiguration = .standard
+    configuration: ProcessExecutionConfiguration = .standard,
+    /// Host-selected environment; the model cannot supply arbitrary environment variables.
+    environment: [String: String]? = nil
   ) {
     definition = ToolDefinition(
       name: "process_run",
@@ -41,6 +44,7 @@ public struct ProcessRunTool: HostTool, Sendable {
     )
     self.executor = executor
     self.configuration = configuration
+    self.environment = environment ?? ProcessExecutionEnvironment.standard()
     authorizationKey = SymmetricKey(size: .bits256)
   }
 
@@ -48,9 +52,14 @@ public struct ProcessRunTool: HostTool, Sendable {
     for call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> AuthorizationRequest {
+    try Task.checkCancellation()
     let request = try validatedRequest(for: call, in: context)
+    try Task.checkCancellation()
     let argumentBytes = request.arguments.reduce(into: 0) { total, argument in
       total += argument.utf8.count
+    }
+    let environmentBytes = request.environment.reduce(into: 0) { total, entry in
+      total += entry.key.utf8.count + entry.value.utf8.count
     }
     return AuthorizationRequest(
       runID: context.runID,
@@ -66,6 +75,8 @@ public struct ProcessRunTool: HostTool, Sendable {
         "working_directory": .string(request.workingDirectory.path),
         "argument_count": .integer(Int64(request.arguments.count)),
         "argument_bytes": .integer(Int64(argumentBytes)),
+        "environment_variable_count": .integer(Int64(request.environment.count)),
+        "environment_bytes": .integer(Int64(environmentBytes)),
         "timeout_seconds": .integer(Int64(request.timeoutSeconds)),
       ],
       explanation: "Allow Hex to run this exact local process invocation."
@@ -76,10 +87,11 @@ public struct ProcessRunTool: HostTool, Sendable {
     _ call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> ToolResult {
+    try Task.checkCancellation()
     do {
       let request = try validatedRequest(for: call, in: context)
       let result = try await executor.execute(request)
-      return ProcessToolResult.result(result, callID: call.id)
+      return ProcessToolResult.result(bounded(result), callID: call.id)
     } catch {
       return try ProcessToolResult.failure(error, callID: call.id)
     }
@@ -111,6 +123,7 @@ public struct ProcessRunTool: HostTool, Sendable {
         maximumBytes: configuration.maximumArgumentBytes
       ),
       workingDirectory: workingDirectory,
+      environment: environment,
       timeoutSeconds: try arguments.optionalInteger(
         named: "timeout_seconds",
         range: 1...configuration.maximumTimeoutSeconds
@@ -119,6 +132,17 @@ public struct ProcessRunTool: HostTool, Sendable {
     return try ProcessExecutionRequestValidator.validate(
       request,
       configuration: configuration
+    )
+  }
+
+  private func bounded(_ result: ProcessExecutionResult) -> ProcessExecutionResult {
+    guard result.output.count > configuration.maximumOutputBytes else {
+      return result
+    }
+    return ProcessExecutionResult(
+      termination: .outputLimitExceeded,
+      output: Data(result.output.prefix(configuration.maximumOutputBytes)),
+      durationMilliseconds: result.durationMilliseconds
     )
   }
 }

@@ -64,6 +64,81 @@ struct ProcessRunToolTests {
   }
 
   @Test
+  func authorizationDescribesInjectedEnvironmentWithoutCopyingValues() async throws {
+    let executor = RecordingProcessExecutor(
+      result: ProcessExecutionResult(
+        termination: .exited(code: 0),
+        output: Data(),
+        durationMilliseconds: 0
+      )
+    )
+    let secret = "environment-secret-that-must-not-be-echoed"
+    let tool = ProcessRunTool(
+      executor: executor,
+      environment: [
+        "PATH": "/usr/bin:/bin",
+        "HEX_SECRET": secret,
+      ]
+    )
+    let context = ToolExecutionContext(
+      runID: AgentRunID(),
+      workingDirectory: URL(fileURLWithPath: "/private/tmp")
+    )
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "call-process-environment-auth"),
+      name: "process_run",
+      arguments: [
+        "executable": .string("/usr/bin/printf"),
+        "arguments": .array([.string("done")]),
+      ]
+    )
+
+    let request = try await tool.authorizationRequest(for: call, in: context)
+
+    #expect(request.details["environment_variable_count"] == .integer(2))
+    #expect(request.details["environment_bytes"] == .integer(
+      Int64(
+        "PATH".utf8.count
+          + "/usr/bin:/bin".utf8.count
+          + "HEX_SECRET".utf8.count
+          + secret.utf8.count
+      )
+    ))
+    #expect(!String(describing: request).contains(secret))
+  }
+
+  @Test
+  func rejectsPromptUnsafeExecutablePathsBeforeAuthorization() async throws {
+    let tool = ProcessRunTool(
+      executor: RecordingProcessExecutor(
+        result: ProcessExecutionResult(
+          termination: .exited(code: 0),
+          output: Data(),
+          durationMilliseconds: 0
+        )
+      )
+    )
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "call-process-unsafe-path"),
+      name: "process_run",
+      arguments: [
+        "executable": .string("/usr/bin/printf\nunsafe"),
+        "arguments": .array([]),
+      ]
+    )
+
+    await #expect(throws: ProcessExecutionError.invalidRequest) {
+      _ = try await tool.authorizationRequest(
+        for: call,
+        in: ToolExecutionContext(
+          runID: AgentRunID(),
+          workingDirectory: URL(fileURLWithPath: "/private/tmp")
+        )
+      )
+    }
+  }
+
+  @Test
   func executionReturnsBoundedOutputAndPreservesTheCallIdentity() async throws {
     let executor = RecordingProcessExecutor(
       result: ProcessExecutionResult(
@@ -72,7 +147,10 @@ struct ProcessRunToolTests {
         durationMilliseconds: 12
       )
     )
-    let tool = ProcessRunTool(executor: executor)
+    let tool = ProcessRunTool(
+      executor: executor,
+      environment: ["PATH": "/usr/bin:/bin", "HEX_PROCESS_TEST": "injected"]
+    )
     let call = ToolCall(
       id: ToolCallID(rawValue: "call-process-success"),
       name: "process_run",
@@ -104,6 +182,7 @@ struct ProcessRunToolTests {
     #expect(recorded?.executable.path == "/usr/bin/printf")
     #expect(recorded?.arguments == ["hello\\n"])
     #expect(recorded?.workingDirectory.path == "/private/tmp")
+    #expect(recorded?.environment == ["PATH": "/usr/bin:/bin", "HEX_PROCESS_TEST": "injected"])
   }
 
   @Test
@@ -153,6 +232,49 @@ struct ProcessRunToolTests {
     }
     #expect(failureOutput["exit_code"] == .integer(7))
     #expect(failureOutput["output"] == .string("failed"))
+  }
+
+  @Test
+  func toolBoundsOutputFromAnInjectedExecutor() async throws {
+    let configuration = try ProcessExecutionConfiguration(
+      maximumOutputBytes: 4,
+      maximumTimeoutSeconds: 5
+    )
+    let executor = RecordingProcessExecutor(
+      result: ProcessExecutionResult(
+        termination: .exited(code: 0),
+        output: Data("123456".utf8),
+        durationMilliseconds: 2
+      )
+    )
+    let tool = ProcessRunTool(
+      executor: executor,
+      configuration: configuration,
+      environment: [:]
+    )
+    let result = try await tool.execute(
+      ToolCall(
+        id: ToolCallID(rawValue: "call-process-output-bound"),
+        name: "process_run",
+        arguments: [
+          "executable": .string("/usr/bin/printf"),
+          "arguments": .array([.string("ignored")]),
+        ]
+      ),
+      in: ToolExecutionContext(
+        runID: AgentRunID(),
+        workingDirectory: URL(fileURLWithPath: "/private/tmp")
+      )
+    )
+
+    #expect(result.status == .failure)
+    guard case .object(let output) = result.output else {
+      Issue.record("Expected a structured process result.")
+      return
+    }
+    #expect(output["termination"] == .string("output_limit_exceeded"))
+    #expect(output["output"] == .string("1234"))
+    #expect(output["output_bytes"] == .integer(4))
   }
 
   actor RecordingProcessExecutor: ProcessExecuting {

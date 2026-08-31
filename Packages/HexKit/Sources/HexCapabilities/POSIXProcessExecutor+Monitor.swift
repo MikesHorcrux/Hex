@@ -83,14 +83,26 @@ extension POSIXProcessExecutor {
     guard processID > 0 else {
       return
     }
-    if Darwin.kill(-processID, SIGKILL) != 0, errno != ESRCH {
+    // The process group covers ordinary descendants; the direct signal also covers a leader that
+    // changed groups before teardown. A reaped PID is never signaled because it may be reused.
+    _ = Darwin.kill(-processID, SIGKILL)
+    if !alreadyReaped {
       _ = Darwin.kill(processID, SIGKILL)
     }
     guard !alreadyReaped else {
       return
     }
     var status = Int32(0)
-    while waitpid(processID, &status, 0) < 0, errno == EINTR {}
+    while true {
+      let waitResult = waitpid(processID, &status, 0)
+      if waitResult == processID {
+        return
+      }
+      if waitResult < 0, errno == EINTR {
+        continue
+      }
+      return
+    }
   }
 
   private func drain(
@@ -100,6 +112,7 @@ extension POSIXProcessExecutor {
   ) throws -> (reachedEndOfFile: Bool, exceededLimit: Bool) {
     var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
     while true {
+      try Task.checkCancellation()
       let count = buffer.withUnsafeMutableBytes { bytes in
         Darwin.read(descriptor, bytes.baseAddress, bytes.count)
       }
@@ -107,7 +120,7 @@ extension POSIXProcessExecutor {
         let remaining = maximumBytes - output.count
         let accepted = min(remaining, count)
         if accepted > 0 {
-          output.append(buffer, count: accepted)
+          output.append(contentsOf: buffer.prefix(accepted))
         }
         if accepted < count {
           return (false, true)

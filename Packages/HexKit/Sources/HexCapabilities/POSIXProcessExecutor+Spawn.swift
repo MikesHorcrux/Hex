@@ -76,14 +76,17 @@ extension POSIXProcessExecutor {
       ) == 0,
       posix_spawn_file_actions_addclose(&fileActions, readDescriptor) == 0,
       posix_spawn_file_actions_addclose(&fileActions, writeDescriptor) == 0,
-      posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)) == 0,
+      posix_spawnattr_setflags(
+        &attributes,
+        Int16(POSIX_SPAWN_SETPGROUP) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
+      ) == 0,
       posix_spawnattr_setpgroup(&attributes, 0) == 0
     else {
       throw ProcessExecutionError.ioFailure
     }
 
     let argumentValues = [request.executable.path] + request.arguments
-    let environmentValues = ProcessExecutionEnvironment.standard()
+    let environmentValues = request.environment
       .sorted { $0.key < $1.key }
       .map { "\($0.key)=\($0.value)" }
     let spawnResult = try withCStringVector(argumentValues) { arguments in

@@ -11,15 +11,22 @@ enum ProcessExecutionRequestValidator {
       request.executable.path.hasPrefix("/"),
       request.executable.path.utf8.count <= 4_096,
       !request.executable.path.contains("\0"),
+      WorkspacePathScalarPolicy.isPromptSafe(request.executable.path),
       request.workingDirectory.isFileURL,
       request.workingDirectory.path.hasPrefix("/"),
       request.workingDirectory.path.utf8.count <= 4_096,
       !request.workingDirectory.path.contains("\0"),
+      WorkspacePathScalarPolicy.isPromptSafe(request.workingDirectory.path),
       request.arguments.count <= configuration.maximumArguments,
       (1...configuration.maximumTimeoutSeconds).contains(request.timeoutSeconds)
     else {
       throw ProcessExecutionError.invalidRequest
     }
+
+    try ProcessExecutionEnvironment.validate(
+      request.environment,
+      configuration: configuration
+    )
 
     var argumentBytes = 0
     for argument in request.arguments {
@@ -35,6 +42,14 @@ enum ProcessExecutionRequestValidator {
 
     let executable = try canonicalURL(request.executable)
     let workingDirectory = try canonicalURL(request.workingDirectory)
+    guard
+      executable.path.utf8.count <= 4_096,
+      workingDirectory.path.utf8.count <= 4_096,
+      WorkspacePathScalarPolicy.isPromptSafe(executable.path),
+      WorkspacePathScalarPolicy.isPromptSafe(workingDirectory.path)
+    else {
+      throw ProcessExecutionError.invalidRequest
+    }
     var executableStatus = stat()
     var directoryStatus = stat()
     guard
@@ -51,6 +66,7 @@ enum ProcessExecutionRequestValidator {
       executable: executable,
       arguments: request.arguments,
       workingDirectory: workingDirectory,
+      environment: request.environment,
       timeoutSeconds: request.timeoutSeconds
     )
   }
@@ -60,6 +76,9 @@ enum ProcessExecutionRequestValidator {
       throw ProcessExecutionError.invalidRequest
     }
     defer { free(pointer) }
-    return URL(fileURLWithPath: String(cString: pointer))
+    guard let path = String(validatingCString: pointer) else {
+      throw ProcessExecutionError.invalidRequest
+    }
+    return URL(fileURLWithPath: path)
   }
 }

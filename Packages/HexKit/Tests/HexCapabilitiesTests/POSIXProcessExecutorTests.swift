@@ -53,6 +53,45 @@ struct POSIXProcessExecutorTests {
   }
 
   @Test
+  func usesOnlyTheInjectedEnvironment() async throws {
+    let executor = POSIXProcessExecutor()
+    let result = try await executor.execute(
+      ProcessExecutionRequest(
+        executable: URL(fileURLWithPath: "/usr/bin/env"),
+        arguments: [],
+        workingDirectory: URL(fileURLWithPath: "/private/tmp"),
+        environment: [
+          "PATH": "/usr/bin:/bin",
+          "HEX_PROCESS_TEST": "injected-value",
+        ],
+        timeoutSeconds: 5
+      )
+    )
+
+    #expect(result.termination == .exited(code: 0))
+    let output = String(decoding: result.output, as: UTF8.self)
+    #expect(output.contains("PATH=/usr/bin:/bin\n"))
+    #expect(output.contains("HEX_PROCESS_TEST=injected-value\n"))
+    #expect(!output.contains("HOME="))
+  }
+
+  @Test
+  func rejectsMalformedEnvironmentBeforeSpawning() async throws {
+    let executor = POSIXProcessExecutor()
+    await #expect(throws: ProcessExecutionError.invalidRequest) {
+      _ = try await executor.execute(
+        ProcessExecutionRequest(
+          executable: URL(fileURLWithPath: "/usr/bin/true"),
+          arguments: [],
+          workingDirectory: URL(fileURLWithPath: "/private/tmp"),
+          environment: ["NOT-AN-ENVIRONMENT-NAME": "value"],
+          timeoutSeconds: 5
+        )
+      )
+    }
+  }
+
+  @Test
   func terminatesOnOutputOverflowAndTimeout() async throws {
     let configuration = try ProcessExecutionConfiguration(
       maximumOutputBytes: 1_024,
