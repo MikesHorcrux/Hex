@@ -60,4 +60,8 @@ actor ABAGatewayRunDriver: HexGatewayRunDriver {
   func emissionFailureCount(for invocation: Int) -> Int {
     emissionFailureCounts[invocation, default: 0]
   }
+
+  func isRunning(_ invocation: Int) -> Bool {
+    continuations[invocation] != nil
+  }
 }

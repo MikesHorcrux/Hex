@@ -73,7 +73,11 @@ struct GatewayServiceBoundaryTests {
 
     let validRequest = GatewayTestValues.request(runID: runID)
     let response = try await service.startRun(validRequest, sessionID: session.sessionID)
-    #expect(response.disposition == .started)
+    #expect(response.invocationID != nil)
+    guard case .started = response.disposition else {
+      Issue.record("Expected the valid request to start.")
+      return
+    }
     await complete(runID, driver: driver)
   }
 

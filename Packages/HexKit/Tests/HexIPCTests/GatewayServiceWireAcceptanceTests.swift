@@ -93,10 +93,11 @@ struct GatewayServiceWireAcceptanceTests {
     let driver = ControllableGatewayRunDriver()
     let service = HexGatewayService(driver: driver, configuration: configuration)
     let handshake = try await service.handshake(GatewayTestValues.handshakeRequest())
-    _ = try await service.startRun(
+    let start = try await service.startRun(
       GatewayTestValues.request(runID: runID),
       sessionID: handshake.sessionID
     )
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
 
     for record in records {
@@ -107,7 +108,7 @@ struct GatewayServiceWireAcceptanceTests {
 
     do {
       _ = try await service.eventRecords(
-        after: GatewayEventCursor(runID: runID),
+        after: GatewayEventCursor(runID: runID, invocationID: invocationID),
         sessionID: handshake.sessionID
       )
       Issue.record("Expected cursor zero to predate the byte-bounded replay window.")
@@ -116,7 +117,11 @@ struct GatewayServiceWireAcceptanceTests {
     }
 
     let retainedTail = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID, sequence: 1),
+      after: GatewayEventCursor(
+        runID: runID,
+        invocationID: invocationID,
+        sequence: 1
+      ),
       sessionID: handshake.sessionID
     )
     #expect(try await GatewayTestValues.collect(retainedTail) == Array(records.dropFirst()))
@@ -131,13 +136,14 @@ struct GatewayServiceWireAcceptanceTests {
     let driver = ControllableGatewayRunDriver()
     let service = HexGatewayService(driver: driver, configuration: configuration)
     let handshake = try await service.handshake(GatewayTestValues.handshakeRequest())
-    _ = try await service.startRun(
+    let start = try await service.startRun(
       GatewayTestValues.request(runID: runID),
       sessionID: handshake.sessionID
     )
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     let liveStream = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID),
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID),
       sessionID: handshake.sessionID
     )
     var liveIterator = liveStream.makeAsyncIterator()
@@ -157,7 +163,11 @@ struct GatewayServiceWireAcceptanceTests {
 
     do {
       _ = try await service.eventRecords(
-        after: GatewayEventCursor(runID: runID, sequence: rejectedRecord.sequence),
+        after: GatewayEventCursor(
+          runID: runID,
+          invocationID: invocationID,
+          sequence: rejectedRecord.sequence
+        ),
         sessionID: handshake.sessionID
       )
       Issue.record("Expected the rejected sequence to remain above the high-water mark.")
@@ -166,7 +176,11 @@ struct GatewayServiceWireAcceptanceTests {
     }
 
     let postStartReplay = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID, sequence: startRecord.sequence),
+      after: GatewayEventCursor(
+        runID: runID,
+        invocationID: invocationID,
+        sequence: startRecord.sequence
+      ),
       sessionID: handshake.sessionID
     )
     var replayIterator = postStartReplay.makeAsyncIterator()

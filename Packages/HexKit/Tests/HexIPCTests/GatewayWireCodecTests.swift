@@ -55,15 +55,101 @@ struct GatewayWireCodecTests {
     let codec = GatewayWireCodec(configuration: .standard)
     let handshake = GatewayTestValues.handshakeRequest()
     let runID = GatewayTestValues.runID()
+    let invocationID = GatewayTestValues.invocationID()
     let record = GatewayTestValues.record(
       runID: runID,
       sequence: 1,
       event: .runStarted
     )
+    let cursor = GatewayEventCursor(
+      runID: runID,
+      invocationID: invocationID,
+      sequence: 1
+    )
+    let cancellation = GatewayCancelRunRequest(
+      runID: runID,
+      invocationID: invocationID
+    )
+    let cancellationResponse = GatewayCancelRunResponse(
+      runID: runID,
+      invocationID: invocationID,
+      disposition: .requested
+    )
+    let snapshot = GatewayRunSnapshot(
+      runID: runID,
+      invocationID: invocationID,
+      phase: .running,
+      latestSequence: 1
+    )
+    let startResponses = [
+      GatewayStartRunResponse(
+        runID: runID,
+        disposition: .started(invocationID: invocationID)
+      ),
+      GatewayStartRunResponse(
+        runID: runID,
+        disposition: .alreadyRunning(invocationID: invocationID)
+      ),
+      GatewayStartRunResponse(
+        runID: runID,
+        disposition: .alreadyTerminal(invocationID: invocationID)
+      ),
+      GatewayStartRunResponse(
+        runID: runID,
+        disposition: .busy(activeRunID: GatewayTestValues.runID(3))
+      ),
+    ]
 
     #expect(try codec.roundTrip(handshake) == handshake)
     #expect(try codec.roundTrip(record) == record)
     #expect(try codec.roundTrip(record).schemaVersion == 1)
+    #expect(try codec.roundTrip(cursor) == cursor)
+    #expect(try codec.roundTrip(cancellation) == cancellation)
+    #expect(try codec.roundTrip(cancellationResponse) == cancellationResponse)
+    #expect(try codec.roundTrip(snapshot) == snapshot)
+    #expect(try startResponses.map(codec.roundTrip) == startResponses)
+    #expect(
+      String(decoding: try codec.encode(invocationID), as: UTF8.self)
+        == "\"\(invocationID.rawValue.uuidString)\""
+    )
+  }
+
+  @Test
+  func rejectsMissingAndMalformedRunInvocationIdentity() throws {
+    let codec = GatewayWireCodec(configuration: .standard)
+    let runID = GatewayTestValues.runID().rawValue.uuidString
+    let missingCursorIdentity = Data(
+      "{\"runID\":\"\(runID)\",\"sequence\":0}".utf8
+    )
+    let malformedCancellationIdentity = Data(
+      "{\"invocationID\":\"not-a-uuid\",\"runID\":\"\(runID)\"}".utf8
+    )
+    let validStartResponse = GatewayStartRunResponse(
+      runID: GatewayTestValues.runID(),
+      disposition: .started(invocationID: GatewayTestValues.invocationID())
+    )
+    var startObject = try #require(
+      JSONSerialization.jsonObject(with: codec.encode(validStartResponse))
+        as? [String: Any]
+    )
+    var dispositionObject = try #require(startObject["disposition"] as? [String: Any])
+    var startedObject = try #require(dispositionObject["started"] as? [String: Any])
+    startedObject.removeValue(forKey: "invocationID")
+    dispositionObject["started"] = startedObject
+    startObject["disposition"] = dispositionObject
+    let missingStartIdentity = try JSONSerialization.data(withJSONObject: startObject)
+
+    try expectMalformedPayload(GatewayEventCursor.self, data: missingCursorIdentity, codec: codec)
+    try expectMalformedPayload(
+      GatewayCancelRunRequest.self,
+      data: malformedCancellationIdentity,
+      codec: codec
+    )
+    try expectMalformedPayload(
+      GatewayStartRunResponse.self,
+      data: missingStartIdentity,
+      codec: codec
+    )
   }
 
   @Test
@@ -99,6 +185,19 @@ struct GatewayWireCodecTests {
       Issue.record("Expected oversized encoded output to be rejected.")
     } catch let failure as GatewayFailure {
       #expect(failure.code == .payloadTooLarge)
+    }
+  }
+
+  private func expectMalformedPayload<Value: Decodable & Sendable>(
+    _ type: Value.Type,
+    data: Data,
+    codec: GatewayWireCodec
+  ) throws {
+    do {
+      _ = try codec.decode(type, from: data)
+      Issue.record("Expected the malformed invocation identity to be rejected.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .malformedPayload)
     }
   }
 

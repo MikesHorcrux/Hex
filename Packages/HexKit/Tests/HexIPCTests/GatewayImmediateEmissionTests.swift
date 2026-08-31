@@ -10,8 +10,11 @@ struct GatewayImmediateEmissionTests {
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
 
-    _ = try await transport.startRun(GatewayTestValues.request(runID: runID))
-    let stream = try await transport.eventRecords(after: GatewayEventCursor(runID: runID))
+    let start = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let invocationID = try #require(start.invocationID)
+    let stream = try await transport.eventRecords(
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
+    )
     let records = try await GatewayTestValues.collect(stream)
 
     #expect(records.map(\.sequence) == [1, 2])

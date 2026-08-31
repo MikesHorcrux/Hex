@@ -39,6 +39,15 @@ struct GatewayProtocolNegotiationTests {
       ),
       code: .incompatibleProtocolVersion
     )
+    await expectHandshakeFailure(
+      service: service,
+      request: GatewayHandshakeRequest(
+        clientID: GatewayClientID(rawValue: GatewayTestValues.uuid(4)),
+        minimumVersion: GatewayProtocolVersion(major: 1, minor: 0),
+        maximumVersion: GatewayProtocolVersion(major: 1, minor: 0)
+      ),
+      code: .incompatibleProtocolVersion
+    )
   }
 
   private func expectHandshakeFailure(

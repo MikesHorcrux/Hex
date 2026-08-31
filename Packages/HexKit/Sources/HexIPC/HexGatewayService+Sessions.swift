@@ -100,6 +100,7 @@ extension HexGatewayService {
     }
     return GatewayRunSnapshot(
       runID: activeRunID,
+      invocationID: state.invocationID,
       phase: state.phase,
       latestSequence: state.latestSequence
     )

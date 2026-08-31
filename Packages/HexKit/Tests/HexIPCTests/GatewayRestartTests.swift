@@ -13,6 +13,7 @@ struct GatewayRestartTests {
     )
     let firstInstanceID = GatewayInstanceID(rawValue: GatewayTestValues.uuid(21))
     let secondInstanceID = GatewayInstanceID(rawValue: GatewayTestValues.uuid(22))
+    let invocationID = GatewayTestValues.invocationID(21)
     let transport = FakeHexGatewayTransport(
       handshakeResponses: [
         response(instanceID: firstInstanceID, sessionValue: 1),
@@ -23,13 +24,17 @@ struct GatewayRestartTests {
     let client = HexGatewayClient(transport: transport)
 
     let initialConnection = try await client.connect()
-    try await client.acknowledge(record)
-    #expect(await client.acknowledgedCursor(for: runID).sequence == 1)
+    try await client.acknowledge(record, invocationID: invocationID)
+    #expect(
+      await client.acknowledgedCursor(for: runID, invocationID: invocationID).sequence == 1
+    )
 
     let restartedConnection = try await client.connect()
     #expect(!initialConnection.didDetectGatewayRestart)
     #expect(restartedConnection.didDetectGatewayRestart)
-    #expect(await client.acknowledgedCursor(for: runID).sequence == 0)
+    #expect(
+      await client.acknowledgedCursor(for: runID, invocationID: invocationID).sequence == 0
+    )
   }
 
   @Test
@@ -50,7 +55,11 @@ struct GatewayRestartTests {
     #expect(oldHandshake.gatewayInstanceID != newHandshake.gatewayInstanceID)
     do {
       _ = try await newService.eventRecords(
-        after: GatewayEventCursor(runID: GatewayTestValues.runID(), sequence: 1),
+        after: GatewayEventCursor(
+          runID: GatewayTestValues.runID(),
+          invocationID: GatewayTestValues.invocationID(),
+          sequence: 1
+        ),
         sessionID: newHandshake.sessionID
       )
       Issue.record("Expected an old run to be unavailable after service replacement.")

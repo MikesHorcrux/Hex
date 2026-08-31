@@ -11,12 +11,17 @@ struct GatewayCursorBoundaryTests {
     let transport = InProcessHexGatewayTransport(service: service)
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
-    _ = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let start = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
 
     do {
       _ = try await transport.eventRecords(
-        after: GatewayEventCursor(runID: runID, sequence: 1)
+        after: GatewayEventCursor(
+          runID: runID,
+          invocationID: invocationID,
+          sequence: 1
+        )
       )
       Issue.record("Expected an invalid cursor failure.")
     } catch let failure as GatewayFailure {
@@ -42,7 +47,8 @@ struct GatewayCursorBoundaryTests {
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
     let request = GatewayTestValues.request(runID: runID)
-    _ = try await transport.startRun(request)
+    let start = try await transport.startRun(request)
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     await driver.yieldAndWait(
       GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
@@ -59,7 +65,9 @@ struct GatewayCursorBoundaryTests {
     )
 
     do {
-      _ = try await transport.eventRecords(after: GatewayEventCursor(runID: runID))
+      _ = try await transport.eventRecords(
+        after: GatewayEventCursor(runID: runID, invocationID: invocationID)
+      )
       Issue.record("Expected replay-window failure.")
     } catch let failure as GatewayFailure {
       #expect(failure.code == .replayUnavailable)

@@ -28,12 +28,19 @@ actor FakeHexGatewayTransport: HexGatewayTransport {
 
   func startRun(_ request: GatewayStartRunRequest) throws -> GatewayStartRunResponse {
     try requireConnection()
-    return GatewayStartRunResponse(runID: request.runID, disposition: .started)
+    return GatewayStartRunResponse(
+      runID: request.runID,
+      disposition: .started(invocationID: GatewayTestValues.invocationID())
+    )
   }
 
   func cancelRun(_ request: GatewayCancelRunRequest) throws -> GatewayCancelRunResponse {
     try requireConnection()
-    return GatewayCancelRunResponse(runID: request.runID, disposition: .requested)
+    return GatewayCancelRunResponse(
+      runID: request.runID,
+      invocationID: request.invocationID,
+      disposition: .requested
+    )
   }
 
   func eventRecords(

@@ -6,6 +6,7 @@ public enum GatewayFailureCode: String, Codable, Equatable, Sendable {
   case capacityExceeded
   case conflictingRunRequest
   case runNotFound
+  case staleRunInvocation
   case replayUnavailable
   case invalidCursor
   case invalidEventSequence

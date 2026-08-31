@@ -1,12 +1,13 @@
 import HexCore
 
-/// App-facing gateway client with in-memory, explicitly acknowledged replay cursors. Cursor state is
-/// not durable across app termination; callers must apply each record before acknowledging it.
+/// App-facing gateway client with in-memory, explicitly acknowledged replay cursors keyed by exact
+/// run invocation. Cursor state is not durable across app termination; callers must apply each record
+/// before acknowledging it with the invocation identity that produced it.
 public actor HexGatewayClient {
   private let transport: any HexGatewayTransport
   private let handshakeRequest: GatewayHandshakeRequest
   private var gatewayInstanceID: GatewayInstanceID?
-  private var acknowledgedSequences: [AgentRunID: UInt64] = [:]
+  private var acknowledgedSequences: [GatewayRunAcknowledgementKey: UInt64] = [:]
 
   public init(
     transport: any HexGatewayTransport,
@@ -40,7 +41,21 @@ public actor HexGatewayClient {
   public func startRun(
     _ request: GatewayStartRunRequest
   ) async throws -> GatewayStartRunResponse {
-    try await transport.startRun(request)
+    let response = try await transport.startRun(request)
+    switch response.disposition {
+    case .started(let invocationID):
+      // A newly admitted generation always begins at cursor zero, even when its run identifier was
+      // previously acknowledged before bounded service eviction.
+      removeAcknowledgements(for: response.runID)
+      acknowledgedSequences[
+        GatewayRunAcknowledgementKey(runID: response.runID, invocationID: invocationID)
+      ] = 0
+    case .alreadyRunning(let invocationID), .alreadyTerminal(let invocationID):
+      removeAcknowledgements(for: response.runID, except: invocationID)
+    case .busy:
+      break
+    }
+    return response
   }
 
   public func cancelRun(
@@ -50,19 +65,37 @@ public actor HexGatewayClient {
   }
 
   public func eventRecords(
-    for runID: AgentRunID
+    for runID: AgentRunID,
+    invocationID: GatewayRunInvocationID
   ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
-    try await transport.eventRecords(after: acknowledgedCursor(for: runID))
+    try await transport.eventRecords(
+      after: acknowledgedCursor(for: runID, invocationID: invocationID)
+    )
   }
 
-  public func acknowledgedCursor(for runID: AgentRunID) -> GatewayEventCursor {
-    GatewayEventCursor(runID: runID, sequence: acknowledgedSequences[runID] ?? 0)
+  public func acknowledgedCursor(
+    for runID: AgentRunID,
+    invocationID: GatewayRunInvocationID
+  ) -> GatewayEventCursor {
+    let key = GatewayRunAcknowledgementKey(runID: runID, invocationID: invocationID)
+    return GatewayEventCursor(
+      runID: runID,
+      invocationID: invocationID,
+      sequence: acknowledgedSequences[key] ?? 0
+    )
   }
 
   /// Returns false for an already-applied record and fails closed if applying the record would skip a
   /// sequence. A true result does not advance the cursor; call `acknowledge` only after reduction.
-  public func shouldApply(_ record: AgentEventRecord) throws -> Bool {
-    let acknowledgedSequence = acknowledgedSequences[record.runID] ?? 0
+  public func shouldApply(
+    _ record: AgentEventRecord,
+    invocationID: GatewayRunInvocationID
+  ) throws -> Bool {
+    let key = GatewayRunAcknowledgementKey(
+      runID: record.runID,
+      invocationID: invocationID
+    )
+    let acknowledgedSequence = acknowledgedSequences[key] ?? 0
     if record.sequence <= acknowledgedSequence {
       return false
     }
@@ -77,8 +110,15 @@ public actor HexGatewayClient {
     return true
   }
 
-  public func acknowledge(_ record: AgentEventRecord) throws {
-    let acknowledgedSequence = acknowledgedSequences[record.runID] ?? 0
+  public func acknowledge(
+    _ record: AgentEventRecord,
+    invocationID: GatewayRunInvocationID
+  ) throws {
+    let key = GatewayRunAcknowledgementKey(
+      runID: record.runID,
+      invocationID: invocationID
+    )
+    let acknowledgedSequence = acknowledgedSequences[key] ?? 0
     if record.sequence <= acknowledgedSequence {
       return
     }
@@ -90,14 +130,31 @@ public actor HexGatewayClient {
         message: "The client cannot acknowledge an event record with a sequence gap."
       )
     }
-    acknowledgedSequences[record.runID] = record.sequence
+    acknowledgedSequences[key] = record.sequence
   }
 
-  public func forgetAcknowledgement(for runID: AgentRunID) {
-    acknowledgedSequences.removeValue(forKey: runID)
+  public func forgetAcknowledgement(
+    for runID: AgentRunID,
+    invocationID: GatewayRunInvocationID
+  ) {
+    acknowledgedSequences.removeValue(
+      forKey: GatewayRunAcknowledgementKey(
+        runID: runID,
+        invocationID: invocationID
+      )
+    )
   }
 
   public func disconnect() async {
     await transport.disconnect()
+  }
+
+  private func removeAcknowledgements(
+    for runID: AgentRunID,
+    except retainedInvocationID: GatewayRunInvocationID? = nil
+  ) {
+    acknowledgedSequences = acknowledgedSequences.filter { entry in
+      entry.key.runID != runID || entry.key.invocationID == retainedInvocationID
+    }
   }
 }

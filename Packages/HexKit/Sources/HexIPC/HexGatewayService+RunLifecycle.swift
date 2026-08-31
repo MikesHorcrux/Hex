@@ -18,7 +18,9 @@ extension HexGatewayService {
       }
 
       let disposition: GatewayStartRunDisposition =
-        existingState.phase == .terminal ? .alreadyTerminal : .alreadyRunning
+        existingState.phase == .terminal
+        ? .alreadyTerminal(invocationID: existingState.invocationID)
+        : .alreadyRunning(invocationID: existingState.invocationID)
       return try codec.roundTrip(
         GatewayStartRunResponse(runID: request.runID, disposition: disposition)
       )
@@ -42,10 +44,16 @@ extension HexGatewayService {
       )
     }
 
-    let response = try codec.roundTrip(
-      GatewayStartRunResponse(runID: request.runID, disposition: .started)
-    )
+    // The server issues an invocation identity only after the request has passed conflict, active-run,
+    // and capacity admission. Exact duplicate starts are idempotent only while their run remains in
+    // the bounded remembered set; after eviction, the same request starts a fresh invocation.
     let invocationID = GatewayRunInvocationID()
+    let response = try codec.roundTrip(
+      GatewayStartRunResponse(
+        runID: request.runID,
+        disposition: .started(invocationID: invocationID)
+      )
+    )
     let state = GatewayRunState(request: request, invocationID: invocationID)
     activeRunID = request.runID
     runs[request.runID] = state
@@ -100,18 +108,37 @@ extension HexGatewayService {
 
     guard var state = runs[request.runID] else {
       return try codec.roundTrip(
-        GatewayCancelRunResponse(runID: request.runID, disposition: .notFound)
+        GatewayCancelRunResponse(
+          runID: request.runID,
+          invocationID: request.invocationID,
+          disposition: .notFound
+        )
+      )
+    }
+
+    guard state.invocationID == request.invocationID else {
+      throw GatewayFailure(
+        code: .staleRunInvocation,
+        message: "The cancellation targets a stale run invocation."
       )
     }
 
     guard state.phase != .terminal else {
       return try codec.roundTrip(
-        GatewayCancelRunResponse(runID: request.runID, disposition: .alreadyTerminal)
+        GatewayCancelRunResponse(
+          runID: request.runID,
+          invocationID: state.invocationID,
+          disposition: .alreadyTerminal
+        )
       )
     }
 
     let response = try codec.roundTrip(
-      GatewayCancelRunResponse(runID: request.runID, disposition: .requested)
+      GatewayCancelRunResponse(
+        runID: request.runID,
+        invocationID: state.invocationID,
+        disposition: .requested
+      )
     )
     state.phase = .cancelling
     let task = state.task

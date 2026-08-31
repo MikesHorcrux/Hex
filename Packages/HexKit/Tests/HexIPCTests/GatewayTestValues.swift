@@ -11,6 +11,10 @@ enum GatewayTestValues {
     AgentRunID(rawValue: uuid(value))
   }
 
+  static func invocationID(_ value: UInt8 = 2) -> GatewayRunInvocationID {
+    GatewayRunInvocationID(rawValue: uuid(value))
+  }
+
   static func request(
     runID: AgentRunID,
     text: String = "hello"

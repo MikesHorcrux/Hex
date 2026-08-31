@@ -20,13 +20,14 @@ struct GatewayFailureBoundaryTests {
     )
     let handshake = try await service.handshake(GatewayTestValues.handshakeRequest(96))
     let runID = GatewayTestValues.runID(96)
-    _ = try await service.startRun(
+    let start = try await service.startRun(
       GatewayTestValues.request(runID: runID),
       sessionID: handshake.sessionID
     )
+    let invocationID = try #require(start.invocationID)
 
     let live = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID),
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID),
       sessionID: handshake.sessionID
     )
     let liveFailure = try #require(await terminalFailure(from: live))
@@ -34,7 +35,7 @@ struct GatewayFailureBoundaryTests {
     #expect(try codec.encode(liveFailure).count <= configuration.maximumWireBytes)
 
     let replay = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID),
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID),
       sessionID: handshake.sessionID
     )
     let replayFailure = try #require(await terminalFailure(from: replay))

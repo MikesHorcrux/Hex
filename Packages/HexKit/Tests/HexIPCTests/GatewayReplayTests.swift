@@ -11,10 +11,11 @@ struct GatewayReplayTests {
     let firstTransport = InProcessHexGatewayTransport(service: service)
     _ = try await firstTransport.handshake(GatewayTestValues.handshakeRequest(1))
     let runID = GatewayTestValues.runID()
-    _ = try await firstTransport.startRun(GatewayTestValues.request(runID: runID))
+    let start = try await firstTransport.startRun(GatewayTestValues.request(runID: runID))
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     let abandonedStream = try await firstTransport.eventRecords(
-      after: GatewayEventCursor(runID: runID)
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
     )
 
     await firstTransport.disconnect()
@@ -38,7 +39,7 @@ struct GatewayReplayTests {
     let secondTransport = InProcessHexGatewayTransport(service: service)
     _ = try await secondTransport.handshake(GatewayTestValues.handshakeRequest(2))
     let replay = try await secondTransport.eventRecords(
-      after: GatewayEventCursor(runID: runID)
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
     )
     #expect(try await GatewayTestValues.collect(replay) == records)
     await driver.finish(runID)
@@ -69,10 +70,11 @@ struct GatewayReplayTests {
       event: .runCompleted
     )
 
-    _ = try await firstTransport.startRun(request)
+    let start = try await firstTransport.startRun(request)
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     let initialStream = try await firstTransport.eventRecords(
-      after: GatewayEventCursor(runID: runID)
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
     )
     var iterator = initialStream.makeAsyncIterator()
     await driver.yield(firstRecord)
@@ -92,7 +94,11 @@ struct GatewayReplayTests {
     _ = try await secondTransport.handshake(GatewayTestValues.handshakeRequest(2))
     let reconnectTask = Task {
       let stream = try await secondTransport.eventRecords(
-        after: GatewayEventCursor(runID: runID, sequence: 1)
+        after: GatewayEventCursor(
+          runID: runID,
+          invocationID: invocationID,
+          sequence: 1
+        )
       )
       return try await GatewayTestValues.collect(stream)
     }
@@ -112,7 +118,8 @@ struct GatewayReplayTests {
     let transport = InProcessHexGatewayTransport(service: service)
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
-    _ = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let start = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     let records = [
       GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted),
@@ -124,7 +131,9 @@ struct GatewayReplayTests {
     await driver.finish(runID)
     await driver.waitUntilStopped(runID)
 
-    let stream = try await transport.eventRecords(after: GatewayEventCursor(runID: runID))
+    let stream = try await transport.eventRecords(
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
+    )
     #expect(try await GatewayTestValues.collect(stream) == records)
   }
 }

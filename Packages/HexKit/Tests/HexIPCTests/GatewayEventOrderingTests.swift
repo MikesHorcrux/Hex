@@ -76,10 +76,11 @@ struct GatewayEventOrderingTests {
     let transport = InProcessHexGatewayTransport(service: service)
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
-    _ = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let start = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     let liveStream = try await transport.eventRecords(
-      after: GatewayEventCursor(runID: runID)
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
     )
     let records = [
       GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted),
@@ -95,7 +96,7 @@ struct GatewayEventOrderingTests {
     #expect(await driver.isRunning(runID))
 
     let lateReplay = try await transport.eventRecords(
-      after: GatewayEventCursor(runID: runID)
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
     )
     #expect(await collectBeforeDeadline(lateReplay) == records)
     #expect(await driver.isRunning(runID))
@@ -112,10 +113,11 @@ struct GatewayEventOrderingTests {
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
     let request = GatewayTestValues.request(runID: runID)
-    _ = try await transport.startRun(request)
+    let start = try await transport.startRun(request)
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     let initialStream = try await transport.eventRecords(
-      after: GatewayEventCursor(runID: runID)
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
     )
     let acceptedRecords = [
       GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted),
@@ -137,7 +139,7 @@ struct GatewayEventOrderingTests {
     await driver.waitUntilStopped(runID)
 
     let laterStream = try await transport.eventRecords(
-      after: GatewayEventCursor(runID: runID)
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
     )
 
     #expect(try await GatewayTestValues.collect(laterStream) == acceptedRecords)
@@ -163,14 +165,17 @@ struct GatewayEventOrderingTests {
     let service = HexGatewayService(driver: driver)
     let transport = InProcessHexGatewayTransport(service: service)
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest())
-    _ = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let start = try await transport.startRun(GatewayTestValues.request(runID: runID))
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     for record in records {
       await driver.yield(record, to: runID)
     }
     await driver.finish(runID)
     await driver.waitUntilStopped(runID)
-    let stream = try await transport.eventRecords(after: GatewayEventCursor(runID: runID))
+    let stream = try await transport.eventRecords(
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
+    )
     return try await GatewayTestValues.collect(stream)
   }
 

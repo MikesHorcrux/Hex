@@ -18,10 +18,11 @@ struct GatewaySlowConsumerTests {
     let handshake = try await service.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
     let request = GatewayTestValues.request(runID: runID)
-    _ = try await service.startRun(request, sessionID: handshake.sessionID)
+    let start = try await service.startRun(request, sessionID: handshake.sessionID)
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
     let stream = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID),
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID),
       sessionID: handshake.sessionID
     )
 

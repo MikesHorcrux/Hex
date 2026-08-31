@@ -19,6 +19,13 @@ extension HexGatewayService {
       )
     }
 
+    guard state.invocationID == cursor.invocationID else {
+      throw GatewayFailure(
+        code: .staleRunInvocation,
+        message: "The event cursor targets a stale run invocation."
+      )
+    }
+
     guard cursor.sequence <= state.latestSequence else {
       throw GatewayFailure(
         code: .invalidCursor,
@@ -84,7 +91,11 @@ extension HexGatewayService {
 
     continuation.onTermination = { @Sendable [weak self] _ in
       Task {
-        await self?.removeSubscriber(runID: cursor.runID, subscriberID: subscriberID)
+        await self?.removeSubscriber(
+          runID: cursor.runID,
+          invocationID: cursor.invocationID,
+          subscriberID: subscriberID
+        )
       }
     }
 
@@ -279,8 +290,12 @@ extension HexGatewayService {
     }
   }
 
-  private func removeSubscriber(runID: AgentRunID, subscriberID: UUID) {
-    guard var state = runs[runID] else {
+  private func removeSubscriber(
+    runID: AgentRunID,
+    invocationID: GatewayRunInvocationID,
+    subscriberID: UUID
+  ) {
+    guard var state = runs[runID], state.invocationID == invocationID else {
       return
     }
     state.subscribers.removeValue(forKey: subscriberID)

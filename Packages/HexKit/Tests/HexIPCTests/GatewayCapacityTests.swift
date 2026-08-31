@@ -55,22 +55,39 @@ struct GatewayCapacityTests {
     let firstRunID = GatewayTestValues.runID(1)
     let secondRunID = GatewayTestValues.runID(2)
     let thirdRunID = GatewayTestValues.runID(3)
-    try await complete(firstRunID, driver: driver, transport: transport)
-    try await complete(secondRunID, driver: driver, transport: transport)
-    try await complete(thirdRunID, driver: driver, transport: transport)
+    let firstInvocationID = try await complete(
+      firstRunID,
+      driver: driver,
+      transport: transport
+    )
+    let secondInvocationID = try await complete(
+      secondRunID,
+      driver: driver,
+      transport: transport
+    )
+    let thirdInvocationID = try await complete(
+      thirdRunID,
+      driver: driver,
+      transport: transport
+    )
 
     do {
-      _ = try await transport.eventRecords(after: GatewayEventCursor(runID: firstRunID))
+      _ = try await transport.eventRecords(
+        after: GatewayEventCursor(
+          runID: firstRunID,
+          invocationID: firstInvocationID
+        )
+      )
       Issue.record("Expected the oldest completed run to be evicted.")
     } catch let failure as GatewayFailure {
       #expect(failure.code == .runNotFound)
     }
 
     let secondReplay = try await transport.eventRecords(
-      after: GatewayEventCursor(runID: secondRunID)
+      after: GatewayEventCursor(runID: secondRunID, invocationID: secondInvocationID)
     )
     let thirdReplay = try await transport.eventRecords(
-      after: GatewayEventCursor(runID: thirdRunID)
+      after: GatewayEventCursor(runID: thirdRunID, invocationID: thirdInvocationID)
     )
     #expect(try await GatewayTestValues.collect(secondReplay).map(\.sequence) == [1, 2])
     #expect(try await GatewayTestValues.collect(thirdReplay).map(\.sequence) == [1, 2])
@@ -90,19 +107,20 @@ struct GatewayCapacityTests {
     let service = HexGatewayService(driver: driver, configuration: configuration)
     let handshake = try await service.handshake(GatewayTestValues.handshakeRequest())
     let runID = GatewayTestValues.runID()
-    _ = try await service.startRun(
+    let start = try await service.startRun(
       GatewayTestValues.request(runID: runID),
       sessionID: handshake.sessionID
     )
+    let invocationID = try #require(start.invocationID)
     await driver.waitUntilStarted(runID)
 
     let firstStream = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID),
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID),
       sessionID: handshake.sessionID
     )
     defer { _ = firstStream }
     let rejectedStream = try await service.eventRecords(
-      after: GatewayEventCursor(runID: runID),
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID),
       sessionID: handshake.sessionID
     )
     do {
@@ -120,13 +138,19 @@ struct GatewayCapacityTests {
     _ runID: AgentRunID,
     driver: ControllableGatewayRunDriver,
     transport: InProcessHexGatewayTransport
-  ) async throws {
+  ) async throws -> GatewayRunInvocationID {
     var response = try await transport.startRun(GatewayTestValues.request(runID: runID))
     while case .busy = response.disposition {
       await Task.yield()
       response = try await transport.startRun(GatewayTestValues.request(runID: runID))
     }
-    #expect(response.disposition == .started)
+    guard case .started(let invocationID) = response.disposition else {
+      Issue.record("Expected a newly admitted run invocation.")
+      throw GatewayFailure(
+        code: .runDriverFailed,
+        message: "The test run was not admitted."
+      )
+    }
     await driver.waitUntilStarted(runID)
     await driver.yield(
       GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
@@ -136,5 +160,6 @@ struct GatewayCapacityTests {
     )
     await driver.finish(runID)
     await driver.waitUntilStopped(runID)
+    return invocationID
   }
 }

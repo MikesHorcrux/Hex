@@ -15,8 +15,9 @@ struct GatewayRunAdmissionTests {
     let first = try await transport.startRun(request)
     let duplicate = try await transport.startRun(request)
 
-    #expect(first.disposition == .started)
-    #expect(duplicate.disposition == .alreadyRunning)
+    let invocationID = try #require(first.invocationID)
+    #expect(first.disposition == .started(invocationID: invocationID))
+    #expect(duplicate.disposition == .alreadyRunning(invocationID: invocationID))
     await driver.waitUntilStarted(runID)
     #expect(await driver.invocationCount(for: runID) == 1)
 
@@ -40,11 +41,13 @@ struct GatewayRunAdmissionTests {
     let firstRunID = GatewayTestValues.runID(1)
     let secondRunID = GatewayTestValues.runID(2)
     let firstRequest = GatewayTestValues.request(runID: firstRunID)
-    _ = try await transport.startRun(firstRequest)
+    let firstStart = try await transport.startRun(firstRequest)
+    let firstInvocationID = try #require(firstStart.invocationID)
     await driver.waitUntilStarted(firstRunID)
 
     let busy = try await transport.startRun(GatewayTestValues.request(runID: secondRunID))
     #expect(busy.disposition == .busy(activeRunID: firstRunID))
+    #expect(busy.invocationID == nil)
 
     await driver.yieldAndWait(
       GatewayTestValues.record(runID: firstRunID, sequence: 1, event: .runStarted)
@@ -54,13 +57,15 @@ struct GatewayRunAdmissionTests {
     )
 
     let terminalDuplicate = try await transport.startRun(firstRequest)
-    #expect(terminalDuplicate.disposition == .alreadyTerminal)
+    #expect(
+      terminalDuplicate.disposition == .alreadyTerminal(invocationID: firstInvocationID)
+    )
 
     let secondStart = try await transport.startRun(
       GatewayTestValues.request(runID: secondRunID)
     )
-    #expect(secondStart.disposition == .started)
-    guard secondStart.disposition == .started else {
+    #expect(secondStart.invocationID != nil)
+    guard case .started = secondStart.disposition else {
       await driver.finish(firstRunID)
       await driver.waitUntilStopped(firstRunID)
       return

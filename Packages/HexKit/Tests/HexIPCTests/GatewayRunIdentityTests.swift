@@ -5,6 +5,145 @@ import Testing
 @Suite("Gateway run identity")
 struct GatewayRunIdentityTests {
   @Test
+  func publicIdentityRejectsStaleReplayAndCancellationAfterRunIDReuse() async throws {
+    let configuration = try #require(
+      GatewayConfiguration(
+        maximumWireBytes: 32_768,
+        maximumRetainedRecordsPerRun: 4,
+        subscriberBufferCapacity: 4,
+        maximumRememberedRuns: 1
+      )
+    )
+    let driver = ABAGatewayRunDriver()
+    let service = HexGatewayService(driver: driver, configuration: configuration)
+    let transport = InProcessHexGatewayTransport(
+      service: service,
+      configuration: configuration
+    )
+    let client = HexGatewayClient(
+      transport: transport,
+      clientID: GatewayClientID(rawValue: GatewayTestValues.uuid(80))
+    )
+    _ = try await client.connect()
+    let reusedRunID = GatewayTestValues.runID(80)
+    let evictionRunID = GatewayTestValues.runID(81)
+
+    let firstStart = try await client.startRun(
+      GatewayTestValues.request(runID: reusedRunID)
+    )
+    let firstInvocationID = try #require(firstStart.invocationID)
+    await driver.waitUntilStarted(1)
+    let firstRecords = [
+      GatewayTestValues.record(runID: reusedRunID, sequence: 1, event: .runStarted),
+      GatewayTestValues.record(runID: reusedRunID, sequence: 2, event: .runCompleted),
+    ]
+    for record in firstRecords {
+      await driver.yieldAndWait(record, from: 1)
+    }
+    await driver.finish(1)
+    await driver.waitUntilStopped(1)
+    let firstReplay = try await client.eventRecords(
+      for: reusedRunID,
+      invocationID: firstInvocationID
+    )
+    for record in try await GatewayTestValues.collect(firstReplay) {
+      try await client.acknowledge(record, invocationID: firstInvocationID)
+    }
+    #expect(
+      await client.acknowledgedCursor(
+        for: reusedRunID,
+        invocationID: firstInvocationID
+      ).sequence == 2
+    )
+    let rememberedRetry = try await client.startRun(
+      GatewayTestValues.request(runID: reusedRunID)
+    )
+    #expect(
+      rememberedRetry.disposition == .alreadyTerminal(invocationID: firstInvocationID)
+    )
+    #expect(
+      await client.acknowledgedCursor(
+        for: reusedRunID,
+        invocationID: firstInvocationID
+      ).sequence == 2
+    )
+
+    _ = try await client.startRun(
+      GatewayTestValues.request(runID: evictionRunID)
+    )
+    await driver.waitUntilStarted(2)
+    await driver.yieldAndWait(
+      GatewayTestValues.record(runID: evictionRunID, sequence: 1, event: .runStarted),
+      from: 2
+    )
+    await driver.yieldAndWait(
+      GatewayTestValues.record(runID: evictionRunID, sequence: 2, event: .runCompleted),
+      from: 2
+    )
+    await driver.finish(2)
+    await driver.waitUntilStopped(2)
+
+    let replacementStart = try await client.startRun(
+      GatewayTestValues.request(runID: reusedRunID)
+    )
+    let replacementInvocationID = try #require(replacementStart.invocationID)
+    #expect(replacementInvocationID != firstInvocationID)
+    #expect(
+      await client.acknowledgedCursor(
+        for: reusedRunID,
+        invocationID: replacementInvocationID
+      ).sequence == 0
+    )
+    await driver.waitUntilStarted(3)
+    let replacementRecords = [
+      GatewayTestValues.record(runID: reusedRunID, sequence: 1, event: .runStarted),
+      GatewayTestValues.record(runID: reusedRunID, sequence: 2, event: .runCompleted),
+    ]
+    await driver.yieldAndWait(replacementRecords[0], from: 3)
+    let observerHandshake = try await service.handshake(
+      GatewayTestValues.handshakeRequest(82)
+    )
+    #expect(observerHandshake.activeRun?.runID == reusedRunID)
+    #expect(observerHandshake.activeRun?.invocationID == replacementInvocationID)
+    await service.disconnect(sessionID: observerHandshake.sessionID)
+
+    do {
+      _ = try await transport.eventRecords(
+        after: GatewayEventCursor(
+          runID: reusedRunID,
+          invocationID: firstInvocationID,
+          sequence: 2
+        )
+      )
+      Issue.record("Expected the old invocation cursor to be rejected.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .staleRunInvocation)
+    }
+
+    do {
+      _ = try await transport.cancelRun(
+        GatewayCancelRunRequest(
+          runID: reusedRunID,
+          invocationID: firstInvocationID
+        )
+      )
+      Issue.record("Expected stale cancellation to be rejected.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .staleRunInvocation)
+    }
+    #expect(await driver.isRunning(3))
+
+    await driver.yieldAndWait(replacementRecords[1], from: 3)
+    await driver.finish(3)
+    await driver.waitUntilStopped(3)
+    let replacementReplay = try await client.eventRecords(
+      for: reusedRunID,
+      invocationID: replacementInvocationID
+    )
+    #expect(try await GatewayTestValues.collect(replacementReplay) == replacementRecords)
+  }
+
+  @Test
   func staleCallbacksCannotMutateAnEvictedAndReusedRunID() async throws {
     let configuration = try #require(
       GatewayConfiguration(
@@ -59,7 +198,11 @@ struct GatewayRunIdentityTests {
       GatewayTestValues.request(runID: reusedRunID),
       sessionID: handshake.sessionID
     )
-    #expect(newStart.disposition == .started)
+    let newInvocationID = try #require(newStart.invocationID)
+    guard case .started = newStart.disposition else {
+      Issue.record("Expected the reused identifier to start a new invocation.")
+      return
+    }
     await driver.waitUntilStarted(3)
     let newStates = await service.runs
     let newTask = try #require(newStates[reusedRunID]?.task)
@@ -91,7 +234,7 @@ struct GatewayRunIdentityTests {
     #expect(probeStart.disposition == .busy(activeRunID: reusedRunID))
     guard probeStart.disposition == .busy(activeRunID: reusedRunID) else {
       await driver.finish(3)
-      if probeStart.disposition == .started {
+      if case .started = probeStart.disposition {
         await driver.waitUntilStarted(4)
         await driver.finish(4)
       }
@@ -108,7 +251,10 @@ struct GatewayRunIdentityTests {
     await newTask.value
 
     let replay = try await service.eventRecords(
-      after: GatewayEventCursor(runID: reusedRunID),
+      after: GatewayEventCursor(
+        runID: reusedRunID,
+        invocationID: newInvocationID
+      ),
       sessionID: handshake.sessionID
     )
     #expect(try await GatewayTestValues.collect(replay) == [newStartRecord, newTerminalRecord])
@@ -135,8 +281,8 @@ struct GatewayRunIdentityTests {
       GatewayTestValues.request(runID: replacementRunID),
       sessionID: handshake.sessionID
     )
-    #expect(replacementStart.disposition == .started)
-    guard replacementStart.disposition == .started else {
+    #expect(replacementStart.invocationID != nil)
+    guard case .started = replacementStart.disposition else {
       await driver.releaseInvalidInvocation()
       await failedTask.value
       return
