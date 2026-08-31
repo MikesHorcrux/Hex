@@ -9,7 +9,7 @@ public actor LocalMCPClientSession: MCPClientSession {
   private let connection: any MCPJSONRPCConnection
   private var state = MCPClientSessionState.disconnected
   private var lifecycleGeneration = UInt64(0)
-  private var discoveredToolExecutionRequirements: [String: Bool]?
+  private var discoveredToolTaskSupport: [String: MCPToolTaskSupport]?
 
   public init(configuration: MCPServerConfiguration) {
     self.serverID = configuration.serverID
@@ -56,12 +56,12 @@ public actor LocalMCPClientSession: MCPClientSession {
       try await connection.notify(method: "notifications/initialized", params: nil)
       try requireConnecting(generation: generation)
       initialization = decoded
-      discoveredToolExecutionRequirements = nil
+      discoveredToolTaskSupport = nil
       state = .ready
     } catch {
       if lifecycleGeneration == generation {
         initialization = nil
-        discoveredToolExecutionRequirements = nil
+        discoveredToolTaskSupport = nil
         state = .disconnected
         await connection.disconnect()
       }
@@ -74,7 +74,7 @@ public actor LocalMCPClientSession: MCPClientSession {
       lifecycleGeneration += 1
     }
     initialization = nil
-    discoveredToolExecutionRequirements = nil
+    discoveredToolTaskSupport = nil
     state = .disconnected
     await connection.disconnect()
   }
@@ -88,8 +88,9 @@ public actor LocalMCPClientSession: MCPClientSession {
     let supportsTaskAugmentedToolCalls =
       initialization?.protocolVersion == .november2025
       && initialization?.supportsTaskAugmentedToolCalls == true
-    if supportsTaskAugmentedToolCalls {
-      discoveredToolExecutionRequirements = nil
+    let usesTaskSupportMetadata = initialization?.protocolVersion == .november2025
+    if usesTaskSupportMetadata {
+      discoveredToolTaskSupport = nil
     }
 
     for _ in 0..<configuration.maximumToolPages {
@@ -121,8 +122,8 @@ public actor LocalMCPClientSession: MCPClientSession {
         tools.append(tool)
       }
       guard let nextCursor = page.nextCursor else {
-        discoveredToolExecutionRequirements = Dictionary(
-          uniqueKeysWithValues: tools.map { ($0.name, $0.requiresTaskExecution) }
+        discoveredToolTaskSupport = Dictionary(
+          uniqueKeysWithValues: tools.map { ($0.name, $0.taskSupport) }
         )
         return tools.filter { !$0.requiresTaskExecution }
       }
@@ -142,12 +143,10 @@ public actor LocalMCPClientSession: MCPClientSession {
     guard MCPToolCatalogBuilder.isValidToolName(call.name) else {
       throw MCPClientSessionError.protocolViolation
     }
-    if initialization?.protocolVersion == .november2025,
-      initialization?.supportsTaskAugmentedToolCalls == true
-    {
+    if initialization?.protocolVersion == .november2025 {
       guard
-        let requiresTaskExecution = discoveredToolExecutionRequirements?[call.name],
-        !requiresTaskExecution
+        let taskSupport = discoveredToolTaskSupport?[call.name],
+        taskSupport != .required
       else {
         throw MCPClientSessionError.toolsUnavailable
       }
@@ -230,7 +229,7 @@ public actor LocalMCPClientSession: MCPClientSession {
       lifecycleGeneration += 1
     }
     initialization = nil
-    discoveredToolExecutionRequirements = nil
+    discoveredToolTaskSupport = nil
     state = .disconnected
     await connection.disconnect()
   }

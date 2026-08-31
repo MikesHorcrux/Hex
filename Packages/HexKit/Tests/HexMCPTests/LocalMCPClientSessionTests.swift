@@ -346,28 +346,38 @@ struct LocalMCPClientSessionTests {
     #expect(await connection.disconnectCount() == 1)
   }
 
-  @Test("Treats task metadata as non-task when task calls were not negotiated")
-  func callsRequiredMarkerNormallyWithoutTaskCapability() async throws {
-    let connection = ScriptedConnection(
-      responses: [
-        initializationResponse(protocolVersion: "2025-11-25"),
-        toolPage(name: "ordinary_job", taskSupport: "required"),
-        toolResult(text: "ordinary"),
-      ]
-    )
+  @Test(
+    "Withholds required-task tools for every 2025-11 task-capability shape",
+    arguments: TaskCapabilityFixture.all
+  )
+  func withholdsRequiredTaskToolsAcrossCapabilityShapes(
+    fixture: TaskCapabilityFixture
+  ) async throws {
+    let program =
+      #"index($0, "\"method\":\"initialize\"") { print "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":\#(fixture.encodedCapabilities),\"serverInfo\":{\"name\":\"Fixture\",\"version\":\"1\"}}}"; fflush(); next } index($0, "\"method\":\"tools/list\"") { print "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"long_job\",\"inputSchema\":{\"type\":\"object\"},\"execution\":{\"taskSupport\":\"required\"}},{\"name\":\"ordinary_job\",\"inputSchema\":{\"type\":\"object\"}}]}}"; fflush(); next } index($0, "\"method\":\"tools/call\"") { mode = index($0, "\"name\":\"ordinary_job\"") ? "ordinary" : "required-was-written"; print "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" mode "\"}],\"isError\":false}}"; fflush(); next }"#
     let session = LocalMCPClientSession(
-      configuration: try configuration(),
-      connection: connection
+      configuration: try stdioConfiguration(program: program)
     )
     try await session.connect()
+    do {
+      await #expect(throws: MCPClientSessionError.toolsUnavailable) {
+        try await session.callTool(MCPRemoteToolCall(name: "ordinary_job", arguments: [:]))
+      }
+      let tools = try await session.listTools()
+      #expect(tools.map(\.name) == ["ordinary_job"])
+      await #expect(throws: MCPClientSessionError.toolsUnavailable) {
+        try await session.callTool(MCPRemoteToolCall(name: "long_job", arguments: [:]))
+      }
+      let result = try await session.callTool(
+        MCPRemoteToolCall(name: "ordinary_job", arguments: [:])
+      )
 
-    let tools = try await session.listTools()
-    #expect(tools.map(\.name) == ["ordinary_job"])
-    let result = try await session.callTool(
-      MCPRemoteToolCall(name: "ordinary_job", arguments: [:])
-    )
-
-    #expect(result.content == [.text("ordinary")])
+      #expect(result.content == [.text("ordinary")])
+    } catch {
+      await session.disconnect()
+      throw error
+    }
+    await session.disconnect()
   }
 
   @Test("Runs the public session and tool executor through a real stdio server")
@@ -446,6 +456,19 @@ struct LocalMCPClientSessionTests {
     )
   }
 
+  private func stdioConfiguration(program: String) throws -> MCPServerConfiguration {
+    try MCPServerConfiguration(
+      serverID: "fixture",
+      executableURL: URL(fileURLWithPath: "/usr/bin/awk"),
+      arguments: [program],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+  }
+
   private func initializationResponse(
     protocolVersion: String = "2025-06-18",
     supportsTaskToolCalls: Bool = false
@@ -516,6 +539,35 @@ struct LocalMCPClientSessionTests {
       ]),
       "isError": .boolean(false),
     ])
+  }
+
+  struct TaskCapabilityFixture: Sendable {
+    let name: String
+    let encodedCapabilities: String
+
+    static let all = [
+      TaskCapabilityFixture(
+        name: "absent tasks",
+        encodedCapabilities: #"{\"tools\":{}}"#
+      ),
+      TaskCapabilityFixture(
+        name: "empty tasks",
+        encodedCapabilities: #"{\"tools\":{},\"tasks\":{}}"#
+      ),
+      TaskCapabilityFixture(
+        name: "partial requests",
+        encodedCapabilities: #"{\"tools\":{},\"tasks\":{\"requests\":{}}}"#
+      ),
+      TaskCapabilityFixture(
+        name: "partial tools",
+        encodedCapabilities: #"{\"tools\":{},\"tasks\":{\"requests\":{\"tools\":{}}}}"#
+      ),
+      TaskCapabilityFixture(
+        name: "full tool-call capability",
+        encodedCapabilities:
+          #"{\"tools\":{},\"tasks\":{\"requests\":{\"tools\":{\"call\":{}}}}}"#
+      ),
+    ]
   }
 
   actor ScriptedConnection: MCPJSONRPCConnection {

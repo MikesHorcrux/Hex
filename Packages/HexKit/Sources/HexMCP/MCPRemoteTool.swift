@@ -22,6 +22,6 @@ public struct MCPRemoteTool: Equatable, Sendable {
   }
 
   var requiresTaskExecution: Bool {
-    supportsTaskAugmentedToolCalls && taskSupport == .required
+    taskSupport == .required
   }
 }

@@ -7,8 +7,10 @@ The first transport is local stdio JSON-RPC for tools such as Xcode's `mcpbridge
 initialize/initialized handshake, peer ping replies, and discovery/calls for ordinary non-task tools
 for protocol revisions from `2024-11-05` through `2025-11-25`. The client does not implement the
 experimental task lifecycle in `2025-11-25`; tools that require negotiated task augmentation are not
-published and cannot be called directly. A future stateless MCP revision should be added as a
-separate negotiation path instead of silently changing the local legacy handshake.
+published and cannot be called directly. This fail-closed rule follows a tool's declared
+`execution.taskSupport` even when the server omits or only partially advertises task-call
+capabilities. A future stateless MCP revision should be added as a separate negotiation path instead
+of silently changing the local legacy handshake.
 
 ## Boundary rules
 
