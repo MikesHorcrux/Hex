@@ -70,7 +70,7 @@ struct MCPExecutableSnapshotTests {
     let valid = metadata(fileType: S_IFDIR, permissions: 0o755, uid: 0, gid: 0)
     #expect(MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(valid))
 
-    let nonRootOwner = geteuid() == 0 ? uid_t(501) : uid_t(0)
+    let nonRootOwner = geteuid() == 0 ? uid_t(501) : geteuid()
     let userOwned = metadata(fileType: S_IFDIR, permissions: 0o755, uid: nonRootOwner, gid: 0)
     #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(userOwned))
 
@@ -86,7 +86,7 @@ struct MCPExecutableSnapshotTests {
 
   @Test("Allows hard-linked regular files only for trusted root-owned sources")
   func allowsHardLinksOnlyForTrustedRootOwnedSources() {
-    let nonRootOwner = geteuid() == 0 ? uid_t(501) : uid_t(0)
+    let nonRootOwner = geteuid() == 0 ? uid_t(501) : geteuid()
     let trusted = metadata(
       fileType: S_IFREG,
       permissions: 0o444,
