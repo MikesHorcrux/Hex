@@ -8,6 +8,7 @@ public actor HexGatewayClient {
   private let handshakeRequest: GatewayHandshakeRequest
   private var gatewayInstanceID: GatewayInstanceID?
   private var acknowledgedSequences: [GatewayRunAcknowledgementKey: UInt64] = [:]
+  private var startAttemptIDs: [AgentRunID: GatewayClientStartAttemptID] = [:]
 
   public init(
     transport: any HexGatewayTransport,
@@ -38,10 +39,53 @@ public actor HexGatewayClient {
     )
   }
 
+  /// Starts a run through the transport. For the same run identifier, a newer concurrent call
+  /// supersedes every older in-flight call. Superseded responses and failures are redacted and can
+  /// never mutate acknowledgement state belonging to the newer call.
   public func startRun(
     _ request: GatewayStartRunRequest
   ) async throws -> GatewayStartRunResponse {
-    let response = try await transport.startRun(request)
+    try Task.checkCancellation()
+    let runID = request.runID
+    let attemptID = GatewayClientStartAttemptID()
+    startAttemptIDs[runID] = attemptID
+
+    let response: GatewayStartRunResponse
+    do {
+      response = try await withTaskCancellationHandler {
+        try await transport.startRun(request)
+      } onCancel: {
+        Task {
+          await self.invalidateStartAttempt(
+            for: runID,
+            matching: attemptID
+          )
+        }
+      }
+    } catch {
+      if Task.isCancelled {
+        invalidateStartAttempt(for: runID, matching: attemptID)
+        throw CancellationError()
+      }
+
+      try requireCurrentStartAttempt(for: runID, matching: attemptID)
+      try Task.checkCancellation()
+      invalidateStartAttempt(for: runID, matching: attemptID)
+      throw error
+    }
+
+    try Task.checkCancellation()
+    try requireCurrentStartAttempt(for: runID, matching: attemptID)
+    guard response.runID == runID else {
+      try Task.checkCancellation()
+      invalidateStartAttempt(for: runID, matching: attemptID)
+      throw GatewayFailure(
+        code: .wrongRun,
+        message: "The gateway returned a start response for a different run."
+      )
+    }
+
+    try Task.checkCancellation()
     switch response.disposition {
     case .started(let invocationID):
       // A newly admitted generation always begins at cursor zero, even when its run identifier was
@@ -55,6 +99,7 @@ public actor HexGatewayClient {
     case .busy:
       break
     }
+    invalidateStartAttempt(for: runID, matching: attemptID)
     return response
   }
 
@@ -156,5 +201,31 @@ public actor HexGatewayClient {
     acknowledgedSequences = acknowledgedSequences.filter { entry in
       entry.key.runID != runID || entry.key.invocationID == retainedInvocationID
     }
+  }
+
+  private func requireCurrentStartAttempt(
+    for runID: AgentRunID,
+    matching attemptID: GatewayClientStartAttemptID
+  ) throws {
+    guard startAttemptIDs[runID] == attemptID else {
+      throw supersededStartFailure()
+    }
+  }
+
+  private func invalidateStartAttempt(
+    for runID: AgentRunID,
+    matching attemptID: GatewayClientStartAttemptID
+  ) {
+    guard startAttemptIDs[runID] == attemptID else {
+      return
+    }
+    startAttemptIDs.removeValue(forKey: runID)
+  }
+
+  private func supersededStartFailure() -> GatewayFailure {
+    GatewayFailure(
+      code: .supersededOperation,
+      message: "The start operation was superseded by a newer attempt."
+    )
   }
 }

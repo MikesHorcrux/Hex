@@ -20,4 +20,5 @@ public enum GatewayFailureCode: String, Codable, Equatable, Sendable {
   case payloadTooLarge
   case disconnected
   case transportUnavailable
+  case supersededOperation
 }
