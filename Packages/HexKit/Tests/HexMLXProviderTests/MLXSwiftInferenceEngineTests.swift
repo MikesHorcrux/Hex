@@ -60,12 +60,7 @@ struct MLXSwiftInferenceEngineTests {
       }
     }
 
-    for _ in 0..<100 {
-      if await recorder.events().count == 1 {
-        break
-      }
-      await Task.yield()
-    }
+    await recorder.waitForEventCount(1)
     #expect(await recorder.events() == [.textDelta("done")])
 
     await gate.release()
@@ -99,6 +94,17 @@ struct MLXSwiftInferenceEngineTests {
     #expect(throws: MLXLocalInferenceProviderError.invalidRequest) {
       try MLXSwiftInferenceEngine.validateContext(
         promptTokenCount: Int.max,
+        maximumOutputTokens: 32,
+        maximumContextTokens: 128
+      )
+    }
+  }
+
+  @Test
+  func rejectsPreparedPromptWithZeroTokensBeforeCreatingTheTokenIterator() {
+    #expect(throws: MLXLocalInferenceProviderError.invalidRequest) {
+      try MLXSwiftInferenceEngine.validateContext(
+        promptTokenCount: 0,
         maximumOutputTokens: 32,
         maximumContextTokens: 128
       )
@@ -176,7 +182,9 @@ struct MLXSwiftInferenceEngineTests {
     )
     let firstStream = try await provider.stream(request)
     let firstConsumer = Task {
-      for try await _ in firstStream {}
+      try await firstStream.consume { cursor in
+        while try await cursor.next() != nil {}
+      }
       try Task.checkCancellation()
     }
 
@@ -185,15 +193,15 @@ struct MLXSwiftInferenceEngineTests {
     }
     #expect(await physicalGeneration.activeRunCount() == 1)
     firstConsumer.cancel()
-    await #expect(throws: CancellationError.self) {
-      try await firstConsumer.value
-    }
     await #expect(throws: MLXLocalInferenceProviderError.busy) {
       _ = try await provider.stream(request)
     }
 
     await physicalGeneration.release()
-    var secondStream: AsyncThrowingStream<InferenceStreamEvent, any Error>?
+    await #expect(throws: CancellationError.self) {
+      try await firstConsumer.value
+    }
+    var secondStream: InferenceStream?
     for _ in 0..<1_000 {
       do {
         secondStream = try await provider.stream(request)
@@ -203,9 +211,12 @@ struct MLXSwiftInferenceEngineTests {
       }
     }
     let openedSecondStream = try #require(secondStream)
-    var secondEvents: [InferenceStreamEvent] = []
-    for try await event in openedSecondStream {
-      secondEvents.append(event)
+    let secondEvents = try await openedSecondStream.consume { cursor in
+      var events: [InferenceStreamEvent] = []
+      while let event = try await cursor.next() {
+        events.append(event)
+      }
+      return events
     }
     #expect(secondEvents.last == .completed(.stop))
     #expect(await physicalGeneration.activeRunCount() == 0)
@@ -214,13 +225,28 @@ struct MLXSwiftInferenceEngineTests {
 
   private actor EngineEventRecorder {
     private var recordedEvents: [MLXInferenceEngineEvent] = []
+    private var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     func record(_ event: MLXInferenceEngineEvent) {
       recordedEvents.append(event)
+      let readyWaiters = waiters.filter { $0.count <= recordedEvents.count }
+      waiters.removeAll { $0.count <= recordedEvents.count }
+      for waiter in readyWaiters {
+        waiter.continuation.resume()
+      }
     }
 
     func events() -> [MLXInferenceEngineEvent] {
       recordedEvents
+    }
+
+    func waitForEventCount(_ count: Int) async {
+      guard recordedEvents.count < count else {
+        return
+      }
+      await withCheckedContinuation { continuation in
+        waiters.append((count, continuation))
+      }
     }
   }
 

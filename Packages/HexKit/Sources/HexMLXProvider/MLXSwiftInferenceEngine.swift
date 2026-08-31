@@ -110,7 +110,8 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
             case .info(let info):
               guard
                 let inputTokens = UInt64(exactly: info.promptTokenCount),
-                let outputTokens = UInt64(exactly: info.generationTokenCount)
+                let outputTokens = UInt64(exactly: info.generationTokenCount),
+                inputTokens > 0
               else {
                 throw MLXLocalInferenceProviderError.invalidStream
               }
@@ -185,7 +186,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     maximumContextTokens: Int
   ) throws {
     guard
-      promptTokenCount >= 0,
+      promptTokenCount > 0,
       maximumOutputTokens > 0,
       maximumOutputTokens <= maximumContextTokens,
       promptTokenCount <= maximumContextTokens - maximumOutputTokens

@@ -1,6 +1,6 @@
 public struct MLXInferenceEngineRun: Sendable {
   public let events: AsyncThrowingStream<MLXInferenceEngineEvent, any Error>
-  private let cancellation: @Sendable () -> Void
+  private let cancellation: MLXInferenceEngineRunCancellation
   private let termination: @Sendable () async -> Void
 
   public init(
@@ -9,12 +9,12 @@ public struct MLXInferenceEngineRun: Sendable {
     waitForTermination: @escaping @Sendable () async -> Void
   ) {
     self.events = events
-    cancellation = cancel
+    cancellation = MLXInferenceEngineRunCancellation(action: cancel)
     termination = waitForTermination
   }
 
   public func cancel() {
-    cancellation()
+    cancellation.cancel()
   }
 
   /// Returns only after the physical engine producer has stopped touching model state.

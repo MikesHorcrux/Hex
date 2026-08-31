@@ -130,6 +130,7 @@ extension MLXLocalInferenceProvider {
   ) -> Bool {
     let maximumOutputTokens = request.options.maxOutputTokens ?? model.maximumOutputTokens
     guard
+      usage.inputTokens > 0,
       usage.cachedInputTokens <= usage.inputTokens,
       usage.reasoningTokens <= usage.outputTokens,
       usage.outputTokens <= UInt64(maximumOutputTokens),

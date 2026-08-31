@@ -1,6 +1,7 @@
 import Foundation
 import HexCore
 import HexProviders
+import Synchronization
 import Testing
 
 @Suite("MLX local inference provider")
@@ -84,18 +85,12 @@ struct MLXLocalInferenceProviderTests {
     }
 
     await engine.complete()
-    var firstEvents: [InferenceStreamEvent] = []
-    for try await event in firstStream {
-      firstEvents.append(event)
-    }
+    let firstEvents = try await collect(firstStream)
     #expect(firstEvents.last == .completed(.stop))
 
     let secondStream = try await provider.stream(request)
     await engine.complete()
-    var secondEvents: [InferenceStreamEvent] = []
-    for try await event in secondStream {
-      secondEvents.append(event)
-    }
+    let secondEvents = try await collect(secondStream)
     #expect(secondEvents.last == .completed(.stop))
   }
 
@@ -109,7 +104,9 @@ struct MLXLocalInferenceProviderTests {
     let request = makeRequest(modelID: ModelID(rawValue: "model-a"))
     let firstStream = try await provider.stream(request)
     let consumer = Task {
-      for try await _ in firstStream {}
+      try await firstStream.consume { cursor in
+        while try await cursor.next() != nil {}
+      }
       try Task.checkCancellation()
     }
 
@@ -119,7 +116,7 @@ struct MLXLocalInferenceProviderTests {
       try await consumer.value
     }
 
-    var secondStream: AsyncThrowingStream<InferenceStreamEvent, any Error>?
+    var secondStream: InferenceStream?
     for _ in 0..<100 {
       do {
         secondStream = try await provider.stream(request)
@@ -131,10 +128,7 @@ struct MLXLocalInferenceProviderTests {
     let openedStream = try #require(secondStream)
     await engine.complete()
     await engine.complete()
-    var events: [InferenceStreamEvent] = []
-    for try await event in openedStream {
-      events.append(event)
-    }
+    let events = try await collect(openedStream)
     #expect(events.last == .completed(.stop))
   }
 
@@ -412,8 +406,10 @@ struct MLXLocalInferenceProviderTests {
     )
     let collector = Task {
       do {
-        for try await event in stream {
-          await recorder.record(event)
+        try await stream.consume { cursor in
+          while let event = try await cursor.next() {
+            await recorder.record(event)
+          }
         }
         return nil as MLXLocalInferenceProviderError?
       } catch {
@@ -453,8 +449,10 @@ struct MLXLocalInferenceProviderTests {
       makeRequest(modelID: ModelID(rawValue: "model-a"))
     )
     let collector = Task {
-      for try await event in stream {
-        await recorder.record(event)
+      try await stream.consume { cursor in
+        while let event = try await cursor.next() {
+          await recorder.record(event)
+        }
       }
     }
 
@@ -593,6 +591,34 @@ struct MLXLocalInferenceProviderTests {
   }
 
   @Test
+  func rejectsZeroInputUsageForANonemptyRequest() async throws {
+    let fixture = try makeFixture(modelNames: ["model-a"])
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let loader = RecordingLoader(
+      engines: [
+        "model-a": ScriptedEngine(events: [
+          .textDelta("impossible-with-zero-input-tokens"),
+          .completed(
+            usage: InferenceUsage(inputTokens: 0, outputTokens: 1),
+            stopReason: .stop
+          ),
+        ])
+      ]
+    )
+    let provider = try makeProvider(fixture: fixture, loader: loader)
+
+    do {
+      _ = try await collect(
+        provider,
+        request: makeRequest(modelID: ModelID(rawValue: "model-a"))
+      )
+      Issue.record("Expected zero input-token usage to fail closed.")
+    } catch {
+      #expect(error as? MLXLocalInferenceProviderError == .invalidStream)
+    }
+  }
+
+  @Test
   func validatesGeneratedArgumentsAgainstSupportedInputSchema() async throws {
     let fixture = try makeFixture(modelNames: ["model-a"])
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -707,13 +733,18 @@ struct MLXLocalInferenceProviderTests {
   func keepsSlotBusyUntilCancellationIsPhysicallyAcknowledged() async throws {
     let fixture = try makeFixture(modelNames: ["model-a"])
     defer { try? FileManager.default.removeItem(at: fixture.root) }
-    let engine = GatedEngine(trailingEvent: nil)
+    let engine = GatedEngine(
+      trailingEvent: nil,
+      waitsBeforeOutput: true
+    )
     let loader = RecordingLoader(engines: ["model-a": engine])
     let provider = try makeProvider(fixture: fixture, loader: loader)
     let request = makeRequest(modelID: ModelID(rawValue: "model-a"))
     let stream = try await provider.stream(request)
     let consumer = Task {
-      for try await _ in stream {}
+      try await stream.consume { cursor in
+        while try await cursor.next() != nil {}
+      }
       try Task.checkCancellation()
     }
 
@@ -721,16 +752,21 @@ struct MLXLocalInferenceProviderTests {
       await Task.yield()
     }
     consumer.cancel()
-    await #expect(throws: CancellationError.self) {
-      try await consumer.value
+    for _ in 0..<1_000 where await engine.cancellationRequestCount() == 0 {
+      await Task.yield()
     }
+    let cancellationRequestCount = await engine.cancellationRequestCount()
+    #expect(cancellationRequestCount == 1)
     await #expect(throws: MLXLocalInferenceProviderError.busy) {
       _ = try await provider.stream(request)
     }
     #expect(await engine.maximumConcurrentRuns() == 1)
 
     await engine.release()
-    var nextStream: AsyncThrowingStream<InferenceStreamEvent, any Error>?
+    await #expect(throws: CancellationError.self) {
+      try await consumer.value
+    }
+    var nextStream: InferenceStream?
     for _ in 0..<100 {
       do {
         nextStream = try await provider.stream(request)
@@ -740,7 +776,59 @@ struct MLXLocalInferenceProviderTests {
       }
     }
     let openedStream = try #require(nextStream)
-    for try await _ in openedStream {}
+    try await openedStream.consume { cursor in
+      while try await cursor.next() != nil {}
+    }
+    #expect(await engine.maximumConcurrentRuns() == 1)
+  }
+
+  @Test
+  func abandoningConsumerCancelsButKeepsSlotUntilPhysicalTermination() async throws {
+    let fixture = try makeFixture(modelNames: ["model-a"])
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let engine = GatedEngine(
+      trailingEvent: nil,
+      waitsBeforeOutput: true
+    )
+    let loader = RecordingLoader(engines: ["model-a": engine])
+    let provider = try makeProvider(fixture: fixture, loader: loader)
+    let request = makeRequest(modelID: ModelID(rawValue: "model-a"))
+
+    let abandonedStream = try await provider.stream(request)
+    let consumer = Task {
+      try await abandonedStream.consume { cursor in
+        while let event = try await cursor.next() {
+          if case .started = event {
+            return
+          }
+        }
+      }
+    }
+    for _ in 0..<1_000 where await engine.cancellationRequestCount() == 0 {
+      await Task.yield()
+    }
+
+    let cancellationRequestCount = await engine.cancellationRequestCount()
+    #expect(cancellationRequestCount == 1)
+    #expect(await engine.physicalRunCount() == 1)
+    await #expect(throws: MLXLocalInferenceProviderError.busy) {
+      _ = try await provider.stream(request)
+    }
+
+    await engine.release()
+    try await consumer.value
+    var nextStream: InferenceStream?
+    for _ in 0..<1_000 {
+      do {
+        nextStream = try await provider.stream(request)
+        break
+      } catch MLXLocalInferenceProviderError.busy {
+        await Task.yield()
+      }
+    }
+    let openedStream = try #require(nextStream)
+    let events = try await collect(openedStream)
+    #expect(events.last == .completed(.stop))
     #expect(await engine.maximumConcurrentRuns() == 1)
   }
 
@@ -864,11 +952,19 @@ struct MLXLocalInferenceProviderTests {
     request: InferenceRequest
   ) async throws -> [InferenceStreamEvent] {
     let stream = try await provider.stream(request)
-    var events: [InferenceStreamEvent] = []
-    for try await event in stream {
-      events.append(event)
+    return try await collect(stream)
+  }
+
+  private func collect(
+    _ stream: InferenceStream
+  ) async throws -> [InferenceStreamEvent] {
+    try await stream.consume { cursor in
+      var events: [InferenceStreamEvent] = []
+      while let event = try await cursor.next() {
+        events.append(event)
+      }
+      return events
     }
-    return events
   }
 
   private actor RecordingLoader: MLXInferenceEngineLoader {
@@ -1042,13 +1138,19 @@ struct MLXLocalInferenceProviderTests {
 
   private actor GatedEngine: MLXInferenceEngine {
     private let trailingEvent: MLXInferenceEngineEvent?
+    private let waitsBeforeOutput: Bool
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var released = false
     private var activeRuns = 0
     private var maximumRuns = 0
+    private let cancellationCounter = CancellationCounter()
 
-    init(trailingEvent: MLXInferenceEngineEvent?) {
+    init(
+      trailingEvent: MLXInferenceEngineEvent?,
+      waitsBeforeOutput: Bool = false
+    ) {
       self.trailingEvent = trailingEvent
+      self.waitsBeforeOutput = waitsBeforeOutput
     }
 
     func start(
@@ -1061,10 +1163,12 @@ struct MLXLocalInferenceProviderTests {
       let producer = Task {
         await self.run(continuation: continuation)
       }
+      let cancellationCounter = cancellationCounter
       return MLXInferenceEngineRun(
         events: stream,
         cancel: {
           producer.cancel()
+          cancellationCounter.increment()
         },
         waitForTermination: {
           await producer.value
@@ -1089,11 +1193,18 @@ struct MLXLocalInferenceProviderTests {
       maximumRuns
     }
 
+    func cancellationRequestCount() -> Int {
+      cancellationCounter.value()
+    }
+
     private func run(
       continuation: AsyncThrowingStream<MLXInferenceEngineEvent, any Error>.Continuation
     ) async {
       activeRuns += 1
       maximumRuns = max(maximumRuns, activeRuns)
+      if waitsBeforeOutput {
+        await waitForRelease()
+      }
       continuation.yield(.textDelta("done"))
       continuation.yield(
         .completed(
@@ -1101,7 +1212,9 @@ struct MLXLocalInferenceProviderTests {
           stopReason: .stop
         )
       )
-      await waitForRelease()
+      if !waitsBeforeOutput {
+        await waitForRelease()
+      }
       if let trailingEvent {
         continuation.yield(trailingEvent)
       }
@@ -1116,6 +1229,21 @@ struct MLXLocalInferenceProviderTests {
       await withCheckedContinuation { continuation in
         waiters.append(continuation)
       }
+    }
+
+  }
+
+  private final class CancellationCounter: Sendable {
+    private let count = Mutex(0)
+
+    func increment() {
+      count.withLock { value in
+        value += 1
+      }
+    }
+
+    func value() -> Int {
+      count.withLock { $0 }
     }
   }
 
