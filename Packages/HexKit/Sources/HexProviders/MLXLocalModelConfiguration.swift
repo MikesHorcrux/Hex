@@ -13,6 +13,9 @@ public struct MLXLocalModelConfiguration: Equatable, Sendable {
   public let resourcePolicy: MLXLocalModelResourcePolicy
   private let directoryDevice: UInt64
   private let directoryInode: UInt64
+  private let directoryOwner: UInt64
+  private let directoryGroup: UInt64
+  private let directoryPermissions: UInt64
 
   public init(
     modelID: ModelID,
@@ -44,9 +47,14 @@ public struct MLXLocalModelConfiguration: Equatable, Sendable {
 
     let canonicalDirectory = directory.standardizedFileURL.resolvingSymlinksInPath()
     var status = stat()
+    guard lstat(canonicalDirectory.path, &status) == 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    let permissions = UInt64(status.st_mode & mode_t(0o7777))
     guard
-      lstat(canonicalDirectory.path, &status) == 0,
-      status.st_mode & S_IFMT == S_IFDIR
+      status.st_mode & S_IFMT == S_IFDIR,
+      status.st_uid == geteuid(),
+      permissions & 0o022 == 0
     else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
@@ -61,6 +69,9 @@ public struct MLXLocalModelConfiguration: Equatable, Sendable {
     self.resourcePolicy = selectedResourcePolicy
     directoryDevice = UInt64(status.st_dev)
     directoryInode = UInt64(status.st_ino)
+    directoryOwner = UInt64(status.st_uid)
+    directoryGroup = UInt64(status.st_gid)
+    directoryPermissions = permissions
   }
 
   public var capabilities: Set<InferenceCapability> {
@@ -76,18 +87,32 @@ public struct MLXLocalModelConfiguration: Equatable, Sendable {
 
   public func hasOriginalDirectoryIdentity() -> Bool {
     var status = stat()
-    return lstat(directory.path, &status) == 0
-      && status.st_mode & S_IFMT == S_IFDIR
+    guard lstat(directory.path, &status) == 0 else {
+      return false
+    }
+    return matchesOriginalDirectory(status)
       && UInt64(status.st_dev) == directoryDevice
       && UInt64(status.st_ino) == directoryInode
   }
 
   public func hasOriginalDirectoryIdentity(fileDescriptor: Int32) -> Bool {
     var status = stat()
-    return fstat(fileDescriptor, &status) == 0
-      && status.st_mode & S_IFMT == S_IFDIR
+    guard fstat(fileDescriptor, &status) == 0 else {
+      return false
+    }
+    return matchesOriginalDirectory(status)
       && UInt64(status.st_dev) == directoryDevice
       && UInt64(status.st_ino) == directoryInode
+  }
+
+  private func matchesOriginalDirectory(_ status: stat) -> Bool {
+    let permissions = UInt64(status.st_mode & mode_t(0o7777))
+    return status.st_mode & S_IFMT == S_IFDIR
+      && UInt64(status.st_uid) == directoryOwner
+      && directoryOwner == UInt64(geteuid())
+      && UInt64(status.st_gid) == directoryGroup
+      && permissions & 0o022 == 0
+      && permissions == directoryPermissions
   }
 
   private static func isValidIdentifier(_ value: String) -> Bool {

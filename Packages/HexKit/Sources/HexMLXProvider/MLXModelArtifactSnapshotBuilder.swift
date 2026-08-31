@@ -83,7 +83,8 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
       snapshotEntries.append(try snapshot(artifact, into: destinationDescriptor))
     }
     try validateSourceStillMatches(
-      artifacts,
+      configuration: configuration,
+      artifacts: artifacts,
       sourceDescriptor: sourceDescriptor,
       initialNames: initialNames,
       maximumArtifactCount: maximumArtifactCount
@@ -417,12 +418,15 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
   }
 
   private func validateSourceStillMatches(
-    _ artifacts: [MLXModelArtifact],
+    configuration: MLXLocalModelConfiguration,
+    artifacts: [MLXModelArtifact],
     sourceDescriptor: Int32,
     initialNames: [String],
     maximumArtifactCount: Int
   ) throws {
     guard
+      configuration.hasOriginalDirectoryIdentity(),
+      configuration.hasOriginalDirectoryIdentity(fileDescriptor: sourceDescriptor),
       try artifactNames(
         in: sourceDescriptor,
         maximumCount: maximumArtifactCount

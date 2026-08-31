@@ -678,6 +678,80 @@ struct MLXSwiftInferenceEngineLoaderTests {
   }
 
   @Test
+  func rejectsSourceDirectoryPermissionChangesBeforeSnapshotting() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: modelDirectory.path
+    )
+    let configuration = try makeConfiguration(directory: modelDirectory)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o775],
+      ofItemAtPath: modelDirectory.path
+    )
+
+    #expect(!configuration.hasOriginalDirectoryIdentity())
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try makeSnapshotBuilder(root: root).makeSnapshot(for: configuration)
+    }
+  }
+
+  @Test
+  func rejectsSourceDirectoryPermissionChangesDuringSnapshotting() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: modelDirectory.path
+    )
+    let configuration = try makeConfiguration(directory: modelDirectory)
+    let builder = MLXModelArtifactSnapshotBuilder(
+      namespace: try MLXModelArtifactSnapshotNamespace(
+        directory: root.appending(path: "snapshot-namespace", directoryHint: .isDirectory),
+        snapshotLimit: 1
+      ),
+      copyArtifact: { _, destinationDescriptor, byteCount in
+        var remainingBytes = byteCount
+        let buffer = [UInt8](repeating: 0, count: 1_024)
+        while remainingBytes > 0 {
+          let requestedBytes = min(remainingBytes, UInt64(buffer.count))
+          var writtenBytes = 0
+          while writtenBytes < Int(requestedBytes) {
+            let writeCount = buffer.withUnsafeBytes { bytes -> Int in
+              guard let baseAddress = bytes.baseAddress else {
+                return -1
+              }
+              return Darwin.write(
+                destinationDescriptor,
+                baseAddress.advanced(by: writtenBytes),
+                Int(requestedBytes) - writtenBytes
+              )
+            }
+            guard writeCount > 0 else {
+              throw MLXLocalInferenceProviderError.invalidModelConfiguration
+            }
+            writtenBytes += writeCount
+          }
+          remainingBytes -= UInt64(writtenBytes)
+        }
+        try FileManager.default.setAttributes(
+          [.posixPermissions: 0o775],
+          ofItemAtPath: modelDirectory.path
+        )
+      }
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try builder.makeSnapshot(for: configuration)
+    }
+  }
+
+  @Test
   func rejectsSourceEnumerationBeyondTheArtifactBound() throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }

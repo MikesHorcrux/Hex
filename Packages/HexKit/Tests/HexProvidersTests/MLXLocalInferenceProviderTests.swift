@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import HexCore
 import HexProviders
@@ -230,6 +231,10 @@ struct MLXLocalInferenceProviderTests {
     let fixture = try makeFixture(modelNames: ["model-a"])
     defer { try? FileManager.default.removeItem(at: fixture.root) }
     let directory = try #require(fixture.directories["model-a"])
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: directory.path
+    )
     let selectedLink = fixture.root.appending(path: "selected-model")
     try FileManager.default.createSymbolicLink(
       at: selectedLink,
@@ -244,6 +249,28 @@ struct MLXLocalInferenceProviderTests {
 
     #expect(configuration.directory == directory.resolvingSymlinksInPath())
     #expect(configuration.hasOriginalDirectoryIdentity())
+    let descriptor = directory.path.withCString {
+      open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard descriptor >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { close(descriptor) }
+    #expect(configuration.hasOriginalDirectoryIdentity(fileDescriptor: descriptor))
+
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o775],
+      ofItemAtPath: directory.path
+    )
+    #expect(!configuration.hasOriginalDirectoryIdentity())
+    #expect(!configuration.hasOriginalDirectoryIdentity(fileDescriptor: descriptor))
+
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755],
+      ofItemAtPath: directory.path
+    )
+    #expect(configuration.hasOriginalDirectoryIdentity())
+    #expect(configuration.hasOriginalDirectoryIdentity(fileDescriptor: descriptor))
 
     let movedDirectory = fixture.root.appending(path: "moved-model")
     try FileManager.default.moveItem(at: directory, to: movedDirectory)
@@ -252,6 +279,27 @@ struct MLXLocalInferenceProviderTests {
       withIntermediateDirectories: false
     )
     #expect(!configuration.hasOriginalDirectoryIdentity())
+  }
+
+  @Test
+  func rejectsGroupOrWorldWritableModelDirectoriesAtConfiguration() throws {
+    let fixture = try makeFixture(modelNames: ["model-a"])
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let directory = try #require(fixture.directories["model-a"])
+    for permissions in [0o775, 0o707] {
+      try FileManager.default.setAttributes(
+        [.posixPermissions: permissions],
+        ofItemAtPath: directory.path
+      )
+      #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+        _ = try MLXLocalModelConfiguration(
+          modelID: ModelID(rawValue: "model-a"),
+          displayName: "Model A",
+          directory: directory,
+          maximumOutputTokens: 512
+        )
+      }
+    }
   }
 
   @Test
