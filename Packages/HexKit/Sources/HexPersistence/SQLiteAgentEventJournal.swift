@@ -74,6 +74,9 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
         afterCommit: {
           try secureDirectory.hardenSQLiteFiles()
           try fileLock.validateIdentities(in: secureDirectory)
+        },
+        validateMigratedData: {
+          try self.validateWholeJournalIntegrity(connection: openedConnection)
         }
       )
       try secureDirectory.hardenSQLiteFiles()

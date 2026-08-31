@@ -76,6 +76,10 @@ extension SQLiteAgentEventJournal {
           "Inserting a checkpoint did not complete."
         )
       }
+      try validateWholeJournalIntegrity(
+        connection: connection,
+        checksCancellation: false
+      )
       return checkpoint
     }
   }

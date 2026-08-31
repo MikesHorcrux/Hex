@@ -1,16 +1,21 @@
 import Foundation
 
 extension SQLiteAgentEventJournal {
-  func validateBoundedForeignKeyData(connection: SQLiteConnection) throws {
+  func validateBoundedForeignKeyData(
+    connection: SQLiteConnection,
+    checksCancellation: Bool
+  ) throws {
     var recordCount = 0
     try validateBoundedRunReferences(
       table: "event_records",
       connection: connection,
+      checksCancellation: checksCancellation,
       recordCount: &recordCount
     )
     try validateBoundedRunReferences(
       table: "journal_checkpoints",
       connection: connection,
+      checksCancellation: checksCancellation,
       recordCount: &recordCount
     )
   }
@@ -18,15 +23,20 @@ extension SQLiteAgentEventJournal {
   private func validateBoundedRunReferences(
     table: String,
     connection: SQLiteConnection,
+    checksCancellation: Bool,
     recordCount: inout Int
   ) throws {
     let remainingCapacity = configuration.maximumRecoveryRecordCount - recordCount
     let statement = try connection.prepare("SELECT run_id FROM \(table) LIMIT ?")
     try statement.bind(Int64(remainingCapacity + 1), at: 1)
     while true {
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       let stepResult = try statement.step()
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       guard stepResult == .row else {
         break
       }

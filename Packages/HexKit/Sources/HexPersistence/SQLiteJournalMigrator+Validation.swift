@@ -194,9 +194,10 @@ extension SQLiteJournalMigrator {
     maximumTextBytes: Int
   ) throws {
     let statement = try connection.prepare(
-      "SELECT type, name, tbl_name, sql FROM sqlite_schema"
+      "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master LIMIT 9"
     )
     var actual: [String] = []
+    var rootPages: Set<Int64> = []
     while try statement.step() == .row {
       guard actual.count < 8 else {
         throw SQLiteAgentEventJournalError.corruptSchema(
@@ -206,8 +207,14 @@ extension SQLiteJournalMigrator {
       let type = try statement.columnText(at: 0, maximumBytes: maximumTextBytes)
       let name = try statement.columnText(at: 1, maximumBytes: maximumTextBytes)
       let table = try statement.columnText(at: 2, maximumBytes: maximumTextBytes)
+      let rootPage = try statement.columnInt64(at: 3)
+      guard rootPage > 0, rootPages.insert(rootPage).inserted else {
+        throw SQLiteAgentEventJournalError.corruptSchema(
+          "A required schema object has an invalid or shared root page."
+        )
+      }
       let sql = try statement.columnOptionalText(
-        at: 3,
+        at: 4,
         maximumBytes: SQLiteAgentEventJournalConfiguration.hardMaximumTextBytes
       )
       actual.append(schemaObjectKey(type: type, name: name, table: table, sql: sql))
@@ -268,6 +275,33 @@ extension SQLiteJournalMigrator {
     guard actual == expected else {
       throw SQLiteAgentEventJournalError.corruptSchema(
         "sqlite_schema contains unexpected or behaviorally modified objects."
+      )
+    }
+    try validateBoundedBTreeProbes(connection: connection)
+  }
+
+  private static func validateBoundedBTreeProbes(
+    connection: SQLiteConnection
+  ) throws {
+    let queries = [
+      "SELECT rowid FROM runs NOT INDEXED LIMIT 1",
+      "SELECT run_id FROM runs INDEXED BY sqlite_autoindex_runs_1 LIMIT 1",
+      "SELECT rowid FROM event_records NOT INDEXED LIMIT 1",
+      "SELECT event_id FROM event_records INDEXED BY sqlite_autoindex_event_records_1 LIMIT 1",
+      "SELECT run_id FROM event_records INDEXED BY sqlite_autoindex_event_records_2 LIMIT 1",
+      "SELECT run_id FROM event_records INDEXED BY event_records_run_kind_tool_call_idx LIMIT 1",
+      "SELECT rowid FROM journal_checkpoints NOT INDEXED LIMIT 1",
+      "SELECT run_id FROM journal_checkpoints "
+        + "INDEXED BY sqlite_autoindex_journal_checkpoints_1 LIMIT 1",
+    ]
+    do {
+      for query in queries {
+        let statement = try connection.prepare(query)
+        _ = try statement.step()
+      }
+    } catch {
+      throw SQLiteAgentEventJournalError.corruptSchema(
+        "A required schema b-tree could not be read by a bounded probe."
       )
     }
   }

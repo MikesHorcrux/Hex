@@ -309,11 +309,13 @@ struct SQLiteAgentEventJournalRecoveryTests {
   func recoveryRunCountIsBoundedBeforeMutation() async throws {
     let directory = try JournalTestSupport.makeTemporaryDirectory()
     defer { JournalTestSupport.removeTemporaryDirectory(directory) }
-    let configuration = SQLiteAgentEventJournalConfiguration(
-      databaseURL: JournalTestSupport.databaseURL(in: directory),
+    let databaseURL = JournalTestSupport.databaseURL(in: directory)
+    let writeConfiguration = SQLiteAgentEventJournalConfiguration(databaseURL: databaseURL)
+    let recoveryConfiguration = SQLiteAgentEventJournalConfiguration(
+      databaseURL: databaseURL,
       maximumRecoveryRunCount: 1
     )
-    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: writeConfiguration)
     let firstRunID = AgentRunID()
     let secondRunID = AgentRunID()
     _ = try await journal.append(.runStarted, to: firstRunID)
@@ -321,7 +323,7 @@ struct SQLiteAgentEventJournalRecoveryTests {
     try await journal.close()
 
     do {
-      _ = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      _ = try await SQLiteAgentEventJournal.open(configuration: recoveryConfiguration)
       Issue.record("Expected the recovery run-count limit to fail open.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .recoveryRunLimitExceeded(maximum: 1))
@@ -329,13 +331,13 @@ struct SQLiteAgentEventJournalRecoveryTests {
     #expect(
       try JournalTestSupport.scalarInt64(
         "SELECT COUNT(*) FROM runs WHERE terminal_sequence IS NOT NULL",
-        at: configuration.databaseURL
+        at: databaseURL
       ) == 0
     )
     #expect(
       try JournalTestSupport.scalarInt64(
         "SELECT COUNT(*) FROM event_records",
-        at: configuration.databaseURL
+        at: databaseURL
       ) == 2
     )
   }
@@ -344,11 +346,13 @@ struct SQLiteAgentEventJournalRecoveryTests {
   func recoveryRecordCountIsBoundedBeforeMutation() async throws {
     let directory = try JournalTestSupport.makeTemporaryDirectory()
     defer { JournalTestSupport.removeTemporaryDirectory(directory) }
-    let configuration = SQLiteAgentEventJournalConfiguration(
-      databaseURL: JournalTestSupport.databaseURL(in: directory),
+    let databaseURL = JournalTestSupport.databaseURL(in: directory)
+    let writeConfiguration = SQLiteAgentEventJournalConfiguration(databaseURL: databaseURL)
+    let recoveryConfiguration = SQLiteAgentEventJournalConfiguration(
+      databaseURL: databaseURL,
       maximumRecoveryRecordCount: 2
     )
-    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: writeConfiguration)
     let runID = AgentRunID()
     _ = try await journal.append(.runStarted, to: runID)
     for value in ["one", "two"] {
@@ -360,7 +364,7 @@ struct SQLiteAgentEventJournalRecoveryTests {
     try await journal.close()
 
     do {
-      _ = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      _ = try await SQLiteAgentEventJournal.open(configuration: recoveryConfiguration)
       Issue.record("Expected the recovery record-count limit to fail open.")
     } catch let error as SQLiteAgentEventJournalError {
       #expect(error == .recoveryRecordLimitExceeded(maximum: 2))
@@ -368,13 +372,13 @@ struct SQLiteAgentEventJournalRecoveryTests {
     #expect(
       try JournalTestSupport.scalarInt64(
         "SELECT COUNT(*) FROM event_records WHERE run_id = '\(runID)'",
-        at: configuration.databaseURL
+        at: databaseURL
       ) == 3
     )
     #expect(
       try JournalTestSupport.scalarInt64(
         "SELECT COUNT(*) FROM runs WHERE run_id = '\(runID)' AND terminal_sequence IS NOT NULL",
-        at: configuration.databaseURL
+        at: databaseURL
       ) == 0
     )
   }
@@ -383,17 +387,19 @@ struct SQLiteAgentEventJournalRecoveryTests {
   func recoveryByteBudgetIsBoundedBeforeMutation() async throws {
     let directory = try JournalTestSupport.makeTemporaryDirectory()
     defer { JournalTestSupport.removeTemporaryDirectory(directory) }
-    let configuration = SQLiteAgentEventJournalConfiguration(
-      databaseURL: JournalTestSupport.databaseURL(in: directory),
+    let databaseURL = JournalTestSupport.databaseURL(in: directory)
+    let writeConfiguration = SQLiteAgentEventJournalConfiguration(databaseURL: databaseURL)
+    let recoveryConfiguration = SQLiteAgentEventJournalConfiguration(
+      databaseURL: databaseURL,
       maximumRecoveryBytes: 36
     )
-    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: writeConfiguration)
     let runID = AgentRunID()
     _ = try await journal.append(.runStarted, to: runID)
     try await journal.close()
 
     do {
-      _ = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      _ = try await SQLiteAgentEventJournal.open(configuration: recoveryConfiguration)
       Issue.record("Expected the recovery byte budget to fail open.")
     } catch let error as SQLiteAgentEventJournalError {
       if case .recoveryByteLimitExceeded(let actual, let maximum) = error {
@@ -406,13 +412,13 @@ struct SQLiteAgentEventJournalRecoveryTests {
     #expect(
       try JournalTestSupport.scalarInt64(
         "SELECT COUNT(*) FROM event_records WHERE run_id = '\(runID)'",
-        at: configuration.databaseURL
+        at: databaseURL
       ) == 1
     )
     #expect(
       try JournalTestSupport.scalarInt64(
         "SELECT COUNT(*) FROM runs WHERE run_id = '\(runID)' AND terminal_sequence IS NOT NULL",
-        at: configuration.databaseURL
+        at: databaseURL
       ) == 0
     )
   }

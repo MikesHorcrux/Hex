@@ -15,7 +15,10 @@ extension SQLiteAgentEventJournal {
       )
       try validateWholeJournalIntegrity(connection: connection)
       let record = try appendInTransaction(event, to: runID, connection: connection)
-      try validateAppendedRunLifecycle(for: runID, connection: connection)
+      try validateWholeJournalIntegrity(
+        connection: connection,
+        checksCancellation: false
+      )
       return record
     }
   }

@@ -110,7 +110,8 @@ enum SQLiteJournalMigrator {
     connection: SQLiteConnection,
     configuration: SQLiteAgentEventJournalConfiguration,
     beforeCommit: () throws -> Void,
-    afterCommit: () throws -> Void
+    afterCommit: () throws -> Void,
+    validateMigratedData: () throws -> Void
   ) throws {
     let foundVersion = try schemaVersion(connection: connection)
     guard foundVersion <= currentSchemaVersion else {
@@ -130,7 +131,8 @@ enum SQLiteJournalMigrator {
       from: foundVersion,
       configuration: configuration,
       beforeCommit: beforeCommit,
-      afterCommit: afterCommit
+      afterCommit: afterCommit,
+      validateMigratedData: validateMigratedData
     )
     try validateSchema(
       connection: connection,
@@ -186,7 +188,8 @@ enum SQLiteJournalMigrator {
     from version: Int,
     configuration: SQLiteAgentEventJournalConfiguration,
     beforeCommit: () throws -> Void,
-    afterCommit: () throws -> Void
+    afterCommit: () throws -> Void,
+    validateMigratedData: () throws -> Void
   ) throws {
     switch version {
     case currentSchemaVersion:
@@ -218,6 +221,7 @@ enum SQLiteJournalMigrator {
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
         )
+        try validateMigratedData()
       }
     case 1:
       try connection.withImmediateTransaction(
@@ -232,6 +236,7 @@ enum SQLiteJournalMigrator {
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
         )
+        try validateMigratedData()
       }
     case 2:
       try connection.withImmediateTransaction(
@@ -244,6 +249,7 @@ enum SQLiteJournalMigrator {
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
         )
+        try validateMigratedData()
       }
     default:
       throw SQLiteAgentEventJournalError.corruptSchema(

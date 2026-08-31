@@ -2,8 +2,14 @@ import Foundation
 import HexCore
 
 extension SQLiteAgentEventJournal {
-  func validateWholeJournalIntegrity(connection: SQLiteConnection) throws {
-    try validateBoundedForeignKeyData(connection: connection)
+  func validateWholeJournalIntegrity(
+    connection: SQLiteConnection,
+    checksCancellation: Bool = true
+  ) throws {
+    try validateBoundedForeignKeyData(
+      connection: connection,
+      checksCancellation: checksCancellation
+    )
     let runStatement = try connection.prepare(
       """
       SELECT run_id, next_sequence, terminal_sequence
@@ -16,9 +22,13 @@ extension SQLiteAgentEventJournal {
     var recordCount = 0
     var byteCount = 0
     while true {
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       let stepResult = try runStatement.step()
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       guard stepResult == .row else {
         break
       }
@@ -44,6 +54,7 @@ extension SQLiteAgentEventJournal {
         connection: connection,
         maximumRecordCount: configuration.maximumRecoveryRecordCount,
         maximumBytes: configuration.maximumRecoveryBytes,
+        checksCancellation: checksCancellation,
         recordCount: &recordCount,
         byteCount: &byteCount
       )
@@ -52,46 +63,7 @@ extension SQLiteAgentEventJournal {
 
     try validateAllCheckpoints(
       connection: connection,
-      recordCount: &recordCount,
-      byteCount: &byteCount
-    )
-  }
-
-  func validateAppendedRunLifecycle(
-    for runID: AgentRunID,
-    connection: SQLiteConnection
-  ) throws {
-    let runStatement = try connection.prepare(
-      "SELECT next_sequence, terminal_sequence FROM runs WHERE run_id = ? LIMIT 1"
-    )
-    try runStatement.bind(runID.description, at: 1)
-    guard try runStatement.step() == .row else {
-      throw SQLiteAgentEventJournalError.corruptRecord(
-        "An appended event has no durable run metadata."
-      )
-    }
-    let (maximumRecordCount, recordOverflowed) =
-      configuration.maximumRecoveryRecordCount.addingReportingOverflow(1)
-    let perRecordAllowance =
-      configuration.maximumPayloadBytes
-      + (configuration.maximumTextBytes * 4)
-    let (maximumBytes, byteOverflowed) =
-      configuration.maximumRecoveryBytes.addingReportingOverflow(perRecordAllowance)
-    guard !recordOverflowed, !byteOverflowed else {
-      throw SQLiteAgentEventJournalError.corruptRecord(
-        "Append validation bounds overflowed."
-      )
-    }
-    var recordCount = 0
-    var byteCount = 0
-    try validateRunEvents(
-      for: runID,
-      nextSequence: try runStatement.columnInt64(at: 0),
-      terminalSequence: try runStatement.columnOptionalInt64(at: 1),
-      connection: connection,
-      maximumRecordCount: maximumRecordCount,
-      maximumBytes: maximumBytes,
-      checksCancellation: false,
+      checksCancellation: checksCancellation,
       recordCount: &recordCount,
       byteCount: &byteCount
     )
@@ -126,6 +98,7 @@ extension SQLiteAgentEventJournal {
     var runStartedCount = 0
     var terminalCount = 0
     var lastEventTerminatesRun = false
+    var lastEventCompletedRun = false
     var unresolvedToolCallIDs: Set<ToolCallID> = []
     var finishedToolCallIDs: Set<ToolCallID> = []
     var authorizationRequestIDs: Set<AuthorizationRequestID> = []
@@ -174,6 +147,11 @@ extension SQLiteAgentEventJournal {
         terminalCount += 1
       }
       lastEventTerminatesRun = record.event.terminatesRun
+      if case .runCompleted = record.event {
+        lastEventCompletedRun = true
+      } else {
+        lastEventCompletedRun = false
+      }
       try validateEventLifecycle(
         record.event,
         runID: runID,
@@ -209,6 +187,18 @@ extension SQLiteAgentEventJournal {
         throw SQLiteAgentEventJournalError.corruptRecord(
           "A run's terminal metadata contradicts its durable records."
         )
+      }
+      if lastEventCompletedRun {
+        guard unresolvedToolCallIDs.isEmpty else {
+          throw SQLiteAgentEventJournalError.corruptRecord(
+            "A completed run contains an unresolved tool call."
+          )
+        }
+        guard authorizationRequestIDs == decidedAuthorizationRequestIDs else {
+          throw SQLiteAgentEventJournalError.corruptRecord(
+            "A completed run contains an undecided authorization request."
+          )
+        }
       }
     } else {
       guard terminalCount == 0, !lastEventTerminatesRun, expectedSequence > 0 else {
@@ -289,6 +279,7 @@ extension SQLiteAgentEventJournal {
 
   private func validateAllCheckpoints(
     connection: SQLiteConnection,
+    checksCancellation: Bool,
     recordCount: inout Int,
     byteCount: inout Int
   ) throws {
@@ -305,9 +296,13 @@ extension SQLiteAgentEventJournal {
     let remainingRecordCount = configuration.maximumRecoveryRecordCount - recordCount
     try statement.bind(Int64(remainingRecordCount + 1), at: 1)
     while true {
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       let stepResult = try statement.step()
-      try Task.checkCancellation()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
       guard stepResult == .row else {
         break
       }

@@ -107,9 +107,11 @@ struct SQLiteJournalReadIntegrityTests {
     let configuration = JournalTestSupport.configuration(in: directory)
     let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
     let runID = AgentRunID()
+    let call = ToolCall(name: "fixture", arguments: [:])
     _ = try await journal.append(.runStarted, to: runID)
+    _ = try await journal.append(.toolStarted(call), to: runID)
     _ = try await journal.append(
-      .toolStarted(ToolCall(name: "fixture", arguments: [:])),
+      .toolFinished(ToolResult(toolCallID: call.id, status: .success, output: .null)),
       to: runID
     )
     _ = try await journal.append(.runCompleted, to: runID)

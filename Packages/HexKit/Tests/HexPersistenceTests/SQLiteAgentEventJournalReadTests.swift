@@ -70,6 +70,10 @@ struct SQLiteAgentEventJournalReadTests {
     let call = ToolCall(id: ToolCallID(rawValue: "call-real"), name: "noop", arguments: [:])
     _ = try await journal.append(.runStarted, to: runID)
     _ = try await journal.append(.toolStarted(call), to: runID)
+    _ = try await journal.append(
+      .toolFinished(ToolResult(toolCallID: call.id, status: .success, output: .null)),
+      to: runID
+    )
     _ = try await journal.append(.runCompleted, to: runID)
     try await journal.close()
 
@@ -104,6 +108,10 @@ struct SQLiteAgentEventJournalReadTests {
     let call = ToolCall(id: ToolCallID(rawValue: "call-real"), name: "noop", arguments: [:])
     _ = try await journal.append(.runStarted, to: runID)
     _ = try await journal.append(.toolStarted(call), to: runID)
+    _ = try await journal.append(
+      .toolFinished(ToolResult(toolCallID: call.id, status: .success, output: .null)),
+      to: runID
+    )
     _ = try await journal.append(.runCompleted, to: runID)
     try await journal.close()
     try JournalTestSupport.execute(
@@ -222,6 +230,10 @@ struct SQLiteAgentEventJournalReadTests {
     )
     _ = try await journal.append(.runStarted, to: runID)
     _ = try await journal.append(.toolStarted(call), to: runID)
+    _ = try await journal.append(
+      .toolFinished(ToolResult(toolCallID: call.id, status: .success, output: .null)),
+      to: runID
+    )
     _ = try await journal.append(.runCompleted, to: runID)
     try await journal.close()
     let oversizedText = String(repeating: "x", count: 41)
