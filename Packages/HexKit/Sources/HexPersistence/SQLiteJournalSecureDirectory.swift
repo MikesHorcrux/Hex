@@ -161,6 +161,23 @@ final class SQLiteJournalSecureDirectory {
     }
   }
 
+  func validateLockIdentity(descriptor lockDescriptor: Int32) throws {
+    try validateParentIdentity()
+    let lockName = databaseName + ".lock"
+    let descriptorStatus = try status(for: lockDescriptor)
+    try validateRegularFile(descriptorStatus, named: lockName)
+    guard
+      descriptorStatus.st_mode & 0o777 == S_IRUSR | S_IWUSR,
+      let pathStatus = try anchoredStatus(named: lockName),
+      pathStatus.st_mode & 0o777 == S_IRUSR | S_IWUSR,
+      Self.sameIdentity(pathStatus, descriptorStatus)
+    else {
+      throw SQLiteAgentEventJournalError.invalidConfiguration(
+        "The held journal lock path changed identity or permissions."
+      )
+    }
+  }
+
   private func openOwnedRegularFile(
     named name: String,
     createIfMissing: Bool

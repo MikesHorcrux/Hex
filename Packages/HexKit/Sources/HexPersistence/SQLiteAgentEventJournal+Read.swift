@@ -20,25 +20,27 @@ extension SQLiteAgentEventJournal {
       guard let integrity = try runIntegrityState(for: runID, connection: connection) else {
         return []
       }
-      try validateRunIntegrity(integrity, for: runID, connection: connection)
-
-      guard sequence ?? 0 <= UInt64(Int64.max) else {
-        return []
+      let afterSequence: Int64
+      if let sequence, sequence > UInt64(Int64.max) {
+        afterSequence = Int64.max
+      } else {
+        afterSequence = Int64(sequence ?? 0)
       }
-      let records = try readPage(
+      let snapshot = try readValidatedSnapshot(
         for: runID,
-        after: Int64(sequence ?? 0),
+        after: afterSequence,
         limit: limit,
         connection: connection
       )
+      try validateRunIntegrity(integrity, snapshot: snapshot)
       try validatePage(
-        records,
-        after: Int64(sequence ?? 0),
+        snapshot.pageRecords,
+        after: afterSequence,
         limit: limit,
         integrity: integrity
       )
       try Task.checkCancellation()
-      return records
+      return snapshot.pageRecords
     }
   }
 
@@ -92,44 +94,31 @@ extension SQLiteAgentEventJournal {
 
   private func validateRunIntegrity(
     _ integrity: SQLiteRunIntegrityState,
-    for runID: AgentRunID,
-    connection: SQLiteConnection
+    snapshot: SQLiteValidatedRunSnapshot
   ) throws {
     guard
       integrity.recordCount > 0,
       integrity.minimumSequence == 1,
       let maximumSequence = integrity.maximumSequence,
       maximumSequence > 0,
-      maximumSequence == integrity.recordCount
+      maximumSequence == integrity.recordCount,
+      snapshot.recordCount == integrity.recordCount,
+      snapshot.minimumSequence == integrity.minimumSequence,
+      snapshot.maximumSequence == integrity.maximumSequence
     else {
       throw SQLiteAgentEventJournalError.corruptRecord(
         "The run's durable sequences are empty, gapped, or noncontiguous."
       )
     }
-    guard integrity.runStartedKindCount == 1 else {
+    guard
+      integrity.runStartedKindCount == 1,
+      snapshot.runStartedEventCount == 1,
+      snapshot.firstRecordStartsRun
+    else {
       throw SQLiteAgentEventJournalError.corruptRecord(
-        "The run must contain exactly one runStarted record."
+        "The run must begin with exactly one runStarted record."
       )
     }
-
-    let firstRecord = try requiredRecord(
-      for: runID,
-      sequence: 1,
-      connection: connection
-    )
-    guard firstRecord.event.startsRun else {
-      throw SQLiteAgentEventJournalError.corruptRecord(
-        "The run's first durable record is not runStarted."
-      )
-    }
-    let lastRecord =
-      maximumSequence == 1
-      ? firstRecord
-      : try requiredRecord(
-        for: runID,
-        sequence: maximumSequence,
-        connection: connection
-      )
 
     let expectedNextSequence = maximumSequence == Int64.max ? -1 : maximumSequence + 1
     guard integrity.nextSequence == expectedNextSequence else {
@@ -142,7 +131,8 @@ extension SQLiteAgentEventJournal {
       guard
         terminalSequence == maximumSequence,
         integrity.terminalKindCount == 1,
-        lastRecord.event.terminatesRun
+        snapshot.terminalEventCount == 1,
+        snapshot.lastRecordTerminatesRun
       else {
         throw SQLiteAgentEventJournalError.corruptRecord(
           "The run's terminal metadata contradicts its durable terminal record."
@@ -152,7 +142,8 @@ extension SQLiteAgentEventJournal {
       guard
         maximumSequence < Int64.max,
         integrity.terminalKindCount == 0,
-        !lastRecord.event.terminatesRun
+        snapshot.terminalEventCount == 0,
+        !snapshot.lastRecordTerminatesRun
       else {
         throw SQLiteAgentEventJournalError.corruptRecord(
           "A nonterminal run contains terminal data or an exhausted sequence."
@@ -161,52 +152,33 @@ extension SQLiteAgentEventJournal {
     }
   }
 
-  private func requiredRecord(
-    for runID: AgentRunID,
-    sequence: Int64,
-    connection: SQLiteConnection
-  ) throws -> AgentEventRecord {
-    let statement = try connection.prepare(
-      """
-      SELECT event_id, run_id, sequence, timestamp_us, record_schema_version, kind, tool_call_id,
-             payload
-      FROM event_records
-      WHERE run_id = ? AND sequence = ?
-      LIMIT 1
-      """
-    )
-    try statement.bind(runID.description, at: 1)
-    try statement.bind(sequence, at: 2)
-    guard try statement.step() == .row else {
-      throw SQLiteAgentEventJournalError.corruptRecord(
-        "A required boundary record is missing."
-      )
-    }
-    return try decodeRecord(from: statement, expectedRunID: runID).record
-  }
-
-  private func readPage(
+  private func readValidatedSnapshot(
     for runID: AgentRunID,
     after sequence: Int64,
     limit: Int,
     connection: SQLiteConnection
-  ) throws -> [AgentEventRecord] {
+  ) throws -> SQLiteValidatedRunSnapshot {
     let statement = try connection.prepare(
       """
       SELECT event_id, run_id, sequence, timestamp_us, record_schema_version, kind, tool_call_id,
              payload
       FROM event_records
-      WHERE run_id = ? AND sequence > ?
+      WHERE run_id = ?
       ORDER BY sequence ASC
-      LIMIT ?
       """
     )
     try statement.bind(runID.description, at: 1)
-    try statement.bind(sequence, at: 2)
-    try statement.bind(Int64(limit), at: 3)
 
-    var records: [AgentEventRecord] = []
-    records.reserveCapacity(min(limit, 256))
+    var pageRecords: [AgentEventRecord] = []
+    pageRecords.reserveCapacity(min(limit, 256))
+    var recordCount: Int64 = 0
+    var minimumSequence: Int64?
+    var maximumSequence: Int64?
+    var runStartedEventCount: Int64 = 0
+    var terminalEventCount: Int64 = 0
+    var firstRecordStartsRun = false
+    var lastRecordTerminatesRun = false
+    var expectedSequence: Int64 = 1
     var decodedBytes = 0
     while true {
       try Task.checkCancellation()
@@ -216,6 +188,7 @@ extension SQLiteAgentEventJournal {
         break
       }
       let decoded = try decodeRecord(from: statement, expectedRunID: runID)
+      let record = decoded.record
       let (nextDecodedBytes, overflowed) = decodedBytes.addingReportingOverflow(
         decoded.byteCount
       )
@@ -226,9 +199,45 @@ extension SQLiteAgentEventJournal {
         )
       }
       decodedBytes = nextDecodedBytes
-      records.append(decoded.record)
+      guard expectedSequence > 0, record.sequence == UInt64(expectedSequence) else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "The run contains a durable sequence gap."
+        )
+      }
+      let (nextRecordCount, countOverflowed) = recordCount.addingReportingOverflow(1)
+      guard !countOverflowed else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "The run's durable record count overflowed."
+        )
+      }
+      recordCount = nextRecordCount
+      if minimumSequence == nil {
+        minimumSequence = expectedSequence
+        firstRecordStartsRun = record.event.startsRun
+      }
+      maximumSequence = expectedSequence
+      lastRecordTerminatesRun = record.event.terminatesRun
+      if record.event.startsRun {
+        runStartedEventCount += 1
+      }
+      if record.event.terminatesRun {
+        terminalEventCount += 1
+      }
+      if expectedSequence > sequence, pageRecords.count < limit {
+        pageRecords.append(record)
+      }
+      expectedSequence = expectedSequence == Int64.max ? -1 : expectedSequence + 1
     }
-    return records
+    return SQLiteValidatedRunSnapshot(
+      pageRecords: pageRecords,
+      recordCount: recordCount,
+      minimumSequence: minimumSequence,
+      maximumSequence: maximumSequence,
+      runStartedEventCount: runStartedEventCount,
+      terminalEventCount: terminalEventCount,
+      firstRecordStartsRun: firstRecordStartsRun,
+      lastRecordTerminatesRun: lastRecordTerminatesRun
+    )
   }
 
   private func validatePage(
@@ -242,8 +251,8 @@ extension SQLiteAgentEventJournal {
         "The run has no maximum durable sequence."
       )
     }
-    let available = max(0, maximumSequence - sequence)
-    let expectedCount = min(limit, Int(available))
+    let available = maximumSequence > sequence ? maximumSequence - sequence : 0
+    let expectedCount = available >= Int64(limit) ? limit : Int(available)
     guard records.count == expectedCount else {
       throw SQLiteAgentEventJournalError.corruptRecord(
         "A paginated read omitted one or more expected durable records."

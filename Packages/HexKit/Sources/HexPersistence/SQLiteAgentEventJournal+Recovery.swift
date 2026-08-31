@@ -10,6 +10,7 @@ extension SQLiteAgentEventJournal {
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
+      try SQLiteJournalMigrator.validateForeignKeyData(connection: connection)
       let interruptedRuns = try interruptedRunIDs(connection: connection)
       var reports: [InterruptedAgentRun] = []
       reports.reserveCapacity(interruptedRuns.runIDs.count)

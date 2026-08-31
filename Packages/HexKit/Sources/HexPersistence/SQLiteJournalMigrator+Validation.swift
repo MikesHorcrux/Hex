@@ -8,6 +8,10 @@ extension SQLiteJournalMigrator {
       maximumTextBytes: maximumTextBytes
     )
 
+    try validateForeignKeyData(connection: connection)
+  }
+
+  static func validateForeignKeyData(connection: SQLiteConnection) throws {
     let foreignKeyCheck = try connection.prepare("PRAGMA foreign_key_check")
     guard try foreignKeyCheck.step() == .done else {
       throw SQLiteAgentEventJournalError.corruptSchema(

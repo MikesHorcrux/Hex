@@ -91,6 +91,39 @@ struct SQLiteJournalPathSecurityTests {
     await expectInvalidPath(configuration.databaseURL)
   }
 
+  @Test
+  func replacingHeldLockPathDoesNotAdmitAnotherOwner() async throws {
+    let directory = try JournalTestSupport.makeTemporaryDirectory()
+    defer { JournalTestSupport.removeTemporaryDirectory(directory) }
+    let configuration = JournalTestSupport.configuration(in: directory)
+    let first = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let lockURL = URL(fileURLWithPath: configuration.databaseURL.path + ".lock")
+    try FileManager().removeItem(at: lockURL)
+    #expect(FileManager().createFile(atPath: lockURL.path, contents: Data()))
+
+    do {
+      let second = try await SQLiteAgentEventJournal.open(configuration: configuration)
+      try await second.close()
+      Issue.record("Expected the database-bound owner lock to reject a second live owner.")
+    } catch let error as SQLiteAgentEventJournalError {
+      guard case .ownershipUnavailable = error else {
+        Issue.record("Expected ownershipUnavailable, received \(error).")
+        return
+      }
+    }
+
+    do {
+      _ = try await first.records(for: .init(), after: nil, limit: 1)
+      Issue.record("Expected the first owner to detect replacement of its held lock path.")
+    } catch let error as SQLiteAgentEventJournalError {
+      guard case .invalidConfiguration = error else {
+        Issue.record("Expected invalidConfiguration, received \(error).")
+        return
+      }
+    }
+    try await first.close()
+  }
+
   private func expectInvalidPath(_ databaseURL: URL) async {
     do {
       _ = try await SQLiteAgentEventJournal.open(

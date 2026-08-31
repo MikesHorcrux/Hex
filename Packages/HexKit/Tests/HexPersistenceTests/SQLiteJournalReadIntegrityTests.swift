@@ -84,6 +84,95 @@ struct SQLiteJournalReadIntegrityTests {
     try await fixture.journal.close()
   }
 
+  @Test
+  func rejectsKindMismatchOutsideRequestedPage() async throws {
+    let fixture = try await makeRun(messageCount: 1)
+    defer { JournalTestSupport.removeTemporaryDirectory(fixture.directory) }
+    try JournalTestSupport.execute(
+      """
+      UPDATE event_records SET kind = 'inference_requested'
+      WHERE run_id = '\(fixture.runID)' AND sequence = 2
+      """,
+      at: fixture.configuration.databaseURL
+    )
+
+    await expectCorruptRead(journal: fixture.journal, runID: fixture.runID, after: 2)
+    try await fixture.journal.close()
+  }
+
+  @Test
+  func rejectsToolMetadataMismatchOutsideRequestedPage() async throws {
+    let directory = try JournalTestSupport.makeTemporaryDirectory()
+    defer { JournalTestSupport.removeTemporaryDirectory(directory) }
+    let configuration = JournalTestSupport.configuration(in: directory)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let runID = AgentRunID()
+    _ = try await journal.append(.runStarted, to: runID)
+    _ = try await journal.append(
+      .toolStarted(ToolCall(name: "fixture", arguments: [:])),
+      to: runID
+    )
+    _ = try await journal.append(.runCompleted, to: runID)
+    try JournalTestSupport.execute(
+      """
+      UPDATE event_records SET tool_call_id = 'replacement-tool-id'
+      WHERE run_id = '\(runID)' AND sequence = 2
+      """,
+      at: configuration.databaseURL
+    )
+
+    await expectCorruptRead(journal: journal, runID: runID, after: 2)
+    try await journal.close()
+  }
+
+  @Test
+  func outOfRangeCursorStillAccountsForWholeRunIntegrityBytes() async throws {
+    let directory = try JournalTestSupport.makeTemporaryDirectory()
+    defer { JournalTestSupport.removeTemporaryDirectory(directory) }
+    let databaseURL = JournalTestSupport.databaseURL(in: directory)
+    let initial = try await SQLiteAgentEventJournal.open(
+      configuration: SQLiteAgentEventJournalConfiguration(databaseURL: databaseURL)
+    )
+    let runID = AgentRunID()
+    _ = try await initial.append(.runStarted, to: runID)
+    _ = try await initial.append(
+      .messageAppended(Message(role: .user, content: [.text("bounded-integrity-row")])),
+      to: runID
+    )
+    _ = try await initial.append(.runCompleted, to: runID)
+    try await initial.close()
+
+    let totalDecodedBytes = try JournalTestSupport.scalarInt64(
+      """
+      SELECT SUM(
+        length(event_id) + length(run_id) + length(kind) +
+        COALESCE(length(tool_call_id), 0) + length(payload)
+      )
+      FROM event_records WHERE run_id = '\(runID)'
+      """,
+      at: databaseURL
+    )
+    let maximumReadBytes = Int(totalDecodedBytes) - 1
+    let journal = try await SQLiteAgentEventJournal.open(
+      configuration: SQLiteAgentEventJournalConfiguration(
+        databaseURL: databaseURL,
+        maximumReadBytes: maximumReadBytes
+      )
+    )
+
+    do {
+      _ = try await journal.records(for: runID, after: UInt64.max, limit: 1)
+      Issue.record("Expected integrity decoding to honor maximumReadBytes.")
+    } catch let error as SQLiteAgentEventJournalError {
+      guard case .readByteLimitExceeded(_, let maximum) = error else {
+        Issue.record("Expected readByteLimitExceeded, received \(error).")
+        return
+      }
+      #expect(maximum == maximumReadBytes)
+    }
+    try await journal.close()
+  }
+
   private func makeRun(
     messageCount: Int
   ) async throws -> (

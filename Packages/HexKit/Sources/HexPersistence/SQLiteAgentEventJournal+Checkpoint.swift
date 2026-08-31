@@ -22,6 +22,7 @@ extension SQLiteAgentEventJournal {
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
+      try SQLiteJournalMigrator.validateForeignKeyData(connection: connection)
       guard try eventExists(for: runID, sequence: sequence, connection: connection) else {
         throw SQLiteAgentEventJournalError.checkpointSequenceMissing(
           runID: runID,
@@ -84,32 +85,98 @@ extension SQLiteAgentEventJournal {
   ) async throws -> AgentJournalCheckpoint? {
     try Task.checkCancellation()
     let connection = try requireConnection()
+    return try connection.withDeferredTransaction {
+      try Task.checkCancellation()
+      let counts = try checkpointIntegrityCounts(for: runID, connection: connection)
+      guard counts.runCount == 1 else {
+        guard
+          counts.runCount == 0,
+          counts.eventCount == 0,
+          counts.checkpointCount == 0
+        else {
+          throw SQLiteAgentEventJournalError.corruptRecord(
+            "Checkpoint or event state exists without exactly one run record."
+          )
+        }
+        return nil
+      }
+      guard counts.eventCount > 0, counts.orphanCheckpointCount == 0 else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "The run or one of its checkpoints references missing event state."
+        )
+      }
+      guard counts.checkpointCount > 0 else {
+        return nil
+      }
+
+      let statement = try connection.prepare(
+        """
+        SELECT run_id, through_sequence, created_at_us, checkpoint_schema_version, snapshot
+        FROM journal_checkpoints
+        WHERE run_id = ?
+        ORDER BY through_sequence DESC
+        LIMIT 1
+        """
+      )
+      try statement.bind(runID.description, at: 1)
+      guard try statement.step() == .row else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "Checkpoint rows disappeared inside a stable read snapshot."
+        )
+      }
+      let checkpoint = try decodeCheckpoint(from: statement, expectedRunID: runID)
+      guard
+        try eventExists(
+          for: runID,
+          sequence: checkpoint.throughSequence,
+          connection: connection
+        )
+      else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "A checkpoint references a missing event sequence."
+        )
+      }
+      try Task.checkCancellation()
+      return checkpoint
+    }
+  }
+
+  private func checkpointIntegrityCounts(
+    for runID: AgentRunID,
+    connection: SQLiteConnection
+  ) throws -> (
+    runCount: Int64,
+    eventCount: Int64,
+    checkpointCount: Int64,
+    orphanCheckpointCount: Int64
+  ) {
     let statement = try connection.prepare(
       """
-      SELECT run_id, through_sequence, created_at_us, checkpoint_schema_version, snapshot
-      FROM journal_checkpoints
-      WHERE run_id = ?
-      ORDER BY through_sequence DESC
-      LIMIT 1
+      SELECT
+        (SELECT COUNT(*) FROM runs WHERE run_id = ?),
+        (SELECT COUNT(*) FROM event_records WHERE run_id = ?),
+        (SELECT COUNT(*) FROM journal_checkpoints WHERE run_id = ?),
+        (SELECT COUNT(*)
+         FROM journal_checkpoints AS c
+         LEFT JOIN event_records AS e
+           ON e.run_id = c.run_id AND e.sequence = c.through_sequence
+         WHERE c.run_id = ? AND e.run_id IS NULL)
       """
     )
-    try statement.bind(runID.description, at: 1)
+    for index in 1...4 {
+      try statement.bind(runID.description, at: Int32(index))
+    }
     guard try statement.step() == .row else {
-      return nil
-    }
-    let checkpoint = try decodeCheckpoint(from: statement, expectedRunID: runID)
-    guard
-      try eventExists(
-        for: runID,
-        sequence: checkpoint.throughSequence,
-        connection: connection
-      )
-    else {
       throw SQLiteAgentEventJournalError.corruptRecord(
-        "A checkpoint references a missing event sequence."
+        "Checkpoint integrity accounting returned no row."
       )
     }
-    return checkpoint
+    return (
+      runCount: try statement.columnInt64(at: 0),
+      eventCount: try statement.columnInt64(at: 1),
+      checkpointCount: try statement.columnInt64(at: 2),
+      orphanCheckpointCount: try statement.columnInt64(at: 3)
+    )
   }
 
   private func eventExists(

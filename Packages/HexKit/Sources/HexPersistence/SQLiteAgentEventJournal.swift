@@ -45,7 +45,7 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
       throw SQLiteAgentEventJournalError.closed
     }
     try secureDirectory.hardenSQLiteFiles()
-    try fileLock.validateDatabaseIdentity(in: secureDirectory)
+    try fileLock.validateIdentities(in: secureDirectory)
     return connection
   }
 
@@ -58,7 +58,7 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
     self.fileLock = fileLock
     do {
       try secureDirectory.hardenSQLiteFiles()
-      try fileLock.validateDatabaseIdentity(in: secureDirectory)
+      try fileLock.validateIdentities(in: secureDirectory)
       let openedConnection = try SQLiteConnection(
         databaseURL: secureDirectory.sqliteDatabaseURL,
         busyTimeoutMilliseconds: configuration.busyTimeoutMilliseconds
@@ -70,10 +70,10 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
         maximumTextBytes: configuration.maximumTextBytes
       )
       try secureDirectory.hardenSQLiteFiles()
-      try fileLock.validateDatabaseIdentity(in: secureDirectory)
+      try fileLock.validateIdentities(in: secureDirectory)
       recoveredRuns = try recoverInterruptedRuns()
       try secureDirectory.hardenSQLiteFiles()
-      try fileLock.validateDatabaseIdentity(in: secureDirectory)
+      try fileLock.validateIdentities(in: secureDirectory)
     } catch {
       connection = nil
       self.fileLock = nil

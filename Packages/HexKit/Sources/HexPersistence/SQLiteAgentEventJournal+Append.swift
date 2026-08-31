@@ -13,6 +13,7 @@ extension SQLiteAgentEventJournal {
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
+      try SQLiteJournalMigrator.validateForeignKeyData(connection: connection)
       return try appendInTransaction(event, to: runID, connection: connection)
     }
   }

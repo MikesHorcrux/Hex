@@ -128,4 +128,56 @@ struct SQLiteAgentEventJournalCheckpointTests {
     }
     try await reopened.close()
   }
+
+  @Test
+  func checkpointReadRejectsMissingRunMetadataInsideItsSnapshot() async throws {
+    let directory = try JournalTestSupport.makeTemporaryDirectory()
+    defer { JournalTestSupport.removeTemporaryDirectory(directory) }
+    let configuration = JournalTestSupport.configuration(in: directory)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let runID = AgentRunID()
+    _ = try await journal.append(.runStarted, to: runID)
+    _ = try await journal.writeCheckpoint(for: runID, through: 1, snapshot: .null)
+    try JournalTestSupport.execute(
+      "DELETE FROM runs WHERE run_id = '\(runID)'",
+      at: configuration.databaseURL
+    )
+
+    await expectCorruptCheckpoint(journal: journal, runID: runID)
+    try await journal.close()
+  }
+
+  @Test
+  func checkpointReadRejectsOrphanEventsEvenWithoutCheckpoint() async throws {
+    let directory = try JournalTestSupport.makeTemporaryDirectory()
+    defer { JournalTestSupport.removeTemporaryDirectory(directory) }
+    let configuration = JournalTestSupport.configuration(in: directory)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let runID = AgentRunID()
+    _ = try await journal.append(.runStarted, to: runID)
+    try JournalTestSupport.execute(
+      "DELETE FROM runs WHERE run_id = '\(runID)'",
+      at: configuration.databaseURL
+    )
+
+    await expectCorruptCheckpoint(journal: journal, runID: runID)
+    try await journal.close()
+  }
+
+  private func expectCorruptCheckpoint(
+    journal: SQLiteAgentEventJournal,
+    runID: AgentRunID
+  ) async {
+    do {
+      _ = try await journal.latestCheckpoint(for: runID)
+      Issue.record("Expected inconsistent checkpoint state to fail closed.")
+    } catch let error as SQLiteAgentEventJournalError {
+      guard case .corruptRecord = error else {
+        Issue.record("Expected corruptRecord, received \(error).")
+        return
+      }
+    } catch {
+      Issue.record("Expected a journal error, received \(error).")
+    }
+  }
 }
