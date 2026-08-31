@@ -7,6 +7,152 @@ import Testing
 @Suite("Codex account login-flow regressions")
 struct CodexAccountLoginFlowRegressionTests {
   @Test
+  func crossFacadeStartAwaitCancelAndLogoutShareTheGenerationTransition() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let startingClient = CodexAccountClient(transport: transport)
+    let logoutClient = CodexAccountClient(transport: transport)
+    let cancellingClient = CodexAccountClient(transport: transport)
+
+    let starting = Task { try await startingClient.startLogin(.browser) }
+    await transport.waitForRequest()
+
+    let logoutDuringStart = Task { try await logoutClient.logout() }
+    try await Task.sleep(for: .milliseconds(20))
+    if await transport.recordedRequests().last?.method == "account/logout" {
+      await transport.succeed(with: .object([:]))
+    }
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await logoutDuringStart.value
+    }
+    #expect(await transport.requestCount() == 1)
+
+    await transport.succeed(with: challenge(named: "cross-facade-active"))
+    let loginID = try await starting.value.loginID
+
+    let logoutDuringAwait = Task { try await logoutClient.logout() }
+    try await Task.sleep(for: .milliseconds(20))
+    if await transport.recordedRequests().last?.method == "account/logout" {
+      await transport.succeed(with: .object([:]))
+    }
+    await #expect(throws: CodexAccountClientError.loginAlreadyPending) {
+      try await logoutDuringAwait.value
+    }
+    #expect(await transport.requestCount() == 1)
+
+    let cancelling = Task { try await cancellingClient.cancelLogin(loginID) }
+    await transport.waitForRequest(count: 2)
+    let logoutDuringCancellation = Task { try await logoutClient.logout() }
+    try await Task.sleep(for: .milliseconds(20))
+    if await transport.recordedRequests().last?.method == "account/logout" {
+      await transport.succeed(with: .object([:]))
+    }
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await logoutDuringCancellation.value
+    }
+
+    await transport.succeed(with: .object(["status": .string("canceled")]))
+    #expect(try await cancelling.value == .cancelled)
+    await transport.enqueueResponse(.object([:]))
+    try await logoutClient.logout()
+  }
+
+  @Test
+  func logoutReservationBlocksStartCancelAndLogoutOnOtherFacades() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let setupClient = CodexAccountClient(transport: transport)
+    let logoutClient = CodexAccountClient(transport: transport)
+    let startingClient = CodexAccountClient(transport: transport)
+    let cancellingClient = CodexAccountClient(transport: transport)
+    let secondLogoutClient = CodexAccountClient(transport: transport)
+
+    let retiredID = try await startAndCancelLogin(
+      named: "stale-before-logout",
+      client: setupClient,
+      transport: transport,
+      expectedRequestCount: 1
+    )
+    let logout = Task { try await logoutClient.logout() }
+    await transport.waitForRequest(count: 3)
+
+    let starting = Task { try await startingClient.startLogin(.browser) }
+    let cancelling = Task { try await cancellingClient.cancelLogin(retiredID) }
+    let secondLogout = Task { try await secondLogoutClient.logout() }
+    try await Task.sleep(for: .milliseconds(20))
+
+    let requests = await transport.recordedRequests()
+    #expect(
+      requests.map(\.method)
+        == [
+          "account/login/start",
+          "account/login/cancel",
+          "account/logout",
+        ]
+    )
+    await transport.succeed(with: .object([:]))
+    try await logout.value
+
+    for request in requests.dropFirst(3) {
+      switch request.method {
+      case "account/login/start":
+        await transport.succeed(with: challenge(named: "unexpected-start"))
+      case "account/logout":
+        await transport.succeed(with: .object([:]))
+      default:
+        break
+      }
+    }
+
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await starting.value
+    }
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await cancelling.value
+    }
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await secondLogout.value
+    }
+  }
+
+  @Test
+  func thirdFacadeCanAcceptCompletionAndCancelTheSharedActiveFlow() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let startingClient = CodexAccountClient(transport: transport)
+    let completionClient = CodexAccountClient(transport: transport)
+    let cancellingClient = CodexAccountClient(transport: transport)
+
+    let starting = Task { try await startingClient.startLogin(.browser) }
+    await transport.waitForRequest()
+    await transport.succeed(with: challenge(named: "third-facade-active"))
+    let loginID = try await starting.value.loginID
+
+    let cancelling = Task { try await cancellingClient.cancelLogin(loginID) }
+    try await Task.sleep(for: .milliseconds(20))
+    let requests = await transport.recordedRequests()
+    #expect(requests.last?.method == "account/login/cancel")
+    guard requests.last?.method == "account/login/cancel" else {
+      _ = try? await cancelling.value
+      return
+    }
+
+    let completion = try completion(for: loginID)
+    try await completionClient.acceptLoginCompletion(completion)
+    await #expect(throws: CodexAccountClientError.loginAlreadyPending) {
+      try await completionClient.startLogin(.deviceCode)
+    }
+    await #expect(throws: CodexAccountClientError.transitionInProgress) {
+      try await completionClient.logout()
+    }
+
+    await transport.succeed(with: .object(["status": .string("canceled")]))
+    #expect(try await cancelling.value == .cancelled)
+    #expect(await startingClient.loginCompletion(for: loginID) == completion)
+
+    await transport.enqueueResponse(challenge(named: "after-third-facade-cancel"))
+    let replacement = try await completionClient.startLogin(.browser)
+    #expect(replacement.loginID.rawValue == "after-third-facade-cancel")
+  }
+
+  @Test
   func sharesIdentifierReuseProtectionAcrossClientsOnOneTransport() async throws {
     let transport = GatedCodexAppServerTransport()
     let firstClient = CodexAccountClient(transport: transport)

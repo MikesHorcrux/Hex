@@ -54,6 +54,10 @@ actor GatedCodexAppServerTransport: CodexAppServerTransport {
     requests.count
   }
 
+  func recordedRequests() -> [CodexAppServerRequest] {
+    requests
+  }
+
   func succeed(with value: JSONValue) {
     guard !responseWaiters.isEmpty else { return }
     responseWaiters.removeFirst().resume(returning: value)

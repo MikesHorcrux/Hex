@@ -15,10 +15,11 @@ request instead of being silently carried across the boundary. User-facing login
 HTTPS on an explicit OpenAI or ChatGPT authorization host with no embedded credentials.
 Each physical transport owns one `CodexAccountLoginFlowGenerationController`. Every account client
 over that transport shares its no-eviction history of at most 64 issued identifiers and the bounded
-redacted completions correlated to those identifiers. The controller permits exactly one
-generation-wide active login or start reservation and owns the sole early completion until the
-start response supplies its identifier. A fresh transport and controller are the only capacity
-reset; constructing another client over the same transport cannot bypass the bound.
+redacted completions correlated to those identifiers. The controller owns the complete
+generation-wide transition phase: exactly one start reservation, active login, cancellation, or
+logout can be admitted at a time, and it owns the sole early completion until the start response
+supplies its identifier. A fresh transport and controller are the only capacity reset; constructing
+another client over the same transport cannot bypass the bound.
 
 `CodexAppServerTransport` is injected. The concrete transport is responsible for launching and
 initializing the app-server process, assigning JSON-RPC request identifiers, bounding and validating

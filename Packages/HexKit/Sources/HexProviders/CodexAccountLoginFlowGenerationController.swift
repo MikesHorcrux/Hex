@@ -6,11 +6,17 @@ import Foundation
 /// account client constructed over it. History is deliberately never evicted: a fresh transport
 /// and controller are the only way to regain the fixed 64-flow production capacity.
 public actor CodexAccountLoginFlowGenerationController {
+  private enum Transition: Equatable {
+    case idle
+    case starting(reservation: UUID, owner: UUID)
+    case awaiting(CodexLoginID)
+    case cancelling(loginID: CodexLoginID, owner: UUID)
+    case loggingOut(reservation: UUID, owner: UUID)
+  }
+
   private let capacity: Int
   private var ledger = CodexAccountLoginFlowLedger()
-  private var reservation: UUID?
-  private var activeLoginID: CodexLoginID?
-  private var cancellationInProgressID: CodexLoginID?
+  private var transition = Transition.idle
   private var unboundCompletion: CodexLoginCompletion?
   private var completions: [CodexLoginID: CodexLoginCompletion] = [:]
   private var retired = false
@@ -26,23 +32,52 @@ public actor CodexAccountLoginFlowGenerationController {
     self.capacity = capacity
   }
 
-  func reserveLoginStart() throws -> UUID {
+  func reserveLoginStart(owner: UUID) throws -> UUID {
     try ensureUsable()
-    guard reservation == nil, activeLoginID == nil else {
+    switch transition {
+    case .idle:
+      break
+    case .awaiting:
       throw CodexAccountClientError.loginAlreadyPending
+    case .starting(_, let existingOwner), .cancelling(_, let existingOwner):
+      if existingOwner == owner {
+        throw CodexAccountClientError.transitionInProgress
+      }
+      throw CodexAccountClientError.loginAlreadyPending
+    case .loggingOut:
+      throw CodexAccountClientError.transitionInProgress
     }
     guard ledger.count < capacity else {
       throw CodexAccountClientError.loginFlowHistoryExhausted
     }
     let createdReservation = UUID()
-    reservation = createdReservation
+    transition = .starting(reservation: createdReservation, owner: owner)
     return createdReservation
   }
 
-  func abandonLoginStart(_ abandonedReservation: UUID) {
-    guard reservation == abandonedReservation else { return }
-    reservation = nil
-    unboundCompletion = nil
+  /// Atomically tombstones an admitted start, if one exists, and retires this generation.
+  ///
+  /// A failed login-start request is ambiguous. Keeping the tombstone and terminal retirement in
+  /// one actor turn prevents another facade from reserving the generation between start cleanup
+  /// and physical transport teardown.
+  func retireAfterAmbiguousStart(
+    reservation: UUID,
+    admittedLoginID: CodexLoginID?
+  ) {
+    if let admittedLoginID {
+      ledger.retire(admittedLoginID)
+      switch transition {
+      case .awaiting(admittedLoginID), .cancelling(admittedLoginID, _):
+        transition = .idle
+      case .idle, .starting, .awaiting, .cancelling, .loggingOut:
+        break
+      }
+    }
+    if case .starting(reservation, _) = transition {
+      transition = .idle
+      unboundCompletion = nil
+    }
+    retired = true
   }
 
   func issue(
@@ -50,15 +85,14 @@ public actor CodexAccountLoginFlowGenerationController {
     reservation issuedReservation: UUID
   ) throws -> CodexLoginCompletion? {
     try ensureUsable()
-    guard reservation == issuedReservation else {
+    guard case .starting(issuedReservation, _) = transition else {
       throw CodexAccountClientError.transitionInProgress
     }
-    reservation = nil
     guard ledger.count < capacity else {
       throw CodexAccountClientError.loginFlowHistoryExhausted
     }
     try ledger.issue(loginID)
-    activeLoginID = loginID
+    transition = .awaiting(loginID)
 
     guard let unboundCompletion else {
       return nil
@@ -66,37 +100,34 @@ public actor CodexAccountLoginFlowGenerationController {
     self.unboundCompletion = nil
     guard unboundCompletion.loginID == loginID else {
       ledger.retire(loginID)
-      activeLoginID = nil
+      transition = .idle
       throw CodexAccountClientError.loginIdentifierMismatch
     }
     try acceptIssuedCompletion(unboundCompletion, for: loginID)
     return unboundCompletion
   }
 
-  func retire(_ loginID: CodexLoginID) {
-    ledger.retire(loginID)
-    if activeLoginID == loginID {
-      activeLoginID = nil
-    }
-    if cancellationInProgressID == loginID {
-      cancellationInProgressID = nil
-    }
-  }
-
-  func beginCancellation(for loginID: CodexLoginID) throws {
+  func beginCancellation(for loginID: CodexLoginID, owner: UUID) throws {
     try ensureUsable()
-    guard cancellationInProgressID == nil else {
+    switch transition {
+    case .awaiting(let activeLoginID):
+      guard activeLoginID == loginID else {
+        throw CodexAccountClientError.loginIdentifierMismatch
+      }
+      guard ledger.entry(for: loginID) == .pending else {
+        throw CodexAccountClientError.noPendingLogin
+      }
+      transition = .cancelling(loginID: loginID, owner: owner)
+    case .idle:
+      throw CodexAccountClientError.noPendingLogin
+    case .starting, .cancelling, .loggingOut:
       throw CodexAccountClientError.transitionInProgress
     }
-    guard activeLoginID == loginID, ledger.entry(for: loginID) == .pending else {
-      throw CodexAccountClientError.noPendingLogin
-    }
-    cancellationInProgressID = loginID
   }
 
-  func finishCancellation(for loginID: CodexLoginID) throws {
+  func finishCancellation(for loginID: CodexLoginID, owner: UUID) throws {
     try ensureUsable()
-    guard cancellationInProgressID == loginID else {
+    guard case .cancelling(loginID, owner: owner) = transition else {
       throw CodexAccountClientError.transitionInProgress
     }
     switch ledger.entry(for: loginID) {
@@ -107,15 +138,15 @@ public actor CodexAccountLoginFlowGenerationController {
     case .retiredAwaitingCompletion, .none:
       throw CodexAccountClientError.transitionInProgress
     }
-    cancellationInProgressID = nil
-    activeLoginID = nil
+    transition = .idle
   }
 
-  func abandonCancellation(for loginID: CodexLoginID) {
-    guard cancellationInProgressID == loginID else { return }
-    cancellationInProgressID = nil
+  func abandonCancellation(for loginID: CodexLoginID, owner: UUID) {
+    guard case .cancelling(loginID, owner: owner) = transition else { return }
     if ledger.entry(for: loginID) == .completionAccepted {
-      activeLoginID = nil
+      transition = .idle
+    } else {
+      transition = .awaiting(loginID)
     }
   }
 
@@ -134,7 +165,7 @@ public actor CodexAccountLoginFlowGenerationController {
     case .completionAccepted:
       throw CodexAccountClientError.unexpectedLoginCompletion
     case .none:
-      guard reservation != nil else {
+      guard case .starting = transition else {
         if ledger.isEmpty {
           throw CodexAccountClientError.unexpectedLoginCompletion
         }
@@ -161,13 +192,38 @@ public actor CodexAccountLoginFlowGenerationController {
     }
   }
 
+  func reserveLogout(owner: UUID) throws -> UUID {
+    try ensureUsable()
+    switch transition {
+    case .idle:
+      let reservation = UUID()
+      transition = .loggingOut(reservation: reservation, owner: owner)
+      return reservation
+    case .awaiting:
+      throw CodexAccountClientError.loginAlreadyPending
+    case .starting, .cancelling, .loggingOut:
+      throw CodexAccountClientError.transitionInProgress
+    }
+  }
+
+  func finishLogout(for reservation: UUID, owner: UUID) throws {
+    try ensureUsable()
+    guard case .loggingOut(reservation, owner: owner) = transition else {
+      throw CodexAccountClientError.transitionInProgress
+    }
+    transition = .idle
+  }
+
+  func abandonLogout(_ reservation: UUID, owner: UUID) {
+    guard case .loggingOut(reservation, owner: owner) = transition else { return }
+    transition = .idle
+  }
+
   /// Atomically makes this generation terminal. Transport implementations call this immediately
   /// before awaiting their physical close. This operation is idempotent.
   public func retireGeneration() {
     retired = true
-    reservation = nil
-    activeLoginID = nil
-    cancellationInProgressID = nil
+    transition = .idle
     unboundCompletion = nil
   }
 
@@ -177,8 +233,8 @@ public actor CodexAccountLoginFlowGenerationController {
   ) throws {
     try ledger.acceptCompletion(for: loginID)
     completions[loginID] = completion
-    if activeLoginID == loginID, cancellationInProgressID != loginID {
-      activeLoginID = nil
+    if transition == .awaiting(loginID) {
+      transition = .idle
     }
   }
 }
