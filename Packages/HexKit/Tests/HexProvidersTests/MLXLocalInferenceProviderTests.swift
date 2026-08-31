@@ -71,6 +71,42 @@ struct MLXLocalInferenceProviderTests {
   }
 
   @Test
+  func advertisesOnlyCapabilitiesSharedByEveryConfiguredModel() async throws {
+    let fixture = try makeFixture(modelNames: ["model-a", "model-b"])
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let modelADirectory = try #require(fixture.directories["model-a"])
+    let modelA = try MLXLocalModelConfiguration(
+      modelID: ModelID(rawValue: "model-a"),
+      displayName: "Model A",
+      directory: modelADirectory,
+      maximumOutputTokens: 512,
+      supportsToolCalling: true
+    )
+    let modelBDirectory = try #require(fixture.directories["model-b"])
+    let modelB = try MLXLocalModelConfiguration(
+      modelID: ModelID(rawValue: "model-b"),
+      displayName: "Model B",
+      directory: modelBDirectory,
+      maximumOutputTokens: 512,
+      supportsToolCalling: false
+    )
+    let provider = try MLXLocalInferenceProvider(
+      configuration: MLXLocalProviderConfiguration(
+        providerID: ProviderID(rawValue: "mlx.local"),
+        displayName: "On My Mac",
+        models: [modelA, modelB]
+      ),
+      engineLoader: RecordingLoader(engines: [:])
+    )
+
+    #expect(provider.descriptor.capabilities == [.textInput, .streaming])
+    #expect((try await provider.availableModels()).map(\.capabilities) == [
+      [.textInput, .streaming, .toolCalling],
+      [.textInput, .streaming],
+    ])
+  }
+
+  @Test
   func serializesGenerationAndReleasesTheProviderAfterCompletion() async throws {
     let fixture = try makeFixture(modelNames: ["model-a"])
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -256,6 +292,30 @@ struct MLXLocalInferenceProviderTests {
           )
         )
       }
+    }
+    #expect(await loader.loadCount() == 0)
+  }
+
+  @Test
+  func rejectsDuplicateMessageIDsBeforeLoadingTheModel() async throws {
+    let fixture = try makeFixture(modelNames: ["model-a"])
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let loader = RecordingLoader(engines: [:])
+    let provider = try makeProvider(fixture: fixture, loader: loader)
+    let messageID = MessageID()
+    let duplicateMessages = [
+      Message(id: messageID, role: .user, content: [.text("first")]),
+      Message(id: messageID, role: .user, content: [.text("second")]),
+    ]
+
+    await #expect(throws: MLXLocalInferenceProviderError.invalidRequest) {
+      _ = try await provider.stream(
+        InferenceRequest(
+          providerID: ProviderID(rawValue: "mlx.local"),
+          modelID: ModelID(rawValue: "model-a"),
+          messages: duplicateMessages
+        )
+      )
     }
     #expect(await loader.loadCount() == 0)
   }

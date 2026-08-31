@@ -13,8 +13,11 @@ public actor MLXLocalInferenceProvider: InferenceProvider {
     engineLoader: any MLXInferenceEngineLoader
   ) {
     var capabilities = Set<InferenceCapability>()
-    for model in configuration.models {
-      capabilities.formUnion(model.capabilities)
+    if let firstModel = configuration.models.first {
+      capabilities = firstModel.capabilities
+      for model in configuration.models.dropFirst() {
+        capabilities.formIntersection(model.capabilities)
+      }
     }
     descriptor = ProviderDescriptor(
       id: configuration.providerID,

@@ -9,11 +9,15 @@ enum MLXRequestContentValidator {
   static func validate(_ request: InferenceRequest) -> Bool {
     var remainingBytes = maximumRequestBytes
     var remainingNodes = maximumJSONNodes
+    var seenMessageIDs = Set<MessageID>()
     var unresolvedToolCalls = Set<ToolCallID>()
     var seenToolCalls = Set<ToolCallID>()
 
     for message in request.messages {
       guard consumeNode(remainingNodes: &remainingNodes) else {
+        return false
+      }
+      guard seenMessageIDs.insert(message.id).inserted else {
         return false
       }
       switch message.role {
@@ -69,6 +73,15 @@ enum MLXRequestContentValidator {
           remainingBytes: &remainingBytes,
           remainingNodes: &remainingNodes
         )
+      else {
+        return false
+      }
+    }
+
+    if case .named(let name) = request.toolChoice {
+      guard
+        isValidToolName(name),
+        consumeString(name, remainingBytes: &remainingBytes)
       else {
         return false
       }

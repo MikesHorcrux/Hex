@@ -20,6 +20,9 @@ extension MLXLocalInferenceProvider {
       throw CancellationError()
     } catch {
       finishRequest(request.id)
+      if Task.isCancelled {
+        throw CancellationError()
+      }
       throw MLXLocalInferenceProviderError.modelLoadFailed
     }
 
@@ -31,6 +34,9 @@ extension MLXLocalInferenceProvider {
       throw CancellationError()
     } catch {
       finishRequest(request.id)
+      if Task.isCancelled {
+        throw CancellationError()
+      }
       throw MLXLocalInferenceProviderError.generationFailed
     }
     if Task.isCancelled {
@@ -175,12 +181,20 @@ extension MLXLocalInferenceProvider {
         finishRequest(request.id)
       } catch let error as MLXLocalInferenceProviderError {
         engineRun.cancel()
-        continuation.finish(throwing: error)
+        if Task.isCancelled {
+          continuation.finish(throwing: CancellationError())
+        } else {
+          continuation.finish(throwing: error)
+        }
         await engineRun.waitForTermination()
         finishRequest(request.id)
       } catch {
         engineRun.cancel()
-        continuation.finish(throwing: MLXLocalInferenceProviderError.generationFailed)
+        if Task.isCancelled {
+          continuation.finish(throwing: CancellationError())
+        } else {
+          continuation.finish(throwing: MLXLocalInferenceProviderError.generationFailed)
+        }
         await engineRun.waitForTermination()
         finishRequest(request.id)
       }
