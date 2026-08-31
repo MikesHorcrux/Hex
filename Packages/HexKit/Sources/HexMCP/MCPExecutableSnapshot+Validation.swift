@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Security
 
 extension MCPExecutableSnapshot {
   static func nextBundleByteCount(current: off_t, adding: off_t) -> off_t? {
@@ -67,18 +68,67 @@ extension MCPExecutableSnapshot {
 
   static func isAcceptableRuntimeSource(
     _ status: stat,
-    requireExecutable: Bool
+    requireExecutable: Bool,
+    allowsTrustedHardLinks: Bool = false
   ) -> Bool {
     let effectiveUserID = geteuid()
     return status.st_mode & S_IFMT == S_IFREG
       && (status.st_uid == 0 || status.st_uid == effectiveUserID)
-      && status.st_nlink == 1
+      && (status.st_nlink == 1
+        || (allowsTrustedHardLinks && status.st_uid == 0 && status.st_nlink > 1))
       && status.st_size >= 0
       && status.st_size <= maximumExecutableBytes
       && (!requireExecutable
         || hasExecutionPermission(status, effectiveUserID: effectiveUserID))
       && status.st_mode & (S_ISUID | S_ISGID) == 0
       && status.st_mode & (S_IWGRP | S_IWOTH) == 0
+  }
+
+  static let xcodeCodeSigningRequirement =
+    #"anchor apple and identifier "com.apple.dt.Xcode""#
+
+  /// Xcode's signed app bundles may contain root-owned hard-linked resources. Permit
+  /// those aliases only after anchoring the complete bundle path and nested signature to
+  /// Apple's Xcode requirement; all other snapshot sources retain the nlink == 1 rule.
+  static func isTrustedSignedXcodeBundle(rootPath: String) -> Bool {
+    guard
+      rootPath.hasSuffix(".app"),
+      rootPath.hasPrefix("/"),
+      !rootPath.contains("\0"),
+      (rootPath as NSString).standardizingPath == rootPath,
+      isRootOwnedUnwritableDirectory(rootPath)
+    else {
+      return false
+    }
+
+    var staticCode: SecStaticCode?
+    guard
+      SecStaticCodeCreateWithPath(
+        URL(fileURLWithPath: rootPath, isDirectory: true) as CFURL,
+        SecCSFlags(rawValue: kSecCSDefaultFlags),
+        &staticCode
+      ) == errSecSuccess,
+      let staticCode
+    else {
+      return false
+    }
+
+    var requirement: SecRequirement?
+    guard
+      SecRequirementCreateWithString(
+        xcodeCodeSigningRequirement as CFString,
+        SecCSFlags(rawValue: kSecCSDefaultFlags),
+        &requirement
+      ) == errSecSuccess,
+      let requirement
+    else {
+      return false
+    }
+
+    let flags = SecCSFlags(
+      rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate
+    )
+    return SecStaticCodeCheckValidity(staticCode, flags, requirement) == errSecSuccess
   }
 
   static func isAcceptableSourceDirectory(_ status: stat) -> Bool {
@@ -91,6 +141,34 @@ extension MCPExecutableSnapshot {
     status.st_mode & S_IFMT == S_IFDIR
       && status.st_uid == geteuid()
       && status.st_mode & 0o077 == 0
+  }
+
+  private static func isRootOwnedUnwritableDirectory(_ path: String) -> Bool {
+    let components = path.split(separator: "/").map(String.init)
+    guard !components.isEmpty else { return false }
+    var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard descriptor >= 0 else { return false }
+    defer { Darwin.close(descriptor) }
+
+    for component in components {
+      let nextDescriptor = component.withCString { name in
+        openat(descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+      }
+      guard nextDescriptor >= 0 else { return false }
+      var status = stat()
+      let valid =
+        fstat(nextDescriptor, &status) == 0
+        && status.st_mode & S_IFMT == S_IFDIR
+        && status.st_uid == 0
+        && status.st_mode & (S_IWGRP | S_IWOTH | S_ISUID | S_ISGID) == 0
+      guard valid else {
+        Darwin.close(nextDescriptor)
+        return false
+      }
+      Darwin.close(descriptor)
+      descriptor = nextDescriptor
+    }
+    return true
   }
 
   static func hasExecutionPermission(

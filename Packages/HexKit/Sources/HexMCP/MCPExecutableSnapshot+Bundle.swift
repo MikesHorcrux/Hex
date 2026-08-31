@@ -131,7 +131,8 @@ extension MCPExecutableSnapshot {
             snapshotSearchRunpaths: snapshotSearchRunpaths,
             sourceExecutablePath: initialImage.sourceRelativePath,
             snapshotExecutablePath: initialImage.snapshotRelativePath,
-            sourceRootDescriptor: sourceRootDescriptor
+            sourceRootDescriptor: sourceRootDescriptor,
+            allowsTrustedHardLinks: copyState.allowsTrustedHardLinks
           )
         else {
           continue
@@ -219,7 +220,8 @@ extension MCPExecutableSnapshot {
     snapshotSearchRunpaths: [ExpandedRunpath],
     sourceExecutablePath: String,
     snapshotExecutablePath: String,
-    sourceRootDescriptor: Int32
+    sourceRootDescriptor: Int32,
+    allowsTrustedHardLinks: Bool
   ) throws -> ResolvedDependency? {
     if dependency.path.hasPrefix("/") {
       if isTrustedSystemPath(dependency.path) { return nil }
@@ -275,7 +277,8 @@ extension MCPExecutableSnapshot {
           sourcePath,
           beneath: sourceRootDescriptor,
           requireExecutable: false,
-          missingIsAllowed: true
+          missingIsAllowed: true,
+          allowsTrustedHardLinks: allowsTrustedHardLinks
         ) {
           guard let snapshotPath, !externalPathPrecedesSnapshotPath else {
             Darwin.close(source.file.descriptor)
@@ -330,7 +333,8 @@ extension MCPExecutableSnapshot {
       sourcePath,
       beneath: sourceRootDescriptor,
       requireExecutable: false,
-      missingIsAllowed: true
+      missingIsAllowed: true,
+      allowsTrustedHardLinks: allowsTrustedHardLinks
     ) {
       let resolvedSnapshotPath = try mappedSnapshotPath(
         for: source.relativePath,
@@ -352,7 +356,8 @@ extension MCPExecutableSnapshot {
     _ relativePath: String,
     beneath rootDescriptor: Int32,
     requireExecutable: Bool,
-    missingIsAllowed: Bool
+    missingIsAllowed: Bool,
+    allowsTrustedHardLinks: Bool = false
   ) throws -> (
     relativePath: String,
     file: (descriptor: Int32, status: stat)
@@ -368,7 +373,8 @@ extension MCPExecutableSnapshot {
           relativePath,
           beneath: rootDescriptor,
           requireExecutable: requireExecutable,
-          missingIsAllowed: missingIsAllowed
+          missingIsAllowed: missingIsAllowed,
+          allowsTrustedHardLinks: allowsTrustedHardLinks
         )
       else {
         return nil
@@ -391,7 +397,8 @@ extension MCPExecutableSnapshot {
         expectedParentDescriptor: nil,
         requireExecutable: requireExecutable,
         requireRegular: true,
-        missingIsAllowed: missingIsAllowed
+        missingIsAllowed: missingIsAllowed,
+        allowsTrustedHardLinks: allowsTrustedHardLinks
       )
     else {
       return nil
@@ -446,7 +453,8 @@ extension MCPExecutableSnapshot {
     expectedParentDescriptor: Int32?,
     requireExecutable: Bool,
     requireRegular: Bool,
-    missingIsAllowed: Bool
+    missingIsAllowed: Bool,
+    allowsTrustedHardLinks: Bool = false
   ) throws -> (relativePath: String, descriptor: Int32, status: stat)? {
     guard
       let normalizedParent = normalizeRelativePath(parentPath, relativeTo: ""),
@@ -716,7 +724,11 @@ extension MCPExecutableSnapshot {
         guard
           fstat(descriptor, &status) == 0,
           sameSourceIdentityAndMetadata(componentStatus, status),
-          isAcceptableRuntimeSource(status, requireExecutable: requireExecutable)
+          isAcceptableRuntimeSource(
+            status,
+            requireExecutable: requireExecutable,
+            allowsTrustedHardLinks: allowsTrustedHardLinks
+          )
         else {
           Darwin.close(descriptor)
           throw MCPClientSessionError.connectionClosed
