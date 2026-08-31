@@ -72,6 +72,7 @@ extension MLXRequestContentValidator {
         remainingBytes: &remainingBytes,
         remainingNodes: &remainingNodes
       ),
+      MLXToolInputSchemaValidator.isSupported(definition.inputSchema),
       let schema = try? JSONEncoder().encode(definition.inputSchema),
       schema.count <= 64 * 1_024
     else {

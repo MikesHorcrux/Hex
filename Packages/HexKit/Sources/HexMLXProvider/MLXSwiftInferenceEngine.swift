@@ -5,53 +5,53 @@ import MLXLMCommon
 struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
   private let modelID: ModelID
   private let defaultMaximumOutputTokens: Int
+  private let maximumContextTokens: Int
   private let maximumBufferedEvents: Int
   private let artifactSnapshot: MLXModelArtifactSnapshot?
-  private let generations:
-    @Sendable (InferenceRequest, Int) throws -> AsyncThrowingStream<Generation, any Error>
+  private let generationRuns:
+    @Sendable (InferenceRequest, Int, Int) async throws -> MLXSwiftGenerationRun
 
   init(
     model: ModelContainer,
     modelID: ModelID,
     defaultMaximumOutputTokens: Int,
+    maximumContextTokens: Int,
     artifactSnapshot: MLXModelArtifactSnapshot,
     maximumBufferedEvents: Int = 64
   ) {
     self.modelID = modelID
     self.defaultMaximumOutputTokens = defaultMaximumOutputTokens
+    self.maximumContextTokens = maximumContextTokens
     self.artifactSnapshot = artifactSnapshot
     self.maximumBufferedEvents = maximumBufferedEvents
-    generations = { request, maximumOutputTokens in
-      let messages = try MLXSwiftRequestMapper.messages(for: request)
-      let tools = try MLXSwiftRequestMapper.toolSpecifications(for: request)
-      let parameters = GenerateParameters(
-        maxTokens: maximumOutputTokens,
-        temperature: Float(request.options.temperature ?? 0.6)
+    generationRuns = { request, maximumOutputTokens, maximumContextTokens in
+      try await Self.makeGenerationRun(
+        model: model,
+        request: request,
+        maximumOutputTokens: maximumOutputTokens,
+        maximumContextTokens: maximumContextTokens
       )
-      let session = ChatSession(
-        model,
-        generateParameters: parameters,
-        tools: tools
-      )
-      return session.streamDetails(to: messages)
     }
   }
 
   init(
     modelID: ModelID,
     defaultMaximumOutputTokens: Int,
+    maximumContextTokens: Int = 32_768,
     maximumBufferedEvents: Int = 64,
-    generations:
+    generationRuns:
       @escaping @Sendable (
         InferenceRequest,
+        Int,
         Int
-      ) throws -> AsyncThrowingStream<Generation, any Error>
+      ) async throws -> MLXSwiftGenerationRun
   ) {
     self.modelID = modelID
     self.defaultMaximumOutputTokens = defaultMaximumOutputTokens
+    self.maximumContextTokens = maximumContextTokens
     self.maximumBufferedEvents = maximumBufferedEvents
     artifactSnapshot = nil
-    self.generations = generations
+    self.generationRuns = generationRuns
   }
 
   func start(
@@ -62,6 +62,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     guard
       request.modelID == modelID,
       (1...defaultMaximumOutputTokens).contains(maximumOutputTokens),
+      maximumOutputTokens <= maximumContextTokens,
       request.options.temperature.map({
         $0.isFinite && (0...2).contains($0)
       }) ?? true
@@ -75,54 +76,66 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
       bufferingPolicy: .bufferingOldest(maximumBufferedEvents)
     )
     let producer = Task {
+      var generationRun: MLXSwiftGenerationRun?
       do {
         try Task.checkCancellation()
-        let generationStream = try generations(request, maximumOutputTokens)
+        let run = try await generationRuns(
+          request,
+          maximumOutputTokens,
+          maximumContextTokens
+        )
+        generationRun = run
         try Task.checkCancellation()
         var pendingTerminal: (InferenceUsage, InferenceStopReason)?
 
-        for try await generation in generationStream {
-          try Task.checkCancellation()
-          guard pendingTerminal == nil else {
-            throw MLXLocalInferenceProviderError.invalidStream
-          }
-          switch generation {
-          case .chunk(let text):
-            guard !text.isEmpty else {
-              continue
-            }
-            try Self.yield(.textDelta(text), to: continuation)
-
-          case .toolCall(let toolCall):
-            try Self.yield(
-              .toolCall(try MLXSwiftRequestMapper.coreToolCall(toolCall)),
-              to: continuation
-            )
-
-          case .info(let info):
-            guard
-              let inputTokens = UInt64(exactly: info.promptTokenCount),
-              let outputTokens = UInt64(exactly: info.generationTokenCount)
-            else {
+        try await withTaskCancellationHandler {
+          for await generation in run.events {
+            try Task.checkCancellation()
+            guard pendingTerminal == nil else {
               throw MLXLocalInferenceProviderError.invalidStream
             }
-            let stopReason: InferenceStopReason
-            switch info.stopReason {
-            case .stop:
-              stopReason = .stop
-            case .length:
-              stopReason = .length
-            case .cancelled:
-              throw CancellationError()
+            switch generation {
+            case .chunk(let text):
+              guard !text.isEmpty else {
+                continue
+              }
+              try Self.yield(.textDelta(text), to: continuation)
+
+            case .toolCall(let toolCall):
+              try Self.yield(
+                .toolCall(try MLXSwiftRequestMapper.coreToolCall(toolCall)),
+                to: continuation
+              )
+
+            case .info(let info):
+              guard
+                let inputTokens = UInt64(exactly: info.promptTokenCount),
+                let outputTokens = UInt64(exactly: info.generationTokenCount)
+              else {
+                throw MLXLocalInferenceProviderError.invalidStream
+              }
+              let stopReason: InferenceStopReason
+              switch info.stopReason {
+              case .stop:
+                stopReason = .stop
+              case .length:
+                stopReason = .length
+              case .cancelled:
+                throw CancellationError()
+              }
+              pendingTerminal = (
+                InferenceUsage(
+                  inputTokens: inputTokens,
+                  outputTokens: outputTokens
+                ),
+                stopReason
+              )
             }
-            pendingTerminal = (
-              InferenceUsage(
-                inputTokens: inputTokens,
-                outputTokens: outputTokens
-              ),
-              stopReason
-            )
           }
+          await run.waitForTermination()
+          try Task.checkCancellation()
+        } onCancel: {
+          run.cancel()
         }
         guard let (usage, stopReason) = pendingTerminal else {
           throw MLXLocalInferenceProviderError.incompleteStream
@@ -134,10 +147,22 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
         continuation.finish()
       } catch is CancellationError {
         continuation.finish(throwing: CancellationError())
+        if let generationRun {
+          generationRun.cancel()
+          await generationRun.waitForTermination()
+        }
       } catch let error as MLXLocalInferenceProviderError {
         continuation.finish(throwing: error)
+        if let generationRun {
+          generationRun.cancel()
+          await generationRun.waitForTermination()
+        }
       } catch {
         continuation.finish(throwing: MLXLocalInferenceProviderError.generationFailed)
+        if let generationRun {
+          generationRun.cancel()
+          await generationRun.waitForTermination()
+        }
       }
     }
     continuation.onTermination = { @Sendable _ in
@@ -152,6 +177,71 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
         await producer.value
       }
     )
+  }
+
+  static func validateContext(
+    promptTokenCount: Int,
+    maximumOutputTokens: Int,
+    maximumContextTokens: Int
+  ) throws {
+    guard
+      promptTokenCount >= 0,
+      maximumOutputTokens > 0,
+      maximumOutputTokens <= maximumContextTokens,
+      promptTokenCount <= maximumContextTokens - maximumOutputTokens
+    else {
+      throw MLXLocalInferenceProviderError.invalidRequest
+    }
+  }
+
+  private static func makeGenerationRun(
+    model: ModelContainer,
+    request: InferenceRequest,
+    maximumOutputTokens: Int,
+    maximumContextTokens: Int
+  ) async throws -> MLXSwiftGenerationRun {
+    try Task.checkCancellation()
+    let messages = try MLXSwiftRequestMapper.messages(for: request)
+    let tools = try MLXSwiftRequestMapper.toolSpecifications(for: request)
+    let parameters = GenerateParameters(
+      maxTokens: maximumOutputTokens,
+      temperature: Float(request.options.temperature ?? 0.6)
+    )
+    let input = try await model.prepare(
+      input: UserInput(chat: messages, tools: tools)
+    )
+    try Task.checkCancellation()
+    let promptTokenCount = input.text.tokens.size
+    try validateContext(
+      promptTokenCount: promptTokenCount,
+      maximumOutputTokens: maximumOutputTokens,
+      maximumContextTokens: maximumContextTokens
+    )
+
+    return try await model.perform(nonSendable: input) { context, input in
+      try Task.checkCancellation()
+      let iterator = try TokenIterator(
+        input: input,
+        model: context.model,
+        parameters: parameters
+      )
+      let (events, generationTask) = MLXLMCommon.generateTask(
+        promptTokenCount: promptTokenCount,
+        modelConfiguration: context.configuration,
+        tokenizer: context.tokenizer,
+        iterator: iterator,
+        tools: tools
+      )
+      return MLXSwiftGenerationRun(
+        events: events,
+        cancel: {
+          generationTask.cancel()
+        },
+        waitForTermination: {
+          await generationTask.value
+        }
+      )
+    }
   }
 
   private static func yield(

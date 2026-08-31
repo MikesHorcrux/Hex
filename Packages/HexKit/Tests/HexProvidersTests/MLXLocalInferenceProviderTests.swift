@@ -516,6 +516,20 @@ struct MLXLocalInferenceProviderTests {
         )
       ],
       [
+        .textDelta("impossible-with-zero-output-tokens"),
+        .completed(
+          usage: InferenceUsage(inputTokens: 1, outputTokens: 0),
+          stopReason: .stop
+        ),
+      ],
+      [
+        .toolCall(shallowCall),
+        .completed(
+          usage: InferenceUsage(inputTokens: 1, outputTokens: 0),
+          stopReason: .toolCalls
+        ),
+      ],
+      [
         .textDelta("done"),
         .completed(
           usage: InferenceUsage(
@@ -576,6 +590,117 @@ struct MLXLocalInferenceProviderTests {
         #expect(error as? MLXLocalInferenceProviderError == .invalidStream)
       }
     }
+  }
+
+  @Test
+  func validatesGeneratedArgumentsAgainstSupportedInputSchema() async throws {
+    let fixture = try makeFixture(modelNames: ["model-a"])
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let strictTool = ToolDefinition(
+      name: "strict_read",
+      description: "Read one path.",
+      inputSchema: [
+        "type": .string("object"),
+        "properties": .object([
+          "path": .object([
+            "type": .string("string"),
+            "minLength": .integer(1),
+          ])
+        ]),
+        "required": .array([.string("path")]),
+        "additionalProperties": .boolean(false),
+      ]
+    )
+    let invalidArguments: [[String: JSONValue]] = [
+      [:],
+      ["path": .integer(1)],
+      ["path": .string("")],
+      ["path": .string("README.md"), "unexpected": .boolean(true)],
+    ]
+
+    for (index, arguments) in invalidArguments.enumerated() {
+      let call = ToolCall(
+        id: ToolCallID(rawValue: "invalid-\(index)"),
+        name: strictTool.name,
+        arguments: arguments
+      )
+      let loader = RecordingLoader(
+        engines: [
+          "model-a": ScriptedEngine(events: [
+            .toolCall(call),
+            .completed(
+              usage: InferenceUsage(inputTokens: 1, outputTokens: 1),
+              stopReason: .toolCalls
+            ),
+          ])
+        ]
+      )
+      let provider = try makeProvider(fixture: fixture, loader: loader)
+      do {
+        _ = try await collect(
+          provider,
+          request: makeRequest(
+            modelID: ModelID(rawValue: "model-a"),
+            tools: [strictTool]
+          )
+        )
+        Issue.record("Expected schema-mismatched generated arguments to fail closed.")
+      } catch {
+        #expect(error as? MLXLocalInferenceProviderError == .invalidStream)
+      }
+    }
+
+    let validCall = ToolCall(
+      id: ToolCallID(rawValue: "valid"),
+      name: strictTool.name,
+      arguments: ["path": .string("README.md")]
+    )
+    let validLoader = RecordingLoader(
+      engines: [
+        "model-a": ScriptedEngine(events: [
+          .toolCall(validCall),
+          .completed(
+            usage: InferenceUsage(inputTokens: 1, outputTokens: 1),
+            stopReason: .toolCalls
+          ),
+        ])
+      ]
+    )
+    let validProvider = try makeProvider(fixture: fixture, loader: validLoader)
+    let validEvents = try await collect(
+      validProvider,
+      request: makeRequest(
+        modelID: ModelID(rawValue: "model-a"),
+        tools: [strictTool]
+      )
+    )
+    #expect(validEvents.contains(.toolCall(validCall)))
+    #expect(validEvents.last == .completed(.toolCalls))
+
+    let unsupportedTool = ToolDefinition(
+      name: "unsupported_schema",
+      description: "Uses a schema keyword outside the supported subset.",
+      inputSchema: [
+        "type": .string("object"),
+        "properties": .object([
+          "path": .object([
+            "type": .string("string"),
+            "pattern": .string(".+"),
+          ])
+        ]),
+      ]
+    )
+    let rejectingLoader = RecordingLoader(engines: [:])
+    let rejectingProvider = try makeProvider(fixture: fixture, loader: rejectingLoader)
+    await #expect(throws: MLXLocalInferenceProviderError.invalidRequest) {
+      _ = try await rejectingProvider.stream(
+        makeRequest(
+          modelID: ModelID(rawValue: "model-a"),
+          tools: [unsupportedTool]
+        )
+      )
+    }
+    #expect(await rejectingLoader.loadCount() == 0)
   }
 
   @Test

@@ -55,7 +55,7 @@ extension MLXLocalInferenceProvider {
     guard
       MLXRequestContentValidator.isValidToolCallID(call.id),
       MLXRequestContentValidator.isValidToolName(call.name),
-      request.tools.contains(where: { $0.name == call.name }),
+      let definition = request.tools.first(where: { $0.name == call.name }),
       MLXRequestContentValidator.consumeString(
         call.id.rawValue,
         remainingBytes: &remainingBytes
@@ -71,7 +71,11 @@ extension MLXLocalInferenceProvider {
         remainingNodes: &remainingNodes
       ),
       let arguments = try? JSONEncoder().encode(call.arguments),
-      arguments.count <= 2 * 1_024 * 1_024
+      arguments.count <= 2 * 1_024 * 1_024,
+      MLXToolInputSchemaValidator.arguments(
+        call.arguments,
+        conformTo: definition.inputSchema
+      )
     else {
       return false
     }
@@ -121,13 +125,15 @@ extension MLXLocalInferenceProvider {
   static func isValidUsage(
     _ usage: InferenceUsage,
     request: InferenceRequest,
-    model: MLXLocalModelConfiguration
+    model: MLXLocalModelConfiguration,
+    hasGeneratedOutput: Bool
   ) -> Bool {
     let maximumOutputTokens = request.options.maxOutputTokens ?? model.maximumOutputTokens
     guard
       usage.cachedInputTokens <= usage.inputTokens,
       usage.reasoningTokens <= usage.outputTokens,
-      usage.outputTokens <= UInt64(maximumOutputTokens)
+      usage.outputTokens <= UInt64(maximumOutputTokens),
+      !hasGeneratedOutput || usage.outputTokens > 0
     else {
       return false
     }

@@ -138,7 +138,12 @@ extension MLXLocalInferenceProvider {
               break
             }
             guard
-              Self.isValidUsage(usage, request: request, model: model),
+              Self.isValidUsage(
+                usage,
+                request: request,
+                model: model,
+                hasGeneratedOutput: textBytes > 0 || toolCallCount > 0
+              ),
               let stopReason = Self.validatedStopReason(
                 engineStopReason,
                 textBytes: textBytes,
