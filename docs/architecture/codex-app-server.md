@@ -13,6 +13,8 @@ output. Hex must not read, copy, or parse Codex credential files such as `~/.cod
 Account responses are decoded as a closed, non-secret projection: unexpected members fail the
 request instead of being silently carried across the boundary. User-facing login URLs must use
 HTTPS on an explicit OpenAI or ChatGPT authorization host with no embedded credentials.
+The account actor retains at most one redacted login completion, bound to its issued login identifier,
+so the app can observe success or failure without receiving provider error text or credentials.
 
 `CodexAppServerTransport` is injected. The concrete transport is responsible for launching and
 initializing the app-server process, assigning JSON-RPC request identifiers, bounding and validating

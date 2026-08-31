@@ -223,6 +223,10 @@ struct CodexAccountClientTests {
     )
 
     try await client.acceptLoginCompletion(completion)
+    #expect(
+      await client.loginCompletion(for: try CodexLoginID(rawValue: "login-completion"))
+        == completion
+    )
     try await client.logout()
 
     #expect(!String(describing: completion).contains("server-secret-detail"))
@@ -426,6 +430,37 @@ struct CodexAccountClientTests {
     await #expect(throws: CodexAccountClientError.unexpectedLoginCompletion) {
       try await client.acceptLoginCompletion(staleCompletion)
     }
+  }
+
+  @Test
+  func exposesAnEarlyRedactedCompletionAfterChallengeCorrelation() async throws {
+    let transport = GatedCodexAppServerTransport()
+    let client = CodexAccountClient(transport: transport)
+    let starting = Task { try await client.startLogin(.browser) }
+    await transport.waitForRequest()
+    let loginID = try CodexLoginID(rawValue: "early-completion")
+    let completion = try CodexLoginCompletion(
+      appServerParameters: .object([
+        "loginId": .string(loginID.rawValue),
+        "success": .boolean(false),
+        "error": .string("redacted by the projection"),
+      ])
+    )
+
+    try await client.acceptLoginCompletion(completion)
+    #expect(await client.loginCompletion(for: loginID) == completion)
+    await transport.succeed(
+      with: .object([
+        "type": .string("chatgpt"),
+        "loginId": .string(loginID.rawValue),
+        "authUrl": .string("https://auth.openai.com/authorize"),
+      ])
+    )
+
+    let challenge = try await starting.value
+    #expect(challenge.loginID == loginID)
+    #expect(await client.loginCompletion(for: loginID) == completion)
+    #expect(!completion.succeeded)
   }
 
   @Test

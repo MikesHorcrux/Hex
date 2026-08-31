@@ -7,6 +7,7 @@ import HexCore
 public actor CodexAccountClient {
   private let transport: any CodexAppServerTransport
   private var state = CodexAccountClientState.idle
+  private var latestLoginCompletion: CodexLoginCompletion?
 
   public init(transport: any CodexAppServerTransport) {
     self.transport = transport
@@ -26,6 +27,7 @@ public actor CodexAccountClient {
     switch state {
     case .idle:
       state = .starting(mode, nil)
+      latestLoginCompletion = nil
     case .awaiting:
       throw CodexAccountClientError.loginAlreadyPending
     case .starting, .cancelling, .loggingOut:
@@ -51,6 +53,7 @@ public actor CodexAccountClient {
       if let earlyCompletion {
         guard earlyCompletion.loginID == challenge.loginID else {
           state = .idle
+          latestLoginCompletion = nil
           throw CodexAccountClientError.loginIdentifierMismatch
         }
         state = .idle
@@ -127,6 +130,15 @@ public actor CodexAccountClient {
     case .idle, .loggingOut:
       throw CodexAccountClientError.unexpectedLoginCompletion
     }
+    latestLoginCompletion = completion
+  }
+
+  /// Returns the latest redacted completion only when it belongs to the requested login flow.
+  public func loginCompletion(for loginID: CodexLoginID) -> CodexLoginCompletion? {
+    guard latestLoginCompletion?.loginID == loginID else {
+      return nil
+    }
+    return latestLoginCompletion
   }
 
   public func logout() async throws {

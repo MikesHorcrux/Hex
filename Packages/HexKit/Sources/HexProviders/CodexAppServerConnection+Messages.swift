@@ -122,31 +122,37 @@ extension CodexAppServerConnection {
     }
 
     guard case .integer(let requestID)? = object["id"], requestID > 0,
-      let pending = pendingRequests.removeValue(forKey: requestID)
+      var pending = pendingRequests[requestID], pending.response == nil
     else {
       throw CodexAppServerConnectionError.protocolViolation
     }
-    pending.timeoutTask.cancel()
     let hasResult = object["result"] != nil
     let hasError = object["error"] != nil
     guard hasResult != hasError else {
-      pending.continuation.resume(throwing: CodexAppServerConnectionError.protocolViolation)
       throw CodexAppServerConnectionError.protocolViolation
     }
+    let response: CodexAppServerPendingResponse
     if let result = object["result"] {
-      pending.continuation.resume(returning: result)
-      return
+      response = .result(result)
+    } else {
+      guard case .object(let errorObject)? = object["error"],
+        case .integer(let code)? = errorObject["code"],
+        case .string(let message)? = errorObject["message"],
+        !message.isEmpty,
+        message.utf8.count <= 8_192
+      else {
+        throw CodexAppServerConnectionError.protocolViolation
+      }
+      response = .remoteError(code)
     }
-    guard case .object(let errorObject)? = object["error"],
-      case .integer(let code)? = errorObject["code"],
-      case .string(let message)? = errorObject["message"],
-      !message.isEmpty,
-      message.utf8.count <= 8_192
-    else {
-      pending.continuation.resume(throwing: CodexAppServerConnectionError.protocolViolation)
-      throw CodexAppServerConnectionError.protocolViolation
+    if pending.writeCompleted {
+      pendingRequests.removeValue(forKey: requestID)
+      pending.timeoutTask.cancel()
+      pending.resume(with: response)
+    } else {
+      pending.response = response
+      pendingRequests[requestID] = pending
     }
-    pending.continuation.resume(throwing: CodexAppServerConnectionError.remoteError(code: code))
   }
 
   private func sendMethodNotFound(id: JSONValue, generation messageGeneration: UInt64) async throws

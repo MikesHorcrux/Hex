@@ -14,6 +14,11 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
   private var closeStartWaiters: [CheckedContinuation<Void, Never>] = []
   private var closeReleaseWaiters: [CheckedContinuation<Void, Never>] = []
   private var maximumReadBytes = 0
+  private var shouldBlockNextWrite = false
+  private var blockedWriteShouldFail = false
+  private var blockedWriteFrame: Data?
+  private var blockedWriteWaiters: [CheckedContinuation<Data, Never>] = []
+  private var blockedWriteReleaseWaiters: [CheckedContinuation<Void, Never>] = []
 
   func open(maximumReadBytes: Int) async throws -> AsyncThrowingStream<Data, any Error> {
     guard maximumReadBytes > 0 else {
@@ -40,6 +45,23 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
     let waiters = frameWaiters.removeValue(forKey: index) ?? []
     for waiter in waiters {
       waiter.resume(returning: frame)
+    }
+    if shouldBlockNextWrite {
+      shouldBlockNextWrite = false
+      let shouldFail = blockedWriteShouldFail
+      blockedWriteShouldFail = false
+      blockedWriteFrame = frame
+      let blockedWaiters = blockedWriteWaiters
+      blockedWriteWaiters = []
+      for waiter in blockedWaiters {
+        waiter.resume(returning: frame)
+      }
+      await withCheckedContinuation { continuation in
+        blockedWriteReleaseWaiters.append(continuation)
+      }
+      if shouldFail {
+        throw TestCodexAppServerChannelError.failed("write-secret")
+      }
     }
   }
 
@@ -98,6 +120,29 @@ actor TestCodexAppServerChannel: CodexAppServerChannel {
 
   func setFailWrites(_ enabled: Bool) {
     failWrites = enabled
+  }
+
+  func blockNextWrite(failing: Bool = false) {
+    shouldBlockNextWrite = true
+    blockedWriteShouldFail = failing
+    blockedWriteFrame = nil
+  }
+
+  func waitUntilWriteBlocks() async -> Data {
+    if let blockedWriteFrame {
+      return blockedWriteFrame
+    }
+    return await withCheckedContinuation { continuation in
+      blockedWriteWaiters.append(continuation)
+    }
+  }
+
+  func releaseBlockedWrite() {
+    let waiters = blockedWriteReleaseWaiters
+    blockedWriteReleaseWaiters = []
+    for waiter in waiters {
+      waiter.resume()
+    }
   }
 
   func blockClose() {

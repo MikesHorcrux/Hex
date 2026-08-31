@@ -46,7 +46,8 @@ extension CodexAppServerConnection {
         }
         pendingRequests[requestID] = CodexAppServerPendingRequest(
           continuation: continuation,
-          timeoutTask: timeoutTask
+          timeoutTask: timeoutTask,
+          response: nil
         )
         Task { [weak self] in
           await self?.writeRegisteredRequest(
@@ -80,9 +81,22 @@ extension CodexAppServerConnection {
         throw CodexAppServerConnectionError.connectionClosed
       }
       try await channel.write(frame)
+      guard generation == requestGeneration, state == permittedState,
+        var pending = pendingRequests[requestID]
+      else {
+        return
+      }
+      if let response = pending.response {
+        pendingRequests.removeValue(forKey: requestID)
+        pending.timeoutTask.cancel()
+        pending.resume(with: response)
+      } else {
+        pending.writeCompleted = true
+        pendingRequests[requestID] = pending
+      }
     } catch {
       guard generation == requestGeneration else { return }
-      guard pendingRequests[requestID] != nil else { return }
+      guard state == permittedState || state == .closing else { return }
       await closeConnection(error: sanitized(error))
     }
   }

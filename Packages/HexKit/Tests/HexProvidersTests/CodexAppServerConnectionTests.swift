@@ -203,6 +203,94 @@ struct CodexAppServerConnectionTests {
   }
 
   @Test
+  func writeFailureAfterMatchingResponseClosesBeforeRequestCompletion() async throws {
+    let channel = TestCodexAppServerChannel()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    try await finishHandshake(connection: connection, channel: channel)
+    await channel.blockNextWrite(failing: true)
+    let completionProbe = TestTaskCompletionProbe()
+
+    let request = Task {
+      do {
+        let value = try await connection.send(
+          CodexAppServerRequest(method: "account/read", parameters: .object([:]))
+        )
+        await completionProbe.recordCompletion()
+        return value
+      } catch {
+        await completionProbe.recordCompletion()
+        throw error
+      }
+    }
+    let frame = try decodeFrame(await channel.waitUntilWriteBlocks())
+    guard case .object(let object) = frame, case .integer(let requestID)? = object["id"] else {
+      Issue.record("Expected a request identifier.")
+      await channel.releaseBlockedWrite()
+      await connection.disconnect()
+      return
+    }
+    await channel.yield(
+      try encodedLine(.object(["id": .integer(requestID), "result": .object([:])]))
+    )
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await completionProbe.hasCompleted()))
+
+    await channel.blockClose()
+    await channel.releaseBlockedWrite()
+    await channel.waitUntilCloseStarts()
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await completionProbe.hasCompleted()))
+    #expect(await channel.closeCount() == 0)
+    await channel.releaseClose()
+    await #expect(throws: CodexAppServerConnectionError.self) {
+      try await request.value
+    }
+    #expect(await completionProbe.hasCompleted())
+    #expect(await channel.closeCount() == 1)
+  }
+
+  @Test
+  func matchingResponseWaitsForSuccessfulWriteCompletion() async throws {
+    let channel = TestCodexAppServerChannel()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    try await finishHandshake(connection: connection, channel: channel)
+    await channel.blockNextWrite()
+    let completionProbe = TestTaskCompletionProbe()
+
+    let request = Task {
+      let value = try await connection.send(
+        CodexAppServerRequest(method: "account/read", parameters: .object([:]))
+      )
+      await completionProbe.recordCompletion()
+      return value
+    }
+    let frame = try decodeFrame(await channel.waitUntilWriteBlocks())
+    guard case .object(let object) = frame, case .integer(let requestID)? = object["id"] else {
+      Issue.record("Expected a request identifier.")
+      await channel.releaseBlockedWrite()
+      await connection.disconnect()
+      return
+    }
+    await channel.yield(
+      try encodedLine(.object(["id": .integer(requestID), "result": .object([:])]))
+    )
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(!(await completionProbe.hasCompleted()))
+
+    await channel.releaseBlockedWrite()
+    #expect(try await request.value == .object([:]))
+    #expect(await completionProbe.hasCompleted())
+    #expect(await channel.closeCount() == 0)
+    await connection.disconnect()
+  }
+
+  @Test
   func acceptsMultipleBoundedMessagesInOneLargerReadChunk() async throws {
     let channel = TestCodexAppServerChannel()
     let connection = CodexAppServerConnection(
