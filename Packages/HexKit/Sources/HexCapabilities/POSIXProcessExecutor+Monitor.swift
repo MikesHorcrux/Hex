@@ -17,9 +17,6 @@ extension POSIXProcessExecutor {
     defer { Darwin.close(process.outputDescriptor) }
     guard !deadlineOverflowed else {
       cleanupAttempted = true
-      guard !leaderMayHaveBeenReaped else {
-        throw ProcessExecutionError.cleanupFailed
-      }
       _ = try terminateAndReap(process.processID)
       throw ProcessExecutionError.invalidRequest
     }
