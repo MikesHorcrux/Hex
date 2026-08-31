@@ -232,13 +232,15 @@ struct OpenAIResponsesFailureTests {
       )
     )
 
-    var receivedEvents: [InferenceStreamEvent] = []
+    let recorder = OpenAIInferenceEventRecorder()
     do {
       let stream = try await provider.stream(
         OpenAIResponsesTestFixture.request(tools: [weatherTool()])
       )
-      for try await event in stream {
-        receivedEvents.append(event)
+      try await stream.consume { cursor in
+        while let event = try await cursor.next() {
+          await recorder.record(event)
+        }
       }
       Issue.record("Expected trailing event to fail the stream.")
     } catch let error as OpenAIResponsesProviderError {
@@ -247,6 +249,7 @@ struct OpenAIResponsesFailureTests {
       Issue.record("Expected OpenAIResponsesProviderError.malformedStream.")
     }
 
+    let receivedEvents = await recorder.events()
     #expect(
       receivedEvents.allSatisfy { event in
         switch event {
@@ -639,7 +642,9 @@ struct OpenAIResponsesFailureTests {
         statusCode: 200,
         body: AsyncThrowingStream { continuation in
           continuation.finish()
-        }
+        },
+        cancel: {},
+        waitForTermination: {}
       )
     }
   }

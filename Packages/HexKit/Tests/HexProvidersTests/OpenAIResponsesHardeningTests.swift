@@ -539,9 +539,12 @@ struct OpenAIResponsesHardeningTests {
     )
     try await Task.sleep(for: .milliseconds(500))
 
-    var events: [InferenceStreamEvent] = []
-    for try await event in stream {
-      events.append(event)
+    let events = try await stream.consume { cursor in
+      var events: [InferenceStreamEvent] = []
+      while let event = try await cursor.next() {
+        events.append(event)
+      }
+      return events
     }
     #expect(events.filter(isToolCall).count == callCount)
     #expect(events.last == .completed(.toolCalls))

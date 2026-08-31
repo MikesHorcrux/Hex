@@ -359,7 +359,7 @@ struct OpenAIResponsesAuditV3Tests {
     toolChoice: ToolChoice = .automatic
   ) async -> AuditResult {
     var provider: OpenAIResponsesProvider?
-    var events: [InferenceStreamEvent] = []
+    let recorder = OpenAIInferenceEventRecorder()
     do {
       let configuredProvider = OpenAIResponsesProvider(
         configuration: try OpenAIResponsesTestFixture.configuration(privacyMode: mode),
@@ -372,15 +372,21 @@ struct OpenAIResponsesAuditV3Tests {
       let stream = try await configuredProvider.stream(
         OpenAIResponsesTestFixture.request(tools: tools, toolChoice: toolChoice)
       )
-      for try await event in stream {
-        events.append(event)
+      try await stream.consume { cursor in
+        while let event = try await cursor.next() {
+          await recorder.record(event)
+        }
       }
-      return AuditResult(events: events, error: nil, provider: configuredProvider)
+      return AuditResult(
+        events: await recorder.events(),
+        error: nil,
+        provider: configuredProvider
+      )
     } catch let error as OpenAIResponsesProviderError {
-      return AuditResult(events: events, error: error, provider: provider)
+      return AuditResult(events: await recorder.events(), error: error, provider: provider)
     } catch {
       Issue.record("Unexpected error type: \(error)")
-      return AuditResult(events: events, error: nil, provider: provider)
+      return AuditResult(events: await recorder.events(), error: nil, provider: provider)
     }
   }
 
