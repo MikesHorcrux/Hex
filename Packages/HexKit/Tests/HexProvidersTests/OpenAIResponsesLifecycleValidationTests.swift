@@ -353,7 +353,8 @@ struct OpenAIResponsesLifecycleValidationTests {
             progress: progress,
             terminalType: terminalType,
             terminalStatus: terminalStatus,
-            terminalID: responseID
+            terminalID: responseID,
+            successfulText: terminalStatus == "completed" ? "ok" : nil
           )
           let (provider, result) = try await run(
             streamData,
@@ -425,7 +426,8 @@ struct OpenAIResponsesLifecycleValidationTests {
     progress: [(String, String?, String)],
     terminalType: String,
     terminalStatus: String,
-    terminalID: String
+    terminalID: String,
+    successfulText: String? = nil
   ) throws -> Data {
     var data = Data()
     var sequenceNumber = 0
@@ -455,10 +457,103 @@ struct OpenAIResponsesLifecycleValidationTests {
       sequenceNumber += 1
     }
 
+    var terminalOutput: [[String: Any]] = []
+    if let successfulText {
+      let addedItem: [String: Any] = [
+        "id": "msg_\(responseID)",
+        "type": "message",
+        "status": "in_progress",
+        "role": "assistant",
+        "content": [],
+      ]
+      let completedItem: [String: Any] = [
+        "id": "msg_\(responseID)",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+          [
+            "type": "output_text",
+            "text": successfulText,
+            "annotations": [],
+          ]
+        ],
+      ]
+      try OpenAIResponsesTestFixture.appendEvent(
+        [
+          "type": "response.output_item.added",
+          "sequence_number": sequenceNumber,
+          "output_index": 0,
+          "item": addedItem,
+        ],
+        to: &data
+      )
+      sequenceNumber += 1
+      try OpenAIResponsesTestFixture.appendEvent(
+        [
+          "type": "response.content_part.added",
+          "sequence_number": sequenceNumber,
+          "item_id": "msg_\(responseID)",
+          "output_index": 0,
+          "content_index": 0,
+          "part": ["type": "output_text", "text": "", "annotations": []],
+        ],
+        to: &data
+      )
+      sequenceNumber += 1
+      try OpenAIResponsesTestFixture.appendEvent(
+        [
+          "type": "response.output_text.delta",
+          "sequence_number": sequenceNumber,
+          "item_id": "msg_\(responseID)",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": successfulText,
+        ],
+        to: &data
+      )
+      sequenceNumber += 1
+      try OpenAIResponsesTestFixture.appendEvent(
+        [
+          "type": "response.output_text.done",
+          "sequence_number": sequenceNumber,
+          "item_id": "msg_\(responseID)",
+          "output_index": 0,
+          "content_index": 0,
+          "text": successfulText,
+        ],
+        to: &data
+      )
+      sequenceNumber += 1
+      try OpenAIResponsesTestFixture.appendEvent(
+        [
+          "type": "response.content_part.done",
+          "sequence_number": sequenceNumber,
+          "item_id": "msg_\(responseID)",
+          "output_index": 0,
+          "content_index": 0,
+          "part": ["type": "output_text", "text": successfulText, "annotations": []],
+        ],
+        to: &data
+      )
+      sequenceNumber += 1
+      try OpenAIResponsesTestFixture.appendEvent(
+        [
+          "type": "response.output_item.done",
+          "sequence_number": sequenceNumber,
+          "output_index": 0,
+          "item": completedItem,
+        ],
+        to: &data
+      )
+      sequenceNumber += 1
+      terminalOutput = [completedItem]
+    }
+
     var terminalResponse: [String: Any] = [
       "id": terminalID,
       "status": terminalStatus,
-      "output": [],
+      "output": terminalOutput,
     ]
     if terminalStatus == "incomplete" {
       terminalResponse["incomplete_details"] = ["reason": "max_output_tokens"]

@@ -46,7 +46,7 @@ struct OpenAIJSONStructuralPreflight {
     case 0x5B:
       try parseArray(depth: depth)
     case 0x22:
-      try parseString()
+      _ = try parseString(decodingValue: false)
     case 0x74:
       try parseLiteral([0x74, 0x72, 0x75, 0x65])
     case 0x66:
@@ -67,11 +67,17 @@ struct OpenAIJSONStructuralPreflight {
       index += 1
       return
     }
+    var memberNames = Set<String>()
     while true {
       guard peek() == 0x22 else {
         throw OpenAIResponsesProviderError.malformedStream
       }
-      try parseString()
+      guard
+        let memberName = try parseString(decodingValue: true),
+        memberNames.insert(memberName).inserted
+      else {
+        throw OpenAIResponsesProviderError.malformedStream
+      }
       skipWhitespace()
       try consume(0x3A)
       try parseValue(depth: depth + 1)
@@ -104,13 +110,20 @@ struct OpenAIJSONStructuralPreflight {
     }
   }
 
-  private mutating func parseString() throws {
+  private mutating func parseString(decodingValue: Bool) throws -> String? {
+    let startIndex = index
     try consume(0x22)
     while let byte = peek() {
       index += 1
       switch byte {
       case 0x22:
-        return
+        guard decodingValue else { return nil }
+        let encodedString = Data(bytes[startIndex..<index])
+        do {
+          return try JSONDecoder().decode(String.self, from: encodedString)
+        } catch {
+          throw OpenAIResponsesProviderError.malformedStream
+        }
       case 0x5C:
         guard let escape = peek() else {
           throw OpenAIResponsesProviderError.malformedStream

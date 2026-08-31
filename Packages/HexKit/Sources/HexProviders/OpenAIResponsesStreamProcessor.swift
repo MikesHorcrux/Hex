@@ -3,6 +3,8 @@ import HexCore
 
 struct OpenAIResponsesStreamProcessor {
   private let configuration: OpenAIResponsesConfiguration
+  private let toolChoice: ToolChoice
+  private let declaredToolNames: Set<String>
   private var lifecycle = OpenAIResponseLifecycle.awaitingStart
   private var responseID: String?
   private var lastSequenceNumber: Int64?
@@ -17,8 +19,14 @@ struct OpenAIResponsesStreamProcessor {
   private var sawRefusal = false
   private var sawDoneSentinel = false
 
-  init(configuration: OpenAIResponsesConfiguration) {
+  init(
+    configuration: OpenAIResponsesConfiguration,
+    tools: [ToolDefinition],
+    toolChoice: ToolChoice
+  ) {
     self.configuration = configuration
+    self.toolChoice = toolChoice
+    declaredToolNames = Set(tools.map(\.name))
   }
 
   mutating func process(_ event: ServerSentEvent) throws -> OpenAIResponsesProcessedEvent {
@@ -198,8 +206,12 @@ struct OpenAIResponsesStreamProcessor {
   }
 
   private mutating func beginOutput() throws {
-    try requireStreaming()
-    lifecycle = .output
+    switch lifecycle {
+    case .createdInProgress, .inProgress, .output:
+      lifecycle = .output
+    case .awaitingStart, .createdQueued, .queued, .terminal:
+      throw OpenAIResponsesProviderError.malformedStream
+    }
   }
 
   private func isOutputEvent(_ type: String) -> Bool {
@@ -231,7 +243,12 @@ struct OpenAIResponsesStreamProcessor {
     _ object: [String: JSONValue],
     expectedStatus: String
   ) throws {
-    try requireStreaming()
+    switch lifecycle {
+    case .createdQueued, .createdInProgress, .queued, .inProgress, .output:
+      break
+    case .awaitingStart, .terminal:
+      throw OpenAIResponsesProviderError.malformedStream
+    }
     let response = try requiredObject("response", in: object)
     guard
       try requiredString("id", in: response) == responseID,
@@ -263,7 +280,8 @@ struct OpenAIResponsesStreamProcessor {
       outputIndex < configuration.maximumOutputItems,
       outputIndex == addedOutputItems.count,
       addedOutputItems[outputIndex] == nil,
-      completedOutputItems[outputIndex] == nil
+      completedOutputItems[outputIndex] == nil,
+      outputIndex == 0 || completedOutputItems[outputIndex - 1] != nil
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
@@ -305,6 +323,7 @@ struct OpenAIResponsesStreamProcessor {
       guard
         isValidIdentifier(callID),
         isValidToolName(name),
+        isAllowedToolName(name),
         try requiredString("status", in: item) == "in_progress",
         arguments.utf8.count <= configuration.maximumToolArgumentBytes,
         callIDs.insert(callID).inserted,
@@ -352,8 +371,14 @@ struct OpenAIResponsesStreamProcessor {
     let existingPartCount = textParts.keys.lazy.filter { key in
       key.channel == "message" && key.itemID == itemID
     }.count
+    let previousPartCompleted =
+      contentIndex == 0
+      || textParts[
+        OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex - 1)
+      ]?.partCompleted == true
     guard
       contentIndex == existingPartCount,
+      previousPartCompleted,
       initialText.isEmpty,
       textParts[key] == nil
     else {
@@ -532,8 +557,18 @@ struct OpenAIResponsesStreamProcessor {
     let existingPartCount = textParts.keys.lazy.filter { key in
       key.channel == "reasoning_summary" && key.itemID == itemID
     }.count
+    let previousPartCompleted =
+      summaryIndex == 0
+      || textParts[
+        OpenAITextPartKey(
+          channel: "reasoning_summary",
+          itemID: itemID,
+          index: summaryIndex - 1
+        )
+      ]?.partCompleted == true
     guard
       summaryIndex == existingPartCount,
+      previousPartCompleted,
       initialText.isEmpty,
       textParts[key] == nil
     else {
@@ -664,7 +699,16 @@ struct OpenAIResponsesStreamProcessor {
       let existingPartCount = textParts.keys.lazy.filter { key in
         key.channel == "reasoning_text" && key.itemID == itemID
       }.count
-      guard contentIndex == existingPartCount else {
+      let previousPartCompleted =
+        contentIndex == 0
+        || textParts[
+          OpenAITextPartKey(
+            channel: "reasoning_text",
+            itemID: itemID,
+            index: contentIndex - 1
+          )
+        ]?.partCompleted == true
+      guard contentIndex == existingPartCount, previousPartCompleted else {
         throw OpenAIResponsesProviderError.malformedStream
       }
       assembly = OpenAITextPartAssembly(
@@ -983,7 +1027,12 @@ struct OpenAIResponsesStreamProcessor {
     _ object: [String: JSONValue],
     expectedStatus: String
   ) throws -> OpenAIResponsesProcessedEvent {
-    try requireStreaming()
+    switch lifecycle {
+    case .createdInProgress, .inProgress, .output:
+      break
+    case .awaitingStart, .createdQueued, .queued, .terminal:
+      throw OpenAIResponsesProviderError.malformedStream
+    }
     let response = try requiredObject("response", in: object)
     try validateResponse(response, expectedStatus: expectedStatus)
 
@@ -1008,6 +1057,12 @@ struct OpenAIResponsesStreamProcessor {
       guard assembly.finalArguments != nil, assembly.emitted else {
         throw OpenAIResponsesProviderError.malformedStream
       }
+    }
+    guard expectedStatus != "incomplete" || functionCalls.isEmpty else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+    guard expectedStatus != "completed" || hasAssistantTurnContent() else {
+      throw OpenAIResponsesProviderError.malformedStream
     }
 
     let stopReason: InferenceStopReason
@@ -1351,6 +1406,28 @@ struct OpenAIResponsesStreamProcessor {
         || (0x61...0x7A).contains(byte)
         || byte == 0x5F
         || byte == 0x2D
+    }
+  }
+
+  private func isAllowedToolName(_ value: String) -> Bool {
+    switch toolChoice {
+    case .automatic, .required:
+      declaredToolNames.contains(value)
+    case .none:
+      false
+    case .named(let name):
+      value == name && declaredToolNames.contains(value)
+    }
+  }
+
+  private func hasAssistantTurnContent() -> Bool {
+    if !completedToolCalls.isEmpty {
+      return true
+    }
+    return textParts.contains { entry in
+      entry.key.channel == "message"
+        && entry.value.partCompleted
+        && entry.value.finalText?.isEmpty == false
     }
   }
 

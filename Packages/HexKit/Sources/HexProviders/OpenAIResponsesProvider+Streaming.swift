@@ -156,7 +156,11 @@ extension OpenAIResponsesProvider {
   ) async {
     do {
       var parser = ServerSentEventParser(configuration: configuration)
-      var processor = OpenAIResponsesStreamProcessor(configuration: configuration)
+      var processor = OpenAIResponsesStreamProcessor(
+        configuration: configuration,
+        tools: request.tools,
+        toolChoice: request.toolChoice
+      )
       var pendingTerminal: OpenAIResponsesProcessedEvent?
 
       for try await chunk in body {
