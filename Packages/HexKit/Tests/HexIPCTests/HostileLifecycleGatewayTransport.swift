@@ -6,14 +6,17 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
   private let holdsDisconnect: Bool
   private let holdsEventRecordsResponse: Bool
   private var handshakeCount = 0
+  private var latestHandshakeIndex = 0
   private var handshakeContinuations:
     [Int: CheckedContinuation<GatewayHandshakeResponse, any Error>] = [:]
+  private var handshakeLeases: [Int: GatewayTransportConnectionLease] = [:]
   private var startContinuation: CheckedContinuation<GatewayStartRunResponse, any Error>?
   private var cancelContinuation: CheckedContinuation<GatewayCancelRunResponse, any Error>?
   private var eventRecordsContinuation:
     CheckedContinuation<AsyncThrowingStream<AgentEventRecord, any Error>, any Error>?
   private var streamContinuation: AsyncThrowingStream<AgentEventRecord, any Error>.Continuation?
   private var disconnectContinuation: CheckedContinuation<Void, Never>?
+  private var connectedLease: GatewayTransportConnectionLease?
   private(set) var disconnectCount = 0
 
   init(
@@ -41,32 +44,48 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
     self.holdsEventRecordsResponse = holdsEventRecordsResponse
   }
 
-  func handshake(_ request: GatewayHandshakeRequest) async throws -> GatewayHandshakeResponse {
+  func handshake(
+    _ request: GatewayHandshakeRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHandshakeResponse {
     handshakeCount += 1
     let index = handshakeCount
+    latestHandshakeIndex = index
     if index == 1 {
+      connectedLease = lease
       return initialResponse
     }
     return try await withCheckedThrowingContinuation { continuation in
       handshakeContinuations[index] = continuation
+      handshakeLeases[index] = lease
     }
   }
 
-  func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {
-    try await withCheckedThrowingContinuation { continuation in
+  func startRun(
+    _ request: GatewayStartRunRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayStartRunResponse {
+    try requireConnection(lease)
+    return try await withCheckedThrowingContinuation { continuation in
       startContinuation = continuation
     }
   }
 
-  func cancelRun(_ request: GatewayCancelRunRequest) async throws -> GatewayCancelRunResponse {
-    try await withCheckedThrowingContinuation { continuation in
+  func cancelRun(
+    _ request: GatewayCancelRunRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayCancelRunResponse {
+    try requireConnection(lease)
+    return try await withCheckedThrowingContinuation { continuation in
       cancelContinuation = continuation
     }
   }
 
   func eventRecords(
-    after cursor: GatewayEventCursor
+    after cursor: GatewayEventCursor,
+    lease: GatewayTransportConnectionLease
   ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
+    try requireConnection(lease)
     if holdsEventRecordsResponse {
       return try await withCheckedThrowingContinuation { continuation in
         eventRecordsContinuation = continuation
@@ -75,14 +94,17 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
     return installStream()
   }
 
-  func disconnect() async {
+  func disconnect(lease: GatewayTransportConnectionLease) async {
     disconnectCount += 1
-    guard holdsDisconnect else {
+    if holdsDisconnect {
+      await withCheckedContinuation { continuation in
+        disconnectContinuation = continuation
+      }
+    }
+    guard connectedLease == lease else {
       return
     }
-    await withCheckedContinuation { continuation in
-      disconnectContinuation = continuation
-    }
+    connectedLease = nil
   }
 
   private func installStream() -> AsyncThrowingStream<AgentEventRecord, any Error> {
@@ -102,6 +124,10 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
     instanceSeed: UInt8,
     selectedVersion: GatewayProtocolVersion = .current
   ) {
+    let lease = handshakeLeases.removeValue(forKey: index)
+    if latestHandshakeIndex == index {
+      connectedLease = lease
+    }
     handshakeContinuations.removeValue(forKey: index)?.resume(
       returning: GatewayHandshakeResponse(
         sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(instanceSeed)),
@@ -113,6 +139,7 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
   }
 
   func failHandshake(_ index: Int, message: String) {
+    handshakeLeases.removeValue(forKey: index)
     handshakeContinuations.removeValue(forKey: index)?.resume(
       throwing: GatewayFailure(
         code: .transportUnavailable,
@@ -230,5 +257,14 @@ actor HostileLifecycleGatewayTransport: HexGatewayTransport {
   func resolveDisconnect() {
     disconnectContinuation?.resume()
     disconnectContinuation = nil
+  }
+
+  private func requireConnection(_ lease: GatewayTransportConnectionLease) throws {
+    guard connectedLease == lease else {
+      throw GatewayFailure(
+        code: .notConnected,
+        message: "The hostile transport lease is not connected."
+      )
+    }
   }
 }

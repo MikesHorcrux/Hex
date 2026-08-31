@@ -7,25 +7,33 @@ extension HexGatewayClient {
     invocationID: GatewayRunInvocationID
   ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
     try Task.checkCancellation()
-    let generationID = try requireConnectedGeneration()
+    try validateEventRoute(runID: runID, invocationID: invocationID)
+    let connection = try requireConnectedGeneration()
+    let cursor = acknowledgedCursor(for: runID, invocationID: invocationID)
+    let firstSequence = cursor.sequence.addingReportingOverflow(1)
+    guard !firstSequence.overflow else {
+      throw GatewayFailure(
+        code: .invalidCursor,
+        message: "The gateway event cursor cannot advance beyond its sequence."
+      )
+    }
     let upstream: AsyncThrowingStream<AgentEventRecord, any Error>
     do {
       upstream = try await transport.eventRecords(
-        after: acknowledgedCursor(for: runID, invocationID: invocationID)
+        after: cursor,
+        lease: connection.lease
       )
     } catch {
       try Task.checkCancellation()
-      try requireCurrentConnectedGeneration(generationID)
+      try requireCurrentConnectedGeneration(connection.generationID)
       throw error
     }
 
     try Task.checkCancellation()
-    try requireCurrentConnectedGeneration(generationID)
+    try requireCurrentConnectedGeneration(connection.generationID)
     let streamID = UUID()
     let pair = AsyncThrowingStream<AgentEventRecord, any Error>.makeStream(
-      bufferingPolicy: .bufferingOldest(
-        GatewayConfiguration.standard.subscriberBufferCapacity
-      )
+      bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
     )
     let task = Task { [weak self] in
       guard let self else {
@@ -33,28 +41,39 @@ extension HexGatewayClient {
         return
       }
       do {
+        var expectedSequence: UInt64? = firstSequence.partialValue
         for try await record in upstream {
+          guard let requiredSequence = expectedSequence else {
+            throw invalidEventSequenceFailure()
+          }
+          try self.validateEventRecord(
+            record,
+            runID: runID,
+            requiredSequence: requiredSequence
+          )
+          let followingSequence = record.sequence.addingReportingOverflow(1)
+          expectedSequence = followingSequence.overflow ? nil : followingSequence.partialValue
           guard
             await self.enqueue(
               record,
               streamID: streamID,
-              generationID: generationID
+              generationID: connection.generationID
             )
           else {
             return
           }
         }
-        await self.finishEventStream(streamID, generationID: generationID)
+        await self.finishEventStream(streamID, generationID: connection.generationID)
       } catch is CancellationError {
         await self.finishEventStream(
           streamID,
-          generationID: generationID,
+          generationID: connection.generationID,
           error: CancellationError()
         )
       } catch {
         await self.finishEventStream(
           streamID,
-          generationID: generationID,
+          generationID: connection.generationID,
           error: error
         )
       }
@@ -62,15 +81,64 @@ extension HexGatewayClient {
     pair.continuation.onTermination = { @Sendable _ in
       task.cancel()
       Task {
-        await self.removeEventStream(streamID, generationID: generationID)
+        await self.removeEventStream(streamID, generationID: connection.generationID)
       }
     }
     eventStreams[streamID] = GatewayClientEventStreamState(
-      generationID: generationID,
+      generationID: connection.generationID,
       continuation: pair.continuation,
       task: task
     )
     return pair.stream
+  }
+
+  nonisolated func validateEventRoute(
+    runID: AgentRunID,
+    invocationID: GatewayRunInvocationID
+  ) throws {
+    let zeroUUID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    guard runID.rawValue != zeroUUID, invocationID.rawValue != zeroUUID else {
+      throw GatewayFailure(
+        code: .malformedPayload,
+        message: "The gateway event route contains an invalid identity."
+      )
+    }
+  }
+
+  nonisolated func validateEventRecord(
+    _ record: AgentEventRecord,
+    runID: AgentRunID,
+    requiredSequence: UInt64
+  ) throws {
+    guard record.runID == runID else {
+      throw GatewayFailure(
+        code: .wrongRun,
+        message: "The gateway returned an event record for a different run."
+      )
+    }
+    guard record.schemaVersion == 1 else {
+      throw GatewayFailure(
+        code: .unsupportedEventSchema,
+        message: "The gateway returned an unsupported event record schema."
+      )
+    }
+    let zeroUUID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    guard record.id.rawValue != zeroUUID else {
+      throw GatewayFailure(
+        code: .malformedPayload,
+        message: "The gateway returned an event record with an invalid identity."
+      )
+    }
+    guard record.sequence == requiredSequence else {
+      throw invalidEventSequenceFailure()
+    }
+  }
+
+  nonisolated func invalidEventSequenceFailure() -> GatewayFailure {
+    GatewayFailure(
+      code: .invalidEventSequence,
+      message: "The gateway returned a noncontiguous event sequence."
+    )
   }
 
   func enqueue(

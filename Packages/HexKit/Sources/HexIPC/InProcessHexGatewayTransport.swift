@@ -11,7 +11,9 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
   private let configuration: GatewayConfiguration
   private let codec: GatewayWireCodec
   private var sessionID: GatewaySessionID?
+  private var connectedLease: GatewayTransportConnectionLease?
   private var latestHandshakeAttemptID: UUID?
+  private var latestHandshakeLease: GatewayTransportConnectionLease?
 
   public init(
     service: HexGatewayService,
@@ -23,17 +25,20 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
   }
 
   public func handshake(
-    _ request: GatewayHandshakeRequest
+    _ request: GatewayHandshakeRequest,
+    lease: GatewayTransportConnectionLease
   ) async throws -> GatewayHandshakeResponse {
     let attemptID = UUID()
     latestHandshakeAttemptID = attemptID
+    latestHandshakeLease = lease
     if let sessionID {
       self.sessionID = nil
+      connectedLease = nil
       await service.disconnect(sessionID: sessionID)
     }
 
     do {
-      guard latestHandshakeAttemptID == attemptID else {
+      guard latestHandshakeAttemptID == attemptID, latestHandshakeLease == lease else {
         throw supersededHandshakeFailure()
       }
       let wireRequest = try codec.roundTrip(request)
@@ -47,31 +52,29 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
         throw error
       }
 
-      guard latestHandshakeAttemptID == attemptID else {
+      guard latestHandshakeAttemptID == attemptID, latestHandshakeLease == lease else {
         await service.disconnect(sessionID: response.sessionID)
         throw supersededHandshakeFailure()
       }
       sessionID = wireResponse.sessionID
+      connectedLease = lease
       latestHandshakeAttemptID = nil
+      latestHandshakeLease = nil
       return wireResponse
     } catch {
-      if latestHandshakeAttemptID == attemptID {
+      if latestHandshakeAttemptID == attemptID, latestHandshakeLease == lease {
         latestHandshakeAttemptID = nil
+        latestHandshakeLease = nil
       }
       throw codec.canonicalFailure(from: error)
     }
   }
 
   public func startRun(
-    _ request: GatewayStartRunRequest
+    _ request: GatewayStartRunRequest,
+    lease: GatewayTransportConnectionLease
   ) async throws -> GatewayStartRunResponse {
-    guard let sessionID else {
-      throw GatewayFailure(
-        code: .notConnected,
-        message: "The in-process gateway transport has not completed a handshake.",
-        isRetryable: true
-      )
-    }
+    let sessionID = try requireSession(ownedBy: lease)
 
     do {
       let wireRequest = try codec.roundTrip(request)
@@ -83,15 +86,10 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
   }
 
   public func cancelRun(
-    _ request: GatewayCancelRunRequest
+    _ request: GatewayCancelRunRequest,
+    lease: GatewayTransportConnectionLease
   ) async throws -> GatewayCancelRunResponse {
-    guard let sessionID else {
-      throw GatewayFailure(
-        code: .notConnected,
-        message: "The in-process gateway transport has not completed a handshake.",
-        isRetryable: true
-      )
-    }
+    let sessionID = try requireSession(ownedBy: lease)
 
     do {
       let wireRequest = try codec.roundTrip(request)
@@ -103,15 +101,10 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
   }
 
   public func eventRecords(
-    after cursor: GatewayEventCursor
+    after cursor: GatewayEventCursor,
+    lease: GatewayTransportConnectionLease
   ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
-    guard let sessionID else {
-      throw GatewayFailure(
-        code: .notConnected,
-        message: "The in-process gateway transport has not completed a handshake.",
-        isRetryable: true
-      )
-    }
+    let sessionID = try requireSession(ownedBy: lease)
 
     let upstream: AsyncThrowingStream<AgentEventRecord, any Error>
     do {
@@ -166,13 +159,30 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport {
     return stream
   }
 
-  public func disconnect() async {
-    latestHandshakeAttemptID = nil
-    guard let sessionID else {
+  public func disconnect(lease: GatewayTransportConnectionLease) async {
+    if latestHandshakeLease == lease {
+      latestHandshakeAttemptID = nil
+      latestHandshakeLease = nil
+    }
+    guard connectedLease == lease, let sessionID else {
       return
     }
+    connectedLease = nil
     self.sessionID = nil
     await service.disconnect(sessionID: sessionID)
+  }
+
+  private func requireSession(
+    ownedBy lease: GatewayTransportConnectionLease
+  ) throws -> GatewaySessionID {
+    guard connectedLease == lease, let sessionID else {
+      throw GatewayFailure(
+        code: .notConnected,
+        message: "The in-process gateway transport lease is not connected.",
+        isRetryable: true
+      )
+    }
+    return sessionID
   }
 
   private func supersededHandshakeFailure() -> GatewayFailure {

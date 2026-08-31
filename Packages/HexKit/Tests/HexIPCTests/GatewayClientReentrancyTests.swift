@@ -180,7 +180,7 @@ struct GatewayClientReentrancyTests {
     let base = InProcessHexGatewayTransport(service: service, configuration: configuration)
     let delayedTransport = DelayedFirstStartTransport(base: base)
     let client = HexGatewayClient(transport: delayedTransport)
-    _ = try await client.connect()
+    let connection = try await client.connect()
     let reusedRunID = GatewayTestValues.runID(100)
     let evictionRunID = GatewayTestValues.runID(101)
 
@@ -200,7 +200,10 @@ struct GatewayClientReentrancyTests {
     await driver.finish(1)
     await driver.waitUntilStopped(1)
 
-    _ = try await base.startRun(GatewayTestValues.request(runID: evictionRunID))
+    _ = try await service.startRun(
+      GatewayTestValues.request(runID: evictionRunID),
+      sessionID: connection.response.sessionID
+    )
     await driver.waitUntilStarted(2)
     await driver.yieldAndWait(
       GatewayTestValues.record(runID: evictionRunID, sequence: 1, event: .runStarted),
@@ -213,8 +216,9 @@ struct GatewayClientReentrancyTests {
     await driver.finish(2)
     await driver.waitUntilStopped(2)
 
-    let replacementStart = try await base.startRun(
-      GatewayTestValues.request(runID: reusedRunID)
+    let replacementStart = try await service.startRun(
+      GatewayTestValues.request(runID: reusedRunID),
+      sessionID: connection.response.sessionID
     )
     let replacementInvocationID = try #require(replacementStart.invocationID)
     await driver.waitUntilStarted(3)

@@ -22,7 +22,10 @@ actor ReorderingStartTransport: HexGatewayTransport {
     self.delayedResponseRunID = delayedResponseRunID
   }
 
-  func handshake(_ request: GatewayHandshakeRequest) -> GatewayHandshakeResponse {
+  func handshake(
+    _ request: GatewayHandshakeRequest,
+    lease: GatewayTransportConnectionLease
+  ) -> GatewayHandshakeResponse {
     GatewayHandshakeResponse(
       sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(90)),
       gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(90)),
@@ -31,7 +34,10 @@ actor ReorderingStartTransport: HexGatewayTransport {
     )
   }
 
-  func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {
+  func startRun(
+    _ request: GatewayStartRunRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayStartRunResponse {
     startCount += 1
     if startCount == 1 {
       firstRunID = request.runID
@@ -46,7 +52,10 @@ actor ReorderingStartTransport: HexGatewayTransport {
     )
   }
 
-  func cancelRun(_ request: GatewayCancelRunRequest) -> GatewayCancelRunResponse {
+  func cancelRun(
+    _ request: GatewayCancelRunRequest,
+    lease: GatewayTransportConnectionLease
+  ) -> GatewayCancelRunResponse {
     GatewayCancelRunResponse(
       runID: request.runID,
       invocationID: request.invocationID,
@@ -55,14 +64,15 @@ actor ReorderingStartTransport: HexGatewayTransport {
   }
 
   func eventRecords(
-    after cursor: GatewayEventCursor
+    after cursor: GatewayEventCursor,
+    lease: GatewayTransportConnectionLease
   ) -> AsyncThrowingStream<AgentEventRecord, any Error> {
     AsyncThrowingStream { continuation in
       continuation.finish()
     }
   }
 
-  func disconnect() {}
+  func disconnect(lease: GatewayTransportConnectionLease) {}
 
   func waitUntilFirstStartIsPending() async {
     while firstContinuation == nil {

@@ -1,16 +1,11 @@
 import HexCore
 import HexIPC
 
-actor MismatchedStartGatewayTransport: HexGatewayTransport {
-  private let responseRunID: AgentRunID
-  private let invocationID: GatewayRunInvocationID
+actor MalformedStartGatewayTransport: HexGatewayTransport {
+  private let disposition: GatewayStartRunDisposition
 
-  init(
-    responseRunID: AgentRunID,
-    invocationID: GatewayRunInvocationID
-  ) {
-    self.responseRunID = responseRunID
-    self.invocationID = invocationID
+  init(disposition: GatewayStartRunDisposition) {
+    self.disposition = disposition
   }
 
   func handshake(
@@ -18,8 +13,8 @@ actor MismatchedStartGatewayTransport: HexGatewayTransport {
     lease: GatewayTransportConnectionLease
   ) -> GatewayHandshakeResponse {
     GatewayHandshakeResponse(
-      sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(93)),
-      gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(93)),
+      sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(200)),
+      gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(201)),
       selectedVersion: .current,
       activeRun: nil
     )
@@ -29,10 +24,7 @@ actor MismatchedStartGatewayTransport: HexGatewayTransport {
     _ request: GatewayStartRunRequest,
     lease: GatewayTransportConnectionLease
   ) -> GatewayStartRunResponse {
-    GatewayStartRunResponse(
-      runID: responseRunID,
-      disposition: .started(invocationID: invocationID)
-    )
+    GatewayStartRunResponse(runID: request.runID, disposition: disposition)
   }
 
   func cancelRun(

@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 
 extension HexGatewayClient {
@@ -8,15 +9,16 @@ extension HexGatewayClient {
     _ request: GatewayStartRunRequest
   ) async throws -> GatewayStartRunResponse {
     try Task.checkCancellation()
+    try validateStartRequest(request)
     let runID = request.runID
-    let generationID = try requireConnectedGeneration()
+    let connection = try requireConnectedGeneration()
     let attemptID = GatewayClientStartAttemptID()
     startAttemptIDs[runID] = attemptID
 
     let response: GatewayStartRunResponse
     do {
       response = try await withTaskCancellationHandler {
-        try await transport.startRun(request)
+        try await transport.startRun(request, lease: connection.lease)
       } onCancel: {
         Task {
           await self.invalidateStartAttempt(
@@ -31,7 +33,7 @@ extension HexGatewayClient {
         throw CancellationError()
       }
 
-      try requireCurrentConnectedGeneration(generationID)
+      try requireCurrentConnectedGeneration(connection.generationID)
       try requireCurrentStartAttempt(for: runID, matching: attemptID)
       try Task.checkCancellation()
       invalidateStartAttempt(for: runID, matching: attemptID)
@@ -39,15 +41,14 @@ extension HexGatewayClient {
     }
 
     try Task.checkCancellation()
-    try requireCurrentConnectedGeneration(generationID)
+    try requireCurrentConnectedGeneration(connection.generationID)
     try requireCurrentStartAttempt(for: runID, matching: attemptID)
-    guard response.runID == runID else {
+    do {
+      try validateStartResponse(response, for: request)
+    } catch {
       try Task.checkCancellation()
       invalidateStartAttempt(for: runID, matching: attemptID)
-      throw GatewayFailure(
-        code: .wrongRun,
-        message: "The gateway returned a start response for a different run."
-      )
+      throw error
     }
 
     try Task.checkCancellation()
@@ -56,9 +57,13 @@ extension HexGatewayClient {
       // A newly admitted generation always begins at cursor zero, even when its run identifier was
       // previously acknowledged before bounded service eviction.
       removeAcknowledgements(for: response.runID)
-      acknowledgedSequences[
-        GatewayRunAcknowledgementKey(runID: response.runID, invocationID: invocationID)
-      ] = 0
+      storeAcknowledgement(
+        0,
+        for: GatewayRunAcknowledgementKey(
+          runID: response.runID,
+          invocationID: invocationID
+        )
+      )
     case .alreadyRunning(let invocationID), .alreadyTerminal(let invocationID):
       removeAcknowledgements(for: response.runID, except: invocationID)
     case .busy:
@@ -72,19 +77,20 @@ extension HexGatewayClient {
     _ request: GatewayCancelRunRequest
   ) async throws -> GatewayCancelRunResponse {
     try Task.checkCancellation()
-    let generationID = try requireConnectedGeneration()
+    try validateCancellationRequest(request)
+    let connection = try requireConnectedGeneration()
 
     let response: GatewayCancelRunResponse
     do {
-      response = try await transport.cancelRun(request)
+      response = try await transport.cancelRun(request, lease: connection.lease)
     } catch {
       try Task.checkCancellation()
-      try requireCurrentConnectedGeneration(generationID)
+      try requireCurrentConnectedGeneration(connection.generationID)
       throw error
     }
 
     try Task.checkCancellation()
-    try requireCurrentConnectedGeneration(generationID)
+    try requireCurrentConnectedGeneration(connection.generationID)
     guard response.runID == request.runID else {
       throw GatewayFailure(
         code: .wrongRun,
@@ -98,8 +104,62 @@ extension HexGatewayClient {
       )
     }
     try Task.checkCancellation()
-    try requireCurrentConnectedGeneration(generationID)
+    try requireCurrentConnectedGeneration(connection.generationID)
     return response
+  }
+
+  func validateStartRequest(_ request: GatewayStartRunRequest) throws {
+    guard !isZero(request.runID.rawValue) else {
+      throw malformedStartResponseFailure()
+    }
+  }
+
+  func validateStartResponse(
+    _ response: GatewayStartRunResponse,
+    for request: GatewayStartRunRequest
+  ) throws {
+    guard response.runID == request.runID else {
+      throw GatewayFailure(
+        code: .wrongRun,
+        message: "The gateway returned a start response for a different run."
+      )
+    }
+    guard !isZero(response.runID.rawValue) else {
+      throw malformedStartResponseFailure()
+    }
+
+    switch response.disposition {
+    case .started(let invocationID),
+      .alreadyRunning(let invocationID),
+      .alreadyTerminal(let invocationID):
+      guard !isZero(invocationID.rawValue) else {
+        throw malformedStartResponseFailure()
+      }
+    case .busy(let activeRunID):
+      guard !isZero(activeRunID.rawValue), activeRunID != request.runID else {
+        throw malformedStartResponseFailure()
+      }
+    }
+  }
+
+  func validateCancellationRequest(_ request: GatewayCancelRunRequest) throws {
+    guard !isZero(request.runID.rawValue), !isZero(request.invocationID.rawValue) else {
+      throw GatewayFailure(
+        code: .malformedPayload,
+        message: "The gateway cancellation request contains an invalid identity."
+      )
+    }
+  }
+
+  func malformedStartResponseFailure() -> GatewayFailure {
+    GatewayFailure(
+      code: .malformedPayload,
+      message: "The gateway returned an invalid start response."
+    )
+  }
+
+  func isZero(_ value: UUID) -> Bool {
+    value == UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
   }
 
   func requireCurrentStartAttempt(

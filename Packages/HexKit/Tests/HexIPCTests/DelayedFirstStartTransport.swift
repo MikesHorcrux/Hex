@@ -11,13 +11,19 @@ actor DelayedFirstStartTransport: HexGatewayTransport {
     self.base = base
   }
 
-  func handshake(_ request: GatewayHandshakeRequest) async throws -> GatewayHandshakeResponse {
-    try await base.handshake(request)
+  func handshake(
+    _ request: GatewayHandshakeRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHandshakeResponse {
+    try await base.handshake(request, lease: lease)
   }
 
-  func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {
+  func startRun(
+    _ request: GatewayStartRunRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayStartRunResponse {
     startCount += 1
-    let response = try await base.startRun(request)
+    let response = try await base.startRun(request, lease: lease)
     guard startCount == 1 else {
       return response
     }
@@ -29,18 +35,22 @@ actor DelayedFirstStartTransport: HexGatewayTransport {
     return response
   }
 
-  func cancelRun(_ request: GatewayCancelRunRequest) async throws -> GatewayCancelRunResponse {
-    try await base.cancelRun(request)
+  func cancelRun(
+    _ request: GatewayCancelRunRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayCancelRunResponse {
+    try await base.cancelRun(request, lease: lease)
   }
 
   func eventRecords(
-    after cursor: GatewayEventCursor
+    after cursor: GatewayEventCursor,
+    lease: GatewayTransportConnectionLease
   ) async throws -> AsyncThrowingStream<AgentEventRecord, any Error> {
-    try await base.eventRecords(after: cursor)
+    try await base.eventRecords(after: cursor, lease: lease)
   }
 
-  func disconnect() async {
-    await base.disconnect()
+  func disconnect(lease: GatewayTransportConnectionLease) async {
+    await base.disconnect(lease: lease)
   }
 
   func waitUntilFirstResponseIsHeld() async {

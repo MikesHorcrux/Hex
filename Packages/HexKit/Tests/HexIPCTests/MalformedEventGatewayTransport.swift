@@ -1,16 +1,12 @@
 import HexCore
 import HexIPC
 
-actor MismatchedStartGatewayTransport: HexGatewayTransport {
-  private let responseRunID: AgentRunID
-  private let invocationID: GatewayRunInvocationID
+actor MalformedEventGatewayTransport: HexGatewayTransport {
+  private let records: [AgentEventRecord]
+  private(set) var eventRequestCount = 0
 
-  init(
-    responseRunID: AgentRunID,
-    invocationID: GatewayRunInvocationID
-  ) {
-    self.responseRunID = responseRunID
-    self.invocationID = invocationID
+  init(records: [AgentEventRecord]) {
+    self.records = records
   }
 
   func handshake(
@@ -18,8 +14,8 @@ actor MismatchedStartGatewayTransport: HexGatewayTransport {
     lease: GatewayTransportConnectionLease
   ) -> GatewayHandshakeResponse {
     GatewayHandshakeResponse(
-      sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(93)),
-      gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(93)),
+      sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(190)),
+      gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(191)),
       selectedVersion: .current,
       activeRun: nil
     )
@@ -30,8 +26,8 @@ actor MismatchedStartGatewayTransport: HexGatewayTransport {
     lease: GatewayTransportConnectionLease
   ) -> GatewayStartRunResponse {
     GatewayStartRunResponse(
-      runID: responseRunID,
-      disposition: .started(invocationID: invocationID)
+      runID: request.runID,
+      disposition: .started(invocationID: GatewayTestValues.invocationID(190))
     )
   }
 
@@ -50,7 +46,11 @@ actor MismatchedStartGatewayTransport: HexGatewayTransport {
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
   ) -> AsyncThrowingStream<AgentEventRecord, any Error> {
-    AsyncThrowingStream { continuation in
+    eventRequestCount += 1
+    return AsyncThrowingStream { continuation in
+      for record in records {
+        continuation.yield(record)
+      }
       continuation.finish()
     }
   }

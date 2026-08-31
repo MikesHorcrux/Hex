@@ -6,26 +6,44 @@ import HexCore
 /// before acknowledging it with the invocation identity that produced it.
 public actor HexGatewayClient {
   let transport: any HexGatewayTransport
+  let configuration: GatewayConfiguration
+  let configuredMinimumVersion: GatewayProtocolVersion
+  let configuredMaximumVersion: GatewayProtocolVersion
   let handshakeRequest: GatewayHandshakeRequest
   var gatewayInstanceID: GatewayInstanceID?
   var acknowledgedSequences: [GatewayRunAcknowledgementKey: UInt64] = [:]
+  var acknowledgementOrder: [GatewayRunAcknowledgementKey] = []
   var startAttemptIDs: [AgentRunID: GatewayClientStartAttemptID] = [:]
   var connectionAttemptID: GatewayClientConnectionAttemptID?
   var connectionGenerationID = GatewayClientConnectionGenerationID()
+  var connectionLease: GatewayTransportConnectionLease?
   var connectedGenerationID: GatewayClientConnectionGenerationID?
+  var connectedLease: GatewayTransportConnectionLease?
   var eventStreams: [UUID: GatewayClientEventStreamState] = [:]
 
   public init(
     transport: any HexGatewayTransport,
     clientID: GatewayClientID = GatewayClientID(),
     minimumVersion: GatewayProtocolVersion = .minimumSupported,
-    maximumVersion: GatewayProtocolVersion = .current
+    maximumVersion: GatewayProtocolVersion = .current,
+    configuration: GatewayConfiguration = .standard
   ) {
     self.transport = transport
+    self.configuration = configuration
+    configuredMinimumVersion = minimumVersion
+    configuredMaximumVersion = maximumVersion
+    let intersectedMinimum =
+      minimumVersion > GatewayProtocolVersion.minimumSupported
+      ? minimumVersion
+      : GatewayProtocolVersion.minimumSupported
+    let intersectedMaximum =
+      maximumVersion < GatewayProtocolVersion.current
+      ? maximumVersion
+      : GatewayProtocolVersion.current
     handshakeRequest = GatewayHandshakeRequest(
       clientID: clientID,
-      minimumVersion: minimumVersion,
-      maximumVersion: maximumVersion
+      minimumVersion: intersectedMinimum,
+      maximumVersion: intersectedMaximum
     )
   }
 
@@ -86,18 +104,15 @@ public actor HexGatewayClient {
         message: "The client cannot acknowledge an event record with a sequence gap."
       )
     }
-    acknowledgedSequences[key] = record.sequence
+    storeAcknowledgement(record.sequence, for: key)
   }
 
   public func forgetAcknowledgement(
     for runID: AgentRunID,
     invocationID: GatewayRunInvocationID
   ) {
-    acknowledgedSequences.removeValue(
-      forKey: GatewayRunAcknowledgementKey(
-        runID: runID,
-        invocationID: invocationID
-      )
+    removeAcknowledgement(
+      for: GatewayRunAcknowledgementKey(runID: runID, invocationID: invocationID)
     )
   }
 
@@ -105,9 +120,36 @@ public actor HexGatewayClient {
     for runID: AgentRunID,
     except retainedInvocationID: GatewayRunInvocationID? = nil
   ) {
-    acknowledgedSequences = acknowledgedSequences.filter { entry in
-      entry.key.runID != runID || entry.key.invocationID == retainedInvocationID
+    let removedKeys = acknowledgedSequences.keys.filter { key in
+      key.runID == runID && key.invocationID != retainedInvocationID
     }
+    for key in removedKeys {
+      removeAcknowledgement(for: key)
+    }
+  }
+
+  func storeAcknowledgement(
+    _ sequence: UInt64,
+    for key: GatewayRunAcknowledgementKey
+  ) {
+    acknowledgedSequences[key] = sequence
+    acknowledgementOrder.removeAll { $0 == key }
+    acknowledgementOrder.append(key)
+
+    while acknowledgementOrder.count > configuration.maximumRememberedRuns {
+      let evictedKey = acknowledgementOrder.removeFirst()
+      acknowledgedSequences.removeValue(forKey: evictedKey)
+    }
+  }
+
+  func removeAcknowledgement(for key: GatewayRunAcknowledgementKey) {
+    acknowledgedSequences.removeValue(forKey: key)
+    acknowledgementOrder.removeAll { $0 == key }
+  }
+
+  func removeAllAcknowledgements() {
+    acknowledgedSequences.removeAll(keepingCapacity: true)
+    acknowledgementOrder.removeAll(keepingCapacity: true)
   }
 
   func supersededOperationFailure() -> GatewayFailure {

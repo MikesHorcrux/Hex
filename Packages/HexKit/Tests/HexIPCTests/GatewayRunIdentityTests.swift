@@ -1,5 +1,6 @@
 import HexCore
 import Testing
+
 @testable import HexIPC
 
 @Suite("Gateway run identity")
@@ -25,6 +26,7 @@ struct GatewayRunIdentityTests {
       clientID: GatewayClientID(rawValue: GatewayTestValues.uuid(80))
     )
     _ = try await client.connect()
+    let connectedLease = try #require(await client.connectedLease)
     let reusedRunID = GatewayTestValues.runID(80)
     let evictionRunID = GatewayTestValues.runID(81)
 
@@ -113,7 +115,8 @@ struct GatewayRunIdentityTests {
           runID: reusedRunID,
           invocationID: firstInvocationID,
           sequence: 2
-        )
+        ),
+        lease: connectedLease
       )
       Issue.record("Expected the old invocation cursor to be rejected.")
     } catch let failure as GatewayFailure {
@@ -125,7 +128,8 @@ struct GatewayRunIdentityTests {
         GatewayCancelRunRequest(
           runID: reusedRunID,
           invocationID: firstInvocationID
-        )
+        ),
+        lease: connectedLease
       )
       Issue.record("Expected stale cancellation to be rejected.")
     } catch let failure as GatewayFailure {

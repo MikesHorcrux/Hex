@@ -4,7 +4,8 @@ extension HexGatewayClient {
   public func connect() async throws -> GatewayConnectionResult {
     try Task.checkCancellation()
     let attemptID = GatewayClientConnectionAttemptID()
-    let generationID = advanceConnection(attemptID: attemptID)
+    let lease = GatewayTransportConnectionLease()
+    let generationID = advanceConnection(attemptID: attemptID, lease: lease)
     do {
       try validateHandshakeRequest()
     } catch {
@@ -15,7 +16,7 @@ extension HexGatewayClient {
     let response: GatewayHandshakeResponse
     do {
       response = try await withTaskCancellationHandler {
-        try await transport.handshake(handshakeRequest)
+        try await transport.handshake(handshakeRequest, lease: lease)
       } onCancel: {
         Task {
           await self.invalidateConnectionAttempt(
@@ -53,10 +54,11 @@ extension HexGatewayClient {
     if let previousGatewayInstanceID,
       previousGatewayInstanceID != response.gatewayInstanceID
     {
-      acknowledgedSequences.removeAll()
+      removeAllAcknowledgements()
     }
     gatewayInstanceID = response.gatewayInstanceID
     connectedGenerationID = generationID
+    connectedLease = lease
     connectionAttemptID = nil
     return GatewayConnectionResult(
       response: response,
@@ -68,10 +70,16 @@ extension HexGatewayClient {
   /// Work from the invalidated generation cannot commit even if the transport ignores cancellation.
   public func disconnect() async throws {
     try Task.checkCancellation()
+    let disconnectedLease = connectionLease
     let attemptID = GatewayClientConnectionAttemptID()
-    let generationID = advanceConnection(attemptID: attemptID)
+    let generationID = advanceConnection(
+      attemptID: attemptID,
+      lease: GatewayTransportConnectionLease()
+    )
     await withTaskCancellationHandler {
-      await transport.disconnect()
+      if let disconnectedLease {
+        await transport.disconnect(lease: disconnectedLease)
+      }
     } onCancel: {
       Task {
         await self.invalidateConnectionAttempt(
@@ -87,11 +95,14 @@ extension HexGatewayClient {
   }
 
   func advanceConnection(
-    attemptID: GatewayClientConnectionAttemptID
+    attemptID: GatewayClientConnectionAttemptID,
+    lease: GatewayTransportConnectionLease
   ) -> GatewayClientConnectionGenerationID {
     let generationID = GatewayClientConnectionGenerationID()
     connectionGenerationID = generationID
     connectedGenerationID = nil
+    connectedLease = nil
+    connectionLease = lease
     connectionAttemptID = attemptID
     startAttemptIDs.removeAll()
     terminateEventStreamsForConnectionChange()
@@ -107,6 +118,7 @@ extension HexGatewayClient {
     }
     connectionAttemptID = nil
     connectedGenerationID = nil
+    connectedLease = nil
   }
 
   func requireCurrentConnectionAttempt(
@@ -118,14 +130,22 @@ extension HexGatewayClient {
     }
   }
 
-  func requireConnectedGeneration() throws -> GatewayClientConnectionGenerationID {
-    guard let connectedGenerationID, connectedGenerationID == connectionGenerationID else {
+  func requireConnectedGeneration() throws -> (
+    generationID: GatewayClientConnectionGenerationID,
+    lease: GatewayTransportConnectionLease
+  ) {
+    guard
+      let connectedGenerationID,
+      connectedGenerationID == connectionGenerationID,
+      let connectedLease,
+      connectedLease == connectionLease
+    else {
       throw GatewayFailure(
         code: .notConnected,
         message: "The gateway client is not connected."
       )
     }
-    return connectedGenerationID
+    return (connectedGenerationID, connectedLease)
   }
 
   func requireCurrentConnectedGeneration(
@@ -137,17 +157,25 @@ extension HexGatewayClient {
   }
 
   func validateHandshakeRequest() throws {
-    guard handshakeRequest.minimumVersion <= handshakeRequest.maximumVersion else {
+    guard configuredMinimumVersion <= configuredMaximumVersion else {
       throw GatewayFailure(
         code: .malformedVersionRange,
         message: "The gateway client protocol version range is malformed."
+      )
+    }
+    guard handshakeRequest.minimumVersion <= handshakeRequest.maximumVersion else {
+      throw GatewayFailure(
+        code: .incompatibleProtocolVersion,
+        message: "The gateway client does not implement a configured protocol version."
       )
     }
   }
 
   func validateHandshake(_ response: GatewayHandshakeResponse) throws {
     guard response.selectedVersion >= handshakeRequest.minimumVersion,
-      response.selectedVersion <= handshakeRequest.maximumVersion
+      response.selectedVersion <= handshakeRequest.maximumVersion,
+      response.selectedVersion >= GatewayProtocolVersion.minimumSupported,
+      response.selectedVersion <= GatewayProtocolVersion.current
     else {
       throw GatewayFailure(
         code: .incompatibleProtocolVersion,
@@ -169,6 +197,20 @@ extension HexGatewayClient {
       activeRun.latestSequence != UInt64.max
     else {
       throw invalidHandshakeFailure()
+    }
+    if gatewayInstanceID == response.gatewayInstanceID {
+      let key = GatewayRunAcknowledgementKey(
+        runID: activeRun.runID,
+        invocationID: activeRun.invocationID
+      )
+      if let acknowledgedSequence = acknowledgedSequences[key],
+        activeRun.latestSequence < acknowledgedSequence
+      {
+        throw GatewayFailure(
+          code: .invalidCursor,
+          message: "The gateway active-run snapshot regressed below the acknowledged cursor."
+        )
+      }
     }
     switch activeRun.phase {
     case .starting:
