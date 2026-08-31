@@ -2,6 +2,9 @@ import Darwin
 import Foundation
 
 enum ProcessExecutionRequestValidator {
+  // Hex is a full-Mac capability after external authorization. Do not impose workspace-root
+  // containment here; absolute and canonical paths plus the authorization snapshot are the
+  // boundary, including for system tools and user-selected directories.
   static func validate(
     _ request: ProcessExecutionRequest,
     configuration: ProcessExecutionConfiguration
@@ -30,7 +33,10 @@ enum ProcessExecutionRequestValidator {
 
     var argumentBytes = 0
     for argument in request.arguments {
-      guard !argument.contains("\0") else {
+      guard
+        !argument.contains("\0"),
+        WorkspacePathScalarPolicy.isPromptSafe(argument)
+      else {
         throw ProcessExecutionError.invalidRequest
       }
       let (candidateBytes, overflowed) = argumentBytes.addingReportingOverflow(argument.utf8.count)
@@ -51,14 +57,24 @@ enum ProcessExecutionRequestValidator {
       throw ProcessExecutionError.invalidRequest
     }
     var executableStatus = stat()
-    var directoryStatus = stat()
     guard
       lstat(executable.path, &executableStatus) == 0,
       executableStatus.st_mode & S_IFMT == S_IFREG,
-      access(executable.path, X_OK) == 0,
-      lstat(workingDirectory.path, &directoryStatus) == 0,
-      directoryStatus.st_mode & S_IFMT == S_IFDIR
+      access(executable.path, X_OK) == 0
     else {
+      throw ProcessExecutionError.invalidRequest
+    }
+
+    let identity = try ProcessExecutionIdentity.capture(
+      for: ProcessExecutionRequest(
+        executable: executable,
+        arguments: request.arguments,
+        workingDirectory: workingDirectory,
+        environment: request.environment,
+        timeoutSeconds: request.timeoutSeconds
+      )
+    )
+    if let expectedIdentity = request.expectedIdentity, expectedIdentity != identity {
       throw ProcessExecutionError.invalidRequest
     }
 
@@ -67,7 +83,8 @@ enum ProcessExecutionRequestValidator {
       arguments: request.arguments,
       workingDirectory: workingDirectory,
       environment: request.environment,
-      timeoutSeconds: request.timeoutSeconds
+      timeoutSeconds: request.timeoutSeconds,
+      expectedIdentity: request.expectedIdentity
     )
   }
 

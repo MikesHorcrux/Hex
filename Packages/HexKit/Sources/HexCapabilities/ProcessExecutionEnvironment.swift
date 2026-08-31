@@ -24,6 +24,7 @@ enum ProcessExecutionEnvironment {
       guard
         let value = source[name],
         !value.contains("\0"),
+        WorkspacePathScalarPolicy.isPromptSafe(value),
         value.utf8.count <= 64 * 1_024
       else {
         continue
@@ -65,6 +66,7 @@ enum ProcessExecutionEnvironment {
       guard
         isValidName(name),
         !value.contains("\0"),
+        WorkspacePathScalarPolicy.isPromptSafe(value),
         value.utf8.count <= configuration.maximumEnvironmentBytes
       else {
         throw ProcessExecutionError.invalidRequest
@@ -89,6 +91,30 @@ enum ProcessExecutionEnvironment {
       }
       totalBytes = candidateBytes
     }
+  }
+
+  static func byteCount(_ environment: [String: String]) -> Int? {
+    var totalBytes = 0
+    for (name, value) in environment {
+      let (nameWithSeparator, separatorOverflowed) = name.utf8.count.addingReportingOverflow(1)
+      let (entryBytes, valueOverflowed) = nameWithSeparator.addingReportingOverflow(
+        value.utf8.count
+      )
+      let (entryWithTerminator, terminatorOverflowed) = entryBytes.addingReportingOverflow(1)
+      let (candidateBytes, totalOverflowed) = totalBytes.addingReportingOverflow(
+        entryWithTerminator
+      )
+      guard
+        !separatorOverflowed,
+        !valueOverflowed,
+        !terminatorOverflowed,
+        !totalOverflowed
+      else {
+        return nil
+      }
+      totalBytes = candidateBytes
+    }
+    return totalBytes
   }
 
   private static func isValidName(_ name: String) -> Bool {

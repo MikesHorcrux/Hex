@@ -8,17 +8,21 @@ enum ProcessToolResult {
   ) -> ToolResult {
     let outputValue: JSONValue
     let encoding: String
-    if let text = String(data: result.output, encoding: .utf8), !text.contains("\0") {
-      outputValue = .string(text)
-      encoding = "utf8"
+    let sanitized: Bool
+    if let text = ProcessPromptText.sanitizedUTF8Output(result.output) {
+      outputValue = .string(text.text)
+      encoding = text.sanitized ? "utf8_sanitized" : "utf8"
+      sanitized = text.sanitized
     } else {
       outputValue = .string(result.output.base64EncodedString())
       encoding = "base64"
+      sanitized = false
     }
 
     var output: [String: JSONValue] = [
       "output": outputValue,
       "output_encoding": .string(encoding),
+      "output_sanitized": .boolean(sanitized),
       "output_bytes": .integer(Int64(result.output.count)),
       "duration_milliseconds": .integer(
         Int64(exactly: result.durationMilliseconds) ?? Int64.max
@@ -57,10 +61,18 @@ enum ProcessToolResult {
       code = "invalid_arguments"
     case ProcessExecutionError.invalidConfiguration:
       code = "invalid_configuration"
+    case ProcessExecutionError.authorizationRequired:
+      code = "authorization_required"
+    case ProcessExecutionError.authorizationStateUnavailable:
+      code = "authorization_state_unavailable"
     case ProcessExecutionError.spawnFailed:
       code = "spawn_failed"
     case ProcessExecutionError.ioFailure:
       code = "io_failure"
+    case ProcessExecutionError.cleanupFailed:
+      // A cleanup failure leaves the process outcome uncertain. Keep it on the infrastructure
+      // error path instead of returning a result that could claim the process was terminated.
+      throw error
     default:
       throw error
     }

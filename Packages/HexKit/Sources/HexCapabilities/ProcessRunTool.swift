@@ -8,15 +8,19 @@ public struct ProcessRunTool: HostTool, Sendable {
   private let executor: any ProcessExecuting
   private let configuration: ProcessExecutionConfiguration
   private let environment: [String: String]
+  private let authorizationLedger: ProcessAuthorizationLedger
   /// Keeps exact-invocation grants stable only for this tool lifetime without persisting a
   /// guessable digest of possibly sensitive arguments.
   private let authorizationKey: SymmetricKey
+
+  private static let maximumAuthorizationDisplayBytes = 16 * 1_024
 
   public init(
     executor: any ProcessExecuting,
     configuration: ProcessExecutionConfiguration = .standard,
     /// Host-selected environment; the model cannot supply arbitrary environment variables.
-    environment: [String: String]? = nil
+    environment: [String: String]? = nil,
+    authorizationLedger: ProcessAuthorizationLedger? = nil
   ) {
     definition = ToolDefinition(
       name: "process_run",
@@ -45,6 +49,7 @@ public struct ProcessRunTool: HostTool, Sendable {
     self.executor = executor
     self.configuration = configuration
     self.environment = environment ?? ProcessExecutionEnvironment.standard()
+    self.authorizationLedger = authorizationLedger ?? ProcessAuthorizationLedger()
     authorizationKey = SymmetricKey(size: .bits256)
   }
 
@@ -54,13 +59,26 @@ public struct ProcessRunTool: HostTool, Sendable {
   ) async throws -> AuthorizationRequest {
     try Task.checkCancellation()
     let request = try validatedRequest(for: call, in: context)
+    let identity = try ProcessExecutionIdentity.capture(for: request)
+    // Keep a bounded pending snapshot so the external authorization decision can be followed by
+    // an identity comparison; this is not itself an authorization grant.
+    try await authorizationLedger.record(
+      runID: context.runID,
+      toolCallID: call.id,
+      request: request,
+      identity: identity
+    )
     try Task.checkCancellation()
-    let argumentBytes = request.arguments.reduce(into: 0) { total, argument in
-      total += argument.utf8.count
+    let argumentBytes = request.arguments.reduce(0) { total, argument in
+      total + argument.utf8.count
     }
-    let environmentBytes = request.environment.reduce(into: 0) { total, entry in
-      total += entry.key.utf8.count + entry.value.utf8.count
+    guard let environmentBytes = ProcessExecutionEnvironment.byteCount(request.environment) else {
+      throw ProcessExecutionError.invalidRequest
     }
+    let renderedArguments = ProcessPromptText.renderArguments(
+      [request.executable.path] + request.arguments,
+      maximumBytes: Self.maximumAuthorizationDisplayBytes
+    )
     return AuthorizationRequest(
       runID: context.runID,
       toolCallID: call.id,
@@ -68,15 +86,24 @@ public struct ProcessRunTool: HostTool, Sendable {
       operation: "run",
       resource: ProcessAuthorizationResource.resource(
         for: request,
+        identity: identity,
         key: authorizationKey
       ),
       details: [
         "executable": .string(request.executable.path),
         "working_directory": .string(request.workingDirectory.path),
+        "argv": .array(renderedArguments.values.map { .string($0) }),
+        "argv_truncated": .boolean(renderedArguments.truncated),
+        "argv_count": .integer(Int64(request.arguments.count + 1)),
         "argument_count": .integer(Int64(request.arguments.count)),
         "argument_bytes": .integer(Int64(argumentBytes)),
+        "environment_names": .array(
+          request.environment.keys.sorted().map { .string($0) }
+        ),
         "environment_variable_count": .integer(Int64(request.environment.count)),
         "environment_bytes": .integer(Int64(environmentBytes)),
+        "executable_identity": identityValue(identity.executable),
+        "working_directory_identity": identityValue(identity.workingDirectory),
         "timeout_seconds": .integer(Int64(request.timeoutSeconds)),
       ],
       explanation: "Allow Hex to run this exact local process invocation."
@@ -90,7 +117,21 @@ public struct ProcessRunTool: HostTool, Sendable {
     try Task.checkCancellation()
     do {
       let request = try validatedRequest(for: call, in: context)
-      let result = try await executor.execute(request)
+      guard let snapshot = await authorizationLedger.take(
+        runID: context.runID,
+        toolCallID: call.id
+      ) else {
+        throw ProcessExecutionError.authorizationRequired
+      }
+      try Task.checkCancellation()
+      guard request == snapshot.request else {
+        throw ProcessExecutionError.invalidRequest
+      }
+      guard try ProcessExecutionIdentity.capture(for: request) == snapshot.identity else {
+        throw ProcessExecutionError.invalidRequest
+      }
+      let result = try await executor.execute(request.requiringIdentity(snapshot.identity))
+      try Task.checkCancellation()
       return ProcessToolResult.result(bounded(result), callID: call.id)
     } catch {
       return try ProcessToolResult.failure(error, callID: call.id)
@@ -144,5 +185,20 @@ public struct ProcessRunTool: HostTool, Sendable {
       output: Data(result.output.prefix(configuration.maximumOutputBytes)),
       durationMilliseconds: result.durationMilliseconds
     )
+  }
+
+  private func identityValue(
+    _ identity: ProcessExecutionIdentity.FileIdentity
+  ) -> JSONValue {
+    .object([
+      "device": .integer(Int64(exactly: identity.device) ?? Int64.max),
+      "inode": .integer(Int64(exactly: identity.inode) ?? Int64.max),
+      "mode": .integer(Int64(exactly: identity.mode) ?? Int64.max),
+      "size": .integer(identity.size),
+      "modified_seconds": .integer(identity.modifiedSeconds),
+      "modified_nanoseconds": .integer(identity.modifiedNanoseconds),
+      "changed_seconds": .integer(identity.changedSeconds),
+      "changed_nanoseconds": .integer(identity.changedNanoseconds),
+    ])
   }
 }

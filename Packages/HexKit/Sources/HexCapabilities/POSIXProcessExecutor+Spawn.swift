@@ -11,8 +11,8 @@ extension POSIXProcessExecutor {
     guard pipeResult == 0 else {
       throw ProcessExecutionError.ioFailure
     }
-    let readDescriptor = pipeDescriptors.0
-    let writeDescriptor = pipeDescriptors.1
+    var readDescriptor = pipeDescriptors.0
+    var writeDescriptor = pipeDescriptors.1
     var workingDirectoryDescriptor: Int32 = -1
     var fileActions: posix_spawn_file_actions_t?
     var attributes: posix_spawnattr_t?
@@ -35,15 +35,8 @@ extension POSIXProcessExecutor {
       }
     }
 
-    guard
-      setCloseOnExec(readDescriptor),
-      setCloseOnExec(writeDescriptor),
-      posix_spawn_file_actions_init(&fileActions) == 0,
-      posix_spawnattr_init(&attributes) == 0
-    else {
-      throw ProcessExecutionError.ioFailure
-    }
-
+    readDescriptor = try moveDescriptorAboveStdio(readDescriptor)
+    writeDescriptor = try moveDescriptorAboveStdio(writeDescriptor)
     workingDirectoryDescriptor = Darwin.open(
       request.workingDirectory.path,
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
@@ -51,9 +44,25 @@ extension POSIXProcessExecutor {
     guard workingDirectoryDescriptor >= 0 else {
       throw ProcessExecutionError.invalidRequest
     }
+    workingDirectoryDescriptor = try moveDescriptorAboveStdio(workingDirectoryDescriptor)
 
     guard
+      posix_spawn_file_actions_init(&fileActions) == 0,
+      posix_spawnattr_init(&attributes) == 0
+    else {
+      throw ProcessExecutionError.ioFailure
+    }
+
+    guard
+      posix_spawn_file_actions_addinherit_np(
+        &fileActions,
+        workingDirectoryDescriptor
+      ) == 0,
       posix_spawn_file_actions_addfchdir_np(
+        &fileActions,
+        workingDirectoryDescriptor
+      ) == 0,
+      posix_spawn_file_actions_addclose(
         &fileActions,
         workingDirectoryDescriptor
       ) == 0,
@@ -89,6 +98,15 @@ extension POSIXProcessExecutor {
     let environmentValues = request.environment
       .sorted { $0.key < $1.key }
       .map { "\($0.key)=\($0.value)" }
+    if let expectedIdentity = request.expectedIdentity {
+      let currentIdentity = try ProcessExecutionIdentity.capture(
+        executablePath: request.executable.path,
+        workingDirectoryDescriptor: workingDirectoryDescriptor
+      )
+      guard currentIdentity == expectedIdentity else {
+        throw ProcessExecutionError.invalidRequest
+      }
+    }
     let spawnResult = try withCStringVector(argumentValues) { arguments in
       try withCStringVector(environmentValues) { environment in
         posix_spawn(
@@ -105,7 +123,7 @@ extension POSIXProcessExecutor {
       throw ProcessExecutionError.spawnFailed
     }
     guard setNonblocking(readDescriptor) else {
-      terminateAndReap(processID)
+      try terminateAndReap(processID)
       throw ProcessExecutionError.ioFailure
     }
     didSpawn = true
@@ -153,5 +171,31 @@ extension POSIXProcessExecutor {
   private func setNonblocking(_ descriptor: Int32) -> Bool {
     let flags = fcntl(descriptor, F_GETFL)
     return flags >= 0 && fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0
+  }
+
+  private func moveDescriptorAboveStdio(_ descriptor: Int32) throws -> Int32 {
+    guard descriptor >= 0 else {
+      throw ProcessExecutionError.ioFailure
+    }
+    guard descriptor <= STDERR_FILENO else {
+      guard setCloseOnExec(descriptor) else {
+        throw ProcessExecutionError.ioFailure
+      }
+      return descriptor
+    }
+
+    let movedDescriptor = fcntl(
+      descriptor,
+      F_DUPFD_CLOEXEC,
+      STDERR_FILENO + 1
+    )
+    guard movedDescriptor >= 0 else {
+      throw ProcessExecutionError.ioFailure
+    }
+    guard Darwin.close(descriptor) == 0 else {
+      Darwin.close(movedDescriptor)
+      throw ProcessExecutionError.ioFailure
+    }
+    return movedDescriptor
   }
 }

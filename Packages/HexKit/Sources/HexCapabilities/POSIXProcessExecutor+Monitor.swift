@@ -8,17 +8,22 @@ extension POSIXProcessExecutor {
     startedAt: UInt64
   ) async throws -> ProcessExecutionResult {
     var output = Data()
-    var waitStatus: Int32?
-    var reachedEndOfFile = false
+    var leaderHasExited = false
+    var leaderMayHaveBeenReaped = false
+    var cleanupAttempted = false
     let timeoutNanoseconds = UInt64(timeoutSeconds) * 1_000_000_000
     let (deadline, deadlineOverflowed) = startedAt.addingReportingOverflow(timeoutNanoseconds)
+
+    defer { Darwin.close(process.outputDescriptor) }
     guard !deadlineOverflowed else {
-      terminateAndReap(process.processID)
-      Darwin.close(process.outputDescriptor)
+      cleanupAttempted = true
+      guard !leaderMayHaveBeenReaped else {
+        throw ProcessExecutionError.cleanupFailed
+      }
+      _ = try terminateAndReap(process.processID)
       throw ProcessExecutionError.invalidRequest
     }
 
-    defer { Darwin.close(process.outputDescriptor) }
     do {
       while true {
         try Task.checkCancellation()
@@ -27,9 +32,13 @@ extension POSIXProcessExecutor {
           into: &output,
           maximumBytes: configuration.maximumOutputBytes
         )
-        reachedEndOfFile = reachedEndOfFile || drainResult.reachedEndOfFile
+        let reachedEndOfFile = drainResult.reachedEndOfFile
         if drainResult.exceededLimit {
-          terminateAndReap(process.processID, unlessAlreadyReaped: waitStatus != nil)
+          cleanupAttempted = true
+          _ = try terminateAndReap(
+            process.processID,
+            leaderHasExited: leaderHasExited
+          )
           return ProcessExecutionResult(
             termination: .outputLimitExceeded,
             output: output,
@@ -37,26 +46,30 @@ extension POSIXProcessExecutor {
           )
         }
 
-        if waitStatus == nil {
-          var status = Int32(0)
-          let waitResult = waitpid(process.processID, &status, WNOHANG)
-          if waitResult == process.processID {
-            waitStatus = status
-          } else if waitResult < 0, errno != EINTR {
-            throw ProcessExecutionError.ioFailure
-          }
-        }
+        leaderHasExited = leaderHasExited || (try observeExit(
+          process.processID,
+          leaderMayHaveBeenReaped: &leaderMayHaveBeenReaped
+        ))
 
-        if let waitStatus, reachedEndOfFile {
+        if leaderHasExited && reachedEndOfFile {
+          cleanupAttempted = true
+          let status = try terminateAndReap(
+            process.processID,
+            leaderHasExited: true
+          )
           return ProcessExecutionResult(
-            termination: termination(from: waitStatus),
+            termination: termination(from: status),
             output: output,
             durationMilliseconds: elapsedMilliseconds(since: startedAt)
           )
         }
 
         if DispatchTime.now().uptimeNanoseconds >= deadline {
-          terminateAndReap(process.processID, unlessAlreadyReaped: waitStatus != nil)
+          cleanupAttempted = true
+          _ = try terminateAndReap(
+            process.processID,
+            leaderHasExited: leaderHasExited
+          )
           return ProcessExecutionResult(
             termination: .timedOut,
             output: output,
@@ -68,41 +81,108 @@ extension POSIXProcessExecutor {
         )
       }
     } catch is CancellationError {
-      terminateAndReap(process.processID, unlessAlreadyReaped: waitStatus != nil)
+      if !cleanupAttempted {
+        cleanupAttempted = true
+        guard !leaderMayHaveBeenReaped else {
+          throw ProcessExecutionError.cleanupFailed
+        }
+        _ = try terminateAndReap(
+          process.processID,
+          leaderHasExited: leaderHasExited
+        )
+      }
       throw CancellationError()
     } catch {
-      terminateAndReap(process.processID, unlessAlreadyReaped: waitStatus != nil)
+      if !cleanupAttempted {
+        cleanupAttempted = true
+        guard !leaderMayHaveBeenReaped else {
+          throw ProcessExecutionError.cleanupFailed
+        }
+        do {
+          _ = try terminateAndReap(
+            process.processID,
+            leaderHasExited: leaderHasExited
+          )
+        } catch let cleanupError {
+          throw cleanupError
+        }
+      }
       throw error
     }
   }
 
+  /// Observes an exited leader without reaping it. Keeping the waitable child alive until the
+  /// process group has been signaled prevents a later negative `kill` from targeting a recycled
+  /// process-group identifier.
+  private func observeExit(
+    _ processID: pid_t,
+    leaderMayHaveBeenReaped: inout Bool
+  ) throws -> Bool {
+    var information = siginfo_t()
+    let waitResult = waitid(
+      P_PID,
+      id_t(processID),
+      &information,
+      WEXITED | WNOHANG | WNOWAIT
+    )
+    guard waitResult == 0 else {
+      if errno == EINTR {
+        return false
+      }
+      if errno == ECHILD {
+        leaderMayHaveBeenReaped = true
+      }
+      throw ProcessExecutionError.ioFailure
+    }
+    return information.si_pid == processID
+  }
+
+  /// Signals the owned group before reaping the leader, then waits for that leader. The group
+  /// signal is also performed for ordinary completion so descendants that detached their output
+  /// cannot outlive a successful result. `setsid`/`setpgid` called by the child can escape this
+  /// group; containing that deliberate escape requires a Darwin primitive beyond posix_spawn.
   func terminateAndReap(
     _ processID: pid_t,
-    unlessAlreadyReaped alreadyReaped: Bool = false
-  ) {
+    leaderHasExited: Bool = false
+  ) throws -> Int32 {
     guard processID > 0 else {
-      return
+      throw ProcessExecutionError.cleanupFailed
     }
-    // The process group covers ordinary descendants; the direct signal also covers a leader that
-    // changed groups before teardown. A reaped PID is never signaled because it may be reused.
-    _ = Darwin.kill(-processID, SIGKILL)
-    if !alreadyReaped {
-      _ = Darwin.kill(processID, SIGKILL)
+
+    var cleanupFailed = false
+    let groupSignalResult = Darwin.kill(-processID, SIGKILL)
+    let groupSignalError = groupSignalResult == 0 ? 0 : errno
+    if groupSignalResult < 0, groupSignalError != ESRCH {
+      cleanupFailed = true
     }
-    guard !alreadyReaped else {
-      return
+
+    if !leaderHasExited {
+      let leaderSignalResult = Darwin.kill(processID, SIGKILL)
+      let leaderSignalError = leaderSignalResult == 0 ? 0 : errno
+      if leaderSignalResult < 0, leaderSignalError != ESRCH {
+        cleanupFailed = true
+      }
     }
+
     var status = Int32(0)
+    var didReap = false
     while true {
       let waitResult = waitpid(processID, &status, 0)
       if waitResult == processID {
-        return
+        didReap = true
+        break
       }
       if waitResult < 0, errno == EINTR {
         continue
       }
-      return
+      cleanupFailed = true
+      break
     }
+
+    guard didReap, !cleanupFailed else {
+      throw ProcessExecutionError.cleanupFailed
+    }
+    return status
   }
 
   private func drain(

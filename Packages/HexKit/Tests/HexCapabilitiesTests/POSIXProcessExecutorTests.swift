@@ -209,4 +209,34 @@ struct POSIXProcessExecutorTests {
     #expect(probe < 0)
     #expect(errno == ESRCH)
   }
+
+  @Test
+  func normalCompletionCleansDetachedOutputDescendantsBeforeReturning() async throws {
+    let executor = POSIXProcessExecutor()
+
+    let result = try await executor.execute(
+      ProcessExecutionRequest(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", "sleep 10 >/dev/null 2>&1 & echo $!; exit 0"],
+        workingDirectory: URL(fileURLWithPath: "/private/tmp"),
+        timeoutSeconds: 5
+      )
+    )
+    let output = String(decoding: result.output, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let childProcessID = pid_t(output) else {
+      Issue.record("Expected the detached child process identifier.")
+      return
+    }
+    defer { _ = Darwin.kill(childProcessID, SIGKILL) }
+
+    #expect(result.termination == .exited(code: 0))
+    for _ in 0..<100 where Darwin.kill(childProcessID, 0) == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    errno = 0
+    let probe = Darwin.kill(childProcessID, 0)
+    #expect(probe < 0)
+    #expect(errno == ESRCH)
+  }
 }

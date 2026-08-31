@@ -4,6 +4,7 @@ import Foundation
 enum ProcessAuthorizationResource {
   static func resource(
     for request: ProcessExecutionRequest,
+    identity: ProcessExecutionIdentity,
     key: SymmetricKey
   ) -> String {
     var values = [
@@ -18,6 +19,7 @@ enum ProcessAuthorizationResource {
       values.append(name)
       values.append(value)
     }
+    values.append(contentsOf: identity.canonicalValues)
     var canonical = ""
     for value in values {
       canonical += "\(value.utf8.count):\(value)"
