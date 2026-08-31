@@ -7,7 +7,9 @@ struct PersonalMemoryRecordTests {
   @Test
   func recordsOnlyExplicitUserApprovedSources() throws {
     let timestamp = Date(timeIntervalSince1970: 42)
+    let scope = try PersonalMemoryScope(rawValue: "mike.hex")
     let record = try PersonalMemoryRecord(
+      scope: scope,
       id: PersonalMemoryID(rawValue: "memory-1"),
       kind: .preference,
       text: "Mike prefers Swift examples.",
@@ -17,6 +19,7 @@ struct PersonalMemoryRecordTests {
       isPinned: true
     )
 
+    #expect(record.scope == scope)
     #expect(record.source == .explicitUserStatement)
     #expect(record.isPinned)
     #expect(
@@ -25,9 +28,11 @@ struct PersonalMemoryRecordTests {
   }
 
   @Test
-  func rejectsInvalidIdentityTextAndTimestamps() {
+  func rejectsInvalidIdentityTextAndTimestamps() throws {
+    let scope = try PersonalMemoryScope(rawValue: "mike.hex")
     #expect(throws: PersonalMemoryError.self) {
       _ = try PersonalMemoryRecord(
+        scope: scope,
         id: PersonalMemoryID(rawValue: ""),
         kind: .fact,
         text: "valid",
@@ -36,6 +41,7 @@ struct PersonalMemoryRecordTests {
     }
     #expect(throws: PersonalMemoryError.self) {
       _ = try PersonalMemoryRecord(
+        scope: scope,
         kind: .fact,
         text: "\n",
         source: .explicitUserStatement
@@ -43,6 +49,7 @@ struct PersonalMemoryRecordTests {
     }
     #expect(throws: PersonalMemoryError.self) {
       _ = try PersonalMemoryRecord(
+        scope: scope,
         kind: .fact,
         text: "valid",
         source: .explicitUserStatement,
@@ -56,6 +63,7 @@ struct PersonalMemoryRecordTests {
   func decodingCannotBypassValidation() throws {
     let invalidRecord = """
       {
+        "scope": "mike.hex",
         "id": "memory-1",
         "kind": "fact",
         "text": "\\u0000",

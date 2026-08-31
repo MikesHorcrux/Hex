@@ -3,8 +3,8 @@ import Foundation
 public actor VolatilePersonalMemoryStore: PersonalMemoryStore {
   private let maximumRecords: Int
   private let maximumEncodedBytes: Int
-  private var recordsByID: [PersonalMemoryID: PersonalMemoryRecord] = [:]
-  private var encodedBytesByID: [PersonalMemoryID: Int] = [:]
+  private var recordsByKey: [PersonalMemoryStorageKey: PersonalMemoryRecord] = [:]
+  private var encodedBytesByKey: [PersonalMemoryStorageKey: Int] = [:]
   private var totalEncodedBytes = 0
 
   public init(
@@ -23,7 +23,8 @@ public actor VolatilePersonalMemoryStore: PersonalMemoryStore {
 
   public func save(_ record: PersonalMemoryRecord) async throws {
     try Task.checkCancellation()
-    if let existing = recordsByID[record.id] {
+    let key = PersonalMemoryStorageKey(scope: record.scope, id: record.id)
+    if let existing = recordsByKey[key] {
       if record == existing {
         return
       }
@@ -43,10 +44,10 @@ public actor VolatilePersonalMemoryStore: PersonalMemoryStore {
     } catch {
       throw PersonalMemoryStoreError.serializationFailed
     }
-    let existingBytes = encodedBytesByID[record.id] ?? 0
+    let existingBytes = encodedBytesByKey[key] ?? 0
     let reducedTotal = totalEncodedBytes - existingBytes
     let (candidateTotal, overflowed) = reducedTotal.addingReportingOverflow(encodedBytes)
-    let candidateCount = recordsByID[record.id] == nil ? recordsByID.count + 1 : recordsByID.count
+    let candidateCount = recordsByKey[key] == nil ? recordsByKey.count + 1 : recordsByKey.count
     guard candidateCount <= maximumRecords else {
       throw PersonalMemoryStoreError.capacityExceeded
     }
@@ -55,18 +56,22 @@ public actor VolatilePersonalMemoryStore: PersonalMemoryStore {
     }
     try Task.checkCancellation()
 
-    recordsByID[record.id] = record
-    encodedBytesByID[record.id] = encodedBytes
+    recordsByKey[key] = record
+    encodedBytesByKey[key] = encodedBytes
     totalEncodedBytes = candidateTotal
   }
 
   @discardableResult
-  public func remove(id: PersonalMemoryID) async throws -> Bool {
+  public func remove(
+    id: PersonalMemoryID,
+    scope: PersonalMemoryScope
+  ) async throws -> Bool {
     try Task.checkCancellation()
-    guard recordsByID.removeValue(forKey: id) != nil else {
+    let key = PersonalMemoryStorageKey(scope: scope, id: id)
+    guard recordsByKey.removeValue(forKey: key) != nil else {
       return false
     }
-    totalEncodedBytes -= encodedBytesByID.removeValue(forKey: id) ?? 0
+    totalEncodedBytes -= encodedBytesByKey.removeValue(forKey: key) ?? 0
     return true
   }
 
@@ -76,9 +81,12 @@ public actor VolatilePersonalMemoryStore: PersonalMemoryStore {
     try Task.checkCancellation()
     let terms = query.text.map(Self.normalizedTerms) ?? []
     var matches: [PersonalMemoryRecord] = []
-    matches.reserveCapacity(min(query.limit, recordsByID.count))
-    for record in recordsByID.values {
+    matches.reserveCapacity(min(query.limit, recordsByKey.count))
+    for record in recordsByKey.values {
       try Task.checkCancellation()
+      guard record.scope == query.scope else {
+        continue
+      }
       guard query.kinds.isEmpty || query.kinds.contains(record.kind) else {
         continue
       }

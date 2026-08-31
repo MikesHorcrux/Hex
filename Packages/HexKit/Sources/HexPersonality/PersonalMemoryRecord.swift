@@ -1,6 +1,7 @@
 import Foundation
 
 public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
+  public let scope: PersonalMemoryScope
   public let id: PersonalMemoryID
   public let kind: PersonalMemoryKind
   public let text: String
@@ -10,6 +11,7 @@ public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
   public let isPinned: Bool
 
   public init(
+    scope: PersonalMemoryScope,
     id: PersonalMemoryID = PersonalMemoryID(),
     kind: PersonalMemoryKind,
     text: String,
@@ -41,6 +43,7 @@ public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
       throw PersonalMemoryError.invalidTimestamp
     }
 
+    self.scope = scope
     self.id = id
     self.kind = kind
     self.text = text
@@ -53,6 +56,7 @@ public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     try self.init(
+      scope: container.decode(PersonalMemoryScope.self, forKey: .scope),
       id: container.decode(PersonalMemoryID.self, forKey: .id),
       kind: container.decode(PersonalMemoryKind.self, forKey: .kind),
       text: container.decode(String.self, forKey: .text),

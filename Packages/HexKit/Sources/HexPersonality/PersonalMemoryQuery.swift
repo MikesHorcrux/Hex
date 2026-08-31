@@ -1,11 +1,13 @@
 import Foundation
 
 public struct PersonalMemoryQuery: Equatable, Sendable {
+  public let scope: PersonalMemoryScope
   public let text: String?
   public let kinds: Set<PersonalMemoryKind>
   public let limit: Int
 
   public init(
+    scope: PersonalMemoryScope,
     text: String? = nil,
     kinds: Set<PersonalMemoryKind> = [],
     limit: Int
@@ -23,6 +25,7 @@ public struct PersonalMemoryQuery: Equatable, Sendable {
         throw PersonalMemoryStoreError.invalidQuery
       }
     }
+    self.scope = scope
     self.text = text
     self.kinds = kinds
     self.limit = limit
