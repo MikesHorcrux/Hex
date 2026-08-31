@@ -60,6 +60,31 @@ struct CodexAppServerConnectionTests {
   }
 
   @Test
+  func accountGenerationRetirementAwaitsPhysicalClose() async throws {
+    let channel = TestCodexAppServerChannel()
+    let connection = CodexAppServerConnection(
+      configuration: try configuration(),
+      channel: channel
+    )
+    try await finishHandshake(connection: connection, channel: channel)
+    await channel.blockClose()
+    let completionProbe = TestTaskCompletionProbe()
+    let retirement = Task {
+      await connection.retireAccountLoginFlowGeneration()
+      await completionProbe.recordCompletion()
+    }
+
+    await channel.waitUntilCloseStarts()
+    #expect(!(await completionProbe.hasCompleted()))
+    await channel.releaseClose()
+    await retirement.value
+
+    #expect(await completionProbe.hasCompleted())
+    #expect(await channel.closeCount() == 1)
+    #expect(!(await channel.isOpen()))
+  }
+
+  @Test
   func cancellationDuringOpenStartsAndAwaitsPhysicalClose() async throws {
     let channel = TestCodexAppServerChannel()
     await channel.blockOpen()
@@ -915,6 +940,7 @@ struct CodexAppServerConnectionTests {
     )
     try await finishHandshake(connection: connection, channel: channel)
     await channel.yield(Data(repeating: 0x61, count: 1_025))
+    await channel.waitUntilCloseStarts()
 
     let request = Task {
       try await connection.send(

@@ -4,4 +4,6 @@ enum CodexAccountClientState: Equatable, Sendable {
   case awaiting(CodexLoginID)
   case cancelling(CodexLoginID, CodexLoginCompletion?)
   case loggingOut
+  case retiringGeneration
+  case retiredGeneration
 }

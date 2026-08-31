@@ -43,6 +43,10 @@ extension CodexAppServerConnection {
     await closeConnection(error: CodexAppServerConnectionError.connectionClosed)
   }
 
+  public func retireAccountLoginFlowGeneration() async {
+    await disconnect()
+  }
+
   private func establishConnection(generation openingGeneration: UInt64) async throws {
     let output = try await channel.open(
       maximumReadBytes: configuration.maximumReadBytes

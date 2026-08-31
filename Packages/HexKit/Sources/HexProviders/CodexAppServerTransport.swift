@@ -7,4 +7,11 @@ import HexCore
 /// requests and their decoded result values.
 public protocol CodexAppServerTransport: Sendable {
   func send(_ request: CodexAppServerRequest) async throws -> JSONValue
+
+  /// Permanently ends the account-login generation represented by this transport instance.
+  ///
+  /// Implementations must make this operation idempotent and return only after the physical
+  /// transport no longer accepts I/O. The instance must not then back a fresh account client;
+  /// callers regain bounded login capacity by constructing a new transport and account client.
+  func retireAccountLoginFlowGeneration() async
 }

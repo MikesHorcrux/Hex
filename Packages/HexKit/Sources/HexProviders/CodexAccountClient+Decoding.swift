@@ -46,22 +46,27 @@ extension CodexAccountClient {
       }
       return .chatGPT(email: email, plan: try CodexAccountPlan(rawValue: planValue))
     case "amazonBedrock":
-      guard
-        hasOnlyKeys(
-          object,
-          allowed: ["type", "usesCodexManagedCredentials"]
-        )
-      else {
-        throw CodexAccountClientError.malformedResponse
-      }
-      switch object["usesCodexManagedCredentials"] {
-      case .none:
+      if Set(object.keys) == Set(["type"]) {
         return .amazonBedrock(usesCodexManagedCredentials: false)
-      case .some(.boolean(let usesManagedCredentials)):
-        return .amazonBedrock(usesCodexManagedCredentials: usesManagedCredentials)
-      default:
-        throw CodexAccountClientError.malformedResponse
       }
+      if Set(object.keys) == Set(["type", "usesCodexManagedCredentials"]),
+        case .boolean(let usesManagedCredentials)? = object["usesCodexManagedCredentials"]
+      {
+        return .amazonBedrock(usesCodexManagedCredentials: usesManagedCredentials)
+      }
+      if Set(object.keys) == Set(["credentialSource", "type"]),
+        case .string(let credentialSource)? = object["credentialSource"]
+      {
+        switch credentialSource {
+        case "codexManaged":
+          return .amazonBedrock(usesCodexManagedCredentials: true)
+        case "awsManaged":
+          return .amazonBedrock(usesCodexManagedCredentials: false)
+        default:
+          break
+        }
+      }
+      throw CodexAccountClientError.malformedResponse
     default:
       throw CodexAccountClientError.malformedResponse
     }

@@ -5,6 +5,7 @@ import HexCore
 actor TestCodexAppServerTransport: CodexAppServerTransport {
   private var outcomes: [TestCodexAppServerTransportOutcome]
   private var recordedRequests: [CodexAppServerRequest] = []
+  private var generationRetirementCount = 0
 
   init(outcomes: [TestCodexAppServerTransportOutcome]) {
     self.outcomes = outcomes
@@ -28,5 +29,13 @@ actor TestCodexAppServerTransport: CodexAppServerTransport {
 
   func requests() -> [CodexAppServerRequest] {
     recordedRequests
+  }
+
+  func retireAccountLoginFlowGeneration() {
+    generationRetirementCount += 1
+  }
+
+  func retirementCount() -> Int {
+    generationRetirementCount
   }
 }

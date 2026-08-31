@@ -8,14 +8,28 @@ public actor CodexAccountClient {
   private let transport: any CodexAppServerTransport
   private var state = CodexAccountClientState.idle
   private var latestLoginCompletion: CodexLoginCompletion?
-  private var cancelledLoginCompletionID: CodexLoginID?
-  private var hasAcceptedCancelledLoginCompletion = false
+  private var loginFlowLedger: CodexAccountLoginFlowLedger
 
   public init(transport: any CodexAppServerTransport) {
     self.transport = transport
+    loginFlowLedger = CodexAccountLoginFlowLedger()
+  }
+
+  init?(
+    transport: any CodexAppServerTransport,
+    loginFlowHistoryCapacity: Int
+  ) {
+    guard (1...64).contains(loginFlowHistoryCapacity) else {
+      return nil
+    }
+    self.transport = transport
+    loginFlowLedger = CodexAccountLoginFlowLedger(
+      validatedCapacity: loginFlowHistoryCapacity
+    )
   }
 
   public func readAccount(refreshToken: Bool = false) async throws -> CodexAccountSnapshot {
+    try ensureGenerationIsUsable()
     let result = try await send(
       CodexAppServerRequest(
         method: "account/read",
@@ -28,12 +42,17 @@ public actor CodexAccountClient {
   public func startLogin(_ mode: CodexChatGPTLoginMode) async throws -> CodexLoginChallenge {
     switch state {
     case .idle:
+      guard loginFlowLedger.hasCapacity else {
+        throw CodexAccountClientError.loginFlowHistoryExhausted
+      }
       state = .starting(mode, nil)
       latestLoginCompletion = nil
     case .awaiting:
       throw CodexAccountClientError.loginAlreadyPending
-    case .starting, .cancelling, .loggingOut:
+    case .starting, .cancelling, .loggingOut, .retiringGeneration:
       throw CodexAccountClientError.transitionInProgress
+    case .retiredGeneration:
+      throw CodexAccountClientError.loginFlowGenerationRetired
     }
 
     do {
@@ -51,21 +70,28 @@ public actor CodexAccountClient {
       else {
         throw CodexAccountClientError.transitionInProgress
       }
+      try loginFlowLedger.issue(challenge.loginID)
 
       if let earlyCompletion {
         guard earlyCompletion.loginID == challenge.loginID else {
+          loginFlowLedger.retire(challenge.loginID)
           state = .idle
           latestLoginCompletion = nil
           throw CodexAccountClientError.loginIdentifierMismatch
         }
+        try loginFlowLedger.acceptCompletion(for: challenge.loginID)
+        latestLoginCompletion = earlyCompletion
         state = .idle
       } else {
         state = .awaiting(challenge.loginID)
       }
       return challenge
     } catch {
-      if case .starting(let activeMode, _) = state, activeMode == mode {
+      if case .starting(let activeMode, let earlyCompletion) = state, activeMode == mode {
         state = .idle
+        if earlyCompletion != nil {
+          latestLoginCompletion = nil
+        }
       }
       throw sanitized(error)
     }
@@ -81,8 +107,10 @@ public actor CodexAccountClient {
       throw CodexAccountClientError.loginIdentifierMismatch
     case .idle:
       throw CodexAccountClientError.noPendingLogin
-    case .starting, .cancelling, .loggingOut:
+    case .starting, .cancelling, .loggingOut, .retiringGeneration:
       throw CodexAccountClientError.transitionInProgress
+    case .retiredGeneration:
+      throw CodexAccountClientError.loginFlowGenerationRetired
     }
 
     do {
@@ -97,8 +125,13 @@ public actor CodexAccountClient {
       guard case .cancelling(let activeID, let completion) = state, activeID == loginID else {
         throw CodexAccountClientError.transitionInProgress
       }
-      cancelledLoginCompletionID = loginID
-      hasAcceptedCancelledLoginCompletion = completion != nil
+      if completion == nil {
+        loginFlowLedger.retire(loginID)
+      } else {
+        guard loginFlowLedger.entry(for: loginID) == .completionAccepted else {
+          throw CodexAccountClientError.transitionInProgress
+        }
+      }
       state = .idle
       return status
     } catch {
@@ -114,55 +147,21 @@ public actor CodexAccountClient {
       throw CodexAccountClientError.loginIdentifierMismatch
     }
 
-    switch state {
-    case .starting(let mode, let earlyCompletion):
-      if cancelledLoginCompletionID == loginID {
-        guard !hasAcceptedCancelledLoginCompletion else {
-          throw CodexAccountClientError.unexpectedLoginCompletion
-        }
-        hasAcceptedCancelledLoginCompletion = true
-      } else if earlyCompletion == nil {
-        state = .starting(mode, completion)
-      } else {
-        throw CodexAccountClientError.unexpectedLoginCompletion
-      }
-    case .awaiting(let pendingID):
-      if pendingID == loginID {
-        state = .idle
-      } else if cancelledLoginCompletionID == loginID {
-        guard !hasAcceptedCancelledLoginCompletion else {
-          throw CodexAccountClientError.unexpectedLoginCompletion
-        }
-        hasAcceptedCancelledLoginCompletion = true
-      } else {
-        throw CodexAccountClientError.loginIdentifierMismatch
-      }
-    case .cancelling(let pendingID, let cancellationCompletion):
-      if pendingID == loginID, cancellationCompletion == nil {
-        state = .cancelling(pendingID, completion)
-      } else if pendingID == loginID {
-        throw CodexAccountClientError.unexpectedLoginCompletion
-      } else if cancelledLoginCompletionID == loginID {
-        guard !hasAcceptedCancelledLoginCompletion else {
-          throw CodexAccountClientError.unexpectedLoginCompletion
-        }
-        hasAcceptedCancelledLoginCompletion = true
-      } else {
-        throw CodexAccountClientError.loginIdentifierMismatch
-      }
-    case .idle, .loggingOut:
-      if cancelledLoginCompletionID == loginID {
-        guard !hasAcceptedCancelledLoginCompletion else {
-          throw CodexAccountClientError.unexpectedLoginCompletion
-        }
-        hasAcceptedCancelledLoginCompletion = true
-      } else if cancelledLoginCompletionID == nil {
-        throw CodexAccountClientError.unexpectedLoginCompletion
-      } else {
-        throw CodexAccountClientError.loginIdentifierMismatch
-      }
+    if state == .retiredGeneration {
+      throw CodexAccountClientError.loginFlowGenerationRetired
     }
-    latestLoginCompletion = completion
+
+    switch loginFlowLedger.entry(for: loginID) {
+    case .retiredAwaitingCompletion:
+      try loginFlowLedger.acceptCompletion(for: loginID)
+      latestLoginCompletion = completion
+    case .completionAccepted:
+      throw CodexAccountClientError.unexpectedLoginCompletion
+    case .pending:
+      try acceptPendingCompletion(completion, loginID: loginID)
+    case .none:
+      try acceptUnboundCompletion(completion)
+    }
   }
 
   /// Returns the latest redacted completion only when it belongs to the requested login flow.
@@ -179,8 +178,10 @@ public actor CodexAccountClient {
       state = .loggingOut
     case .awaiting:
       throw CodexAccountClientError.loginAlreadyPending
-    case .starting, .cancelling, .loggingOut:
+    case .starting, .cancelling, .loggingOut, .retiringGeneration:
       throw CodexAccountClientError.transitionInProgress
+    case .retiredGeneration:
+      throw CodexAccountClientError.loginFlowGenerationRetired
     }
 
     do {
@@ -197,6 +198,70 @@ public actor CodexAccountClient {
         state = .idle
       }
       throw sanitized(error)
+    }
+  }
+
+  /// Ends this login-flow generation after the physical transport is closed.
+  ///
+  /// The client remains permanently retired and deliberately retains its bounded identifier
+  /// history. To continue after history exhaustion, construct a fresh transport and account client
+  /// only after this method returns.
+  public func retireLoginFlowGeneration() async {
+    guard state != .retiredGeneration else { return }
+    state = .retiringGeneration
+    await transport.retireAccountLoginFlowGeneration()
+    state = .retiredGeneration
+  }
+
+  private func acceptPendingCompletion(
+    _ completion: CodexLoginCompletion,
+    loginID: CodexLoginID
+  ) throws {
+    switch state {
+    case .awaiting(let pendingID) where pendingID == loginID:
+      try loginFlowLedger.acceptCompletion(for: loginID)
+      state = .idle
+      latestLoginCompletion = completion
+    case .cancelling(let pendingID, nil) where pendingID == loginID:
+      try loginFlowLedger.acceptCompletion(for: loginID)
+      state = .cancelling(pendingID, completion)
+      latestLoginCompletion = completion
+    case .retiringGeneration:
+      try loginFlowLedger.acceptCompletion(for: loginID)
+      latestLoginCompletion = completion
+    case .awaiting, .cancelling:
+      throw CodexAccountClientError.loginIdentifierMismatch
+    case .idle, .starting, .loggingOut:
+      throw CodexAccountClientError.unexpectedLoginCompletion
+    case .retiredGeneration:
+      throw CodexAccountClientError.loginFlowGenerationRetired
+    }
+  }
+
+  private func acceptUnboundCompletion(_ completion: CodexLoginCompletion) throws {
+    switch state {
+    case .starting(let mode, nil):
+      state = .starting(mode, completion)
+      latestLoginCompletion = completion
+    case .starting:
+      throw CodexAccountClientError.unexpectedLoginCompletion
+    case .idle where loginFlowLedger.isEmpty:
+      throw CodexAccountClientError.unexpectedLoginCompletion
+    case .retiredGeneration:
+      throw CodexAccountClientError.loginFlowGenerationRetired
+    case .idle, .awaiting, .cancelling, .loggingOut, .retiringGeneration:
+      throw CodexAccountClientError.loginIdentifierMismatch
+    }
+  }
+
+  private func ensureGenerationIsUsable() throws {
+    switch state {
+    case .retiringGeneration:
+      throw CodexAccountClientError.transitionInProgress
+    case .retiredGeneration:
+      throw CodexAccountClientError.loginFlowGenerationRetired
+    case .idle, .starting, .awaiting, .cancelling, .loggingOut:
+      return
     }
   }
 
