@@ -45,24 +45,34 @@ extension HexGatewayService {
     let response = try codec.roundTrip(
       GatewayStartRunResponse(runID: request.runID, disposition: .started)
     )
-    let state = GatewayRunState(request: request)
+    let invocationID = GatewayRunInvocationID()
+    let state = GatewayRunState(request: request, invocationID: invocationID)
     activeRunID = request.runID
     runs[request.runID] = state
 
     let driver = self.driver
-    let task = Task { [driver, request] in
+    let task = Task { [driver, invocationID, request] in
       do {
         try await driver.run(request) { record in
-          try await self.accept(record, for: request.runID)
+          try await self.accept(
+            record,
+            for: request.runID,
+            invocationID: invocationID
+          )
         }
-        self.driverFinished(runID: request.runID)
+        self.driverFinished(runID: request.runID, invocationID: invocationID)
       } catch is CancellationError {
-        self.driverCancelled(runID: request.runID)
+        self.driverCancelled(runID: request.runID, invocationID: invocationID)
       } catch let failure as GatewayFailure {
-        self.driverFailed(runID: request.runID, failure: failure)
+        self.driverFailed(
+          runID: request.runID,
+          invocationID: invocationID,
+          failure: failure
+        )
       } catch {
         self.driverFailed(
           runID: request.runID,
+          invocationID: invocationID,
           failure: GatewayFailure(
             code: .runDriverFailed,
             message: "The gateway run driver failed."
@@ -71,7 +81,9 @@ extension HexGatewayService {
       }
     }
 
-    if var installedState = runs[request.runID] {
+    if var installedState = runs[request.runID],
+      installedState.invocationID == invocationID
+    {
       installedState.task = task
       runs[request.runID] = installedState
     }
@@ -109,8 +121,8 @@ extension HexGatewayService {
     return response
   }
 
-  func driverFinished(runID: AgentRunID) {
-    guard var state = runs[runID] else {
+  func driverFinished(runID: AgentRunID, invocationID: GatewayRunInvocationID) {
+    guard var state = runs[runID], state.invocationID == invocationID else {
       return
     }
 
@@ -125,46 +137,57 @@ extension HexGatewayService {
     if state.terminalSequence == nil, state.completionFailure == nil {
       failRun(
         runID,
+        invocationID: invocationID,
         with: GatewayFailure(
           code: .producerEndedWithoutTerminalEvent,
           message: "The run driver ended without emitting a terminal event."
         )
       )
     }
-    finishRunOwnership(runID)
+    finishRunOwnership(runID, invocationID: invocationID)
   }
 
-  func driverCancelled(runID: AgentRunID) {
-    guard let state = runs[runID] else {
+  func driverCancelled(runID: AgentRunID, invocationID: GatewayRunInvocationID) {
+    guard let state = runs[runID], state.invocationID == invocationID else {
       return
     }
     if state.terminalSequence == nil, state.completionFailure == nil {
       failRun(
         runID,
+        invocationID: invocationID,
         with: GatewayFailure(
           code: .producerEndedWithoutTerminalEvent,
           message: "The cancelled run ended without a durable runCancelled event."
         )
       )
     }
-    driverFinished(runID: runID)
+    driverFinished(runID: runID, invocationID: invocationID)
   }
 
-  func driverFailed(runID: AgentRunID, failure: GatewayFailure) {
-    guard let state = runs[runID] else {
+  func driverFailed(
+    runID: AgentRunID,
+    invocationID: GatewayRunInvocationID,
+    failure: GatewayFailure
+  ) {
+    guard let state = runs[runID], state.invocationID == invocationID else {
       return
     }
     if state.terminalSequence == nil, state.completionFailure == nil {
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
     }
-    driverFinished(runID: runID)
+    driverFinished(runID: runID, invocationID: invocationID)
   }
 
-  func failRun(_ runID: AgentRunID, with failure: GatewayFailure) {
-    guard var state = runs[runID] else {
+  func failRun(
+    _ runID: AgentRunID,
+    invocationID: GatewayRunInvocationID,
+    with untrustedFailure: GatewayFailure
+  ) {
+    guard var state = runs[runID], state.invocationID == invocationID else {
       return
     }
 
+    let failure = codec.canonicalFailure(from: untrustedFailure)
     state.phase = .terminal
     state.completionFailure = failure
     let task = state.task
@@ -173,10 +196,14 @@ extension HexGatewayService {
     }
     state.subscribers.removeAll()
     runs[runID] = state
+    finishRunOwnership(runID, invocationID: invocationID)
     task?.cancel()
   }
 
-  func finishRunOwnership(_ runID: AgentRunID) {
+  func finishRunOwnership(_ runID: AgentRunID, invocationID: GatewayRunInvocationID) {
+    guard let state = runs[runID], state.invocationID == invocationID else {
+      return
+    }
     if activeRunID == runID {
       activeRunID = nil
     }

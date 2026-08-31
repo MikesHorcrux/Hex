@@ -91,11 +91,22 @@ extension HexGatewayService {
     return stream
   }
 
-  func accept(_ untrustedRecord: AgentEventRecord, for runID: AgentRunID) throws {
+  func accept(
+    _ untrustedRecord: AgentEventRecord,
+    for runID: AgentRunID,
+    invocationID: GatewayRunInvocationID
+  ) throws {
     guard var state = runs[runID] else {
       throw GatewayFailure(
         code: .runNotFound,
         message: "The run driver emitted an event for an unknown run."
+      )
+    }
+
+    guard state.invocationID == invocationID else {
+      throw GatewayFailure(
+        code: .runDriverFailed,
+        message: "The run driver callback belongs to a stale run invocation."
       )
     }
 
@@ -113,14 +124,14 @@ extension HexGatewayService {
       record = try codec.decode(AgentEventRecord.self, from: encodedRecord)
       wireByteCount = encodedRecord.count
     } catch let failure as GatewayFailure {
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     } catch {
       let failure = GatewayFailure(
         code: .malformedPayload,
         message: "The run driver emitted a record that could not cross the gateway boundary."
       )
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
 
@@ -129,7 +140,7 @@ extension HexGatewayService {
         code: .wrongRun,
         message: "The run driver emitted a record for the wrong run."
       )
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
 
@@ -138,7 +149,7 @@ extension HexGatewayService {
         code: .unsupportedEventSchema,
         message: "The event record schema version is unsupported."
       )
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
 
@@ -148,7 +159,7 @@ extension HexGatewayService {
         code: .invalidEventSequence,
         message: "The run driver emitted a duplicate, missing, or overflowing sequence."
       )
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
 
@@ -158,7 +169,7 @@ extension HexGatewayService {
           code: .invalidEventSequence,
           message: "The first run event must be runStarted."
         )
-        failRun(runID, with: failure)
+        failRun(runID, invocationID: invocationID, with: failure)
         throw failure
       }
     } else if case .runStarted = record.event {
@@ -166,7 +177,7 @@ extension HexGatewayService {
         code: .invalidEventSequence,
         message: "A run may emit runStarted only once."
       )
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
 
@@ -176,7 +187,7 @@ extension HexGatewayService {
         code: .capacityExceeded,
         message: "The retained replay byte accounting overflowed."
       )
-      failRun(runID, with: failure)
+      failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
 
@@ -202,7 +213,7 @@ extension HexGatewayService {
           code: .runDriverFailed,
           message: "The retained replay accounting became inconsistent."
         )
-        failRun(runID, with: failure)
+        failRun(runID, invocationID: invocationID, with: failure)
         throw failure
       }
       state.retainedRecords.removeFirst()
@@ -241,7 +252,7 @@ extension HexGatewayService {
 
     runs[runID] = state
     if state.terminalSequence != nil {
-      finishRunOwnership(runID)
+      finishRunOwnership(runID, invocationID: invocationID)
     }
   }
 
