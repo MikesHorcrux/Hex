@@ -14,15 +14,21 @@ of silently changing the local legacy handshake.
 
 ## Boundary rules
 
-- Launch the configured executable pathname with an exact argument vector and no shell. For mutable
-  executables, launch a private snapshot pathname rather than the configured source pathname.
+- Open the configured executable without following symbolic links and require its descriptor to
+  parse as a bounded thin or fat Mach-O before selecting a process path. Text scripts, including
+  absolute-interpreter and `/usr/bin/env` shebangs, fail closed rather than delegating executable
+  identity to an interpreter. Launch an accepted pathname with an exact argument vector and no
+  shell. For mutable executables, launch a private snapshot pathname rather than the configured
+  source pathname.
 - Snapshot an untrusted standalone executable into a descriptor-owned private directory. When that
   executable lives inside an app bundle, preserve its bundle-relative path and copy its descriptor-
   resolved Mach-O dependency closure instead. Each file has a 256 MiB hard ceiling, and an explicit
   policy may admit at most 768 MiB and 32,768 entries per complete closure; the materially smaller
-  standard policy is below. Every policy permits at most 512 linked images. A linked framework is
-  copied with its resources and relative symlinks so bundle lookups remain local to the snapshot.
-  Paths are limited to 4,096 bytes, 255-byte components, and 64 components.
+  standard policy is below. Independently of that aggregate custom limit, enumeration fails closed
+  if any single source directory contains more than 2,048 names. Every policy permits at most 512
+  linked images. A linked framework is copied with its resources and relative symlinks so bundle
+  lookups remain local to the snapshot. Paths are limited to 4,096 bytes, 255-byte components, and
+  64 components.
 - Admit snapshots through atomic claims in the fixed, owner-only
   `/private/tmp/.hex-mcp-snapshots.v1` namespace. The standard policy permits 32 retained slots;
   each slot admits at most 2,048 entries, 8 MiB of pathname and symbolic-link metadata, and
@@ -59,7 +65,7 @@ after `posix_spawn`. This detects configured-source changes during snapshot cons
 path changes outside the final kernel lookup. Supported macOS SDKs expose neither `fexecve` nor
 `execveat`, `posix_spawn` accepts a pathname rather than an executable descriptor, and executing an
 open executable through `/dev/fd` is denied. Consequently a deliberately racing same-UID process
-can still replace the final launch pathname between the last descriptor comparison and the
+can still replace the final Mach-O launch pathname between the last descriptor comparison and the
 kernel's lookup. Protection against accidental or configured-path mutation is in this milestone;
 eliminating that adversarial same-UID race is not.
 

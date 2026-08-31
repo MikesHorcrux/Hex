@@ -43,12 +43,10 @@ enum MCPStdioProcessSpawner {
       throw MCPClientSessionError.connectionClosed
     }
     var executableStatus = stat()
-    guard
-      fstat(executableDescriptor, &executableStatus) == 0,
-      MCPExecutableSnapshot.isAcceptableSource(executableStatus)
-    else {
+    guard fstat(executableDescriptor, &executableStatus) == 0 else {
       throw MCPClientSessionError.connectionClosed
     }
+    try validateExecutableImage(executableDescriptor, status: executableStatus)
 
     let launchPath: String
     if isTrustedRootOwnedExecutable(
@@ -183,6 +181,28 @@ enum MCPStdioProcessSpawner {
     }
     var status = Int32(0)
     while waitpid(processID, &status, 0) < 0, errno == EINTR {}
+  }
+
+  static func validateExecutableImage(
+    _ descriptor: Int32,
+    status: stat
+  ) throws {
+    guard MCPExecutableSnapshot.isAcceptableSource(status) else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    let isMachOImage: Bool
+    do {
+      isMachOImage =
+        try MCPMachOImage.read(
+          from: descriptor,
+          fileSize: status.st_size
+        ) != nil
+    } catch {
+      throw MCPServerConfigurationError.invalidExecutable
+    }
+    guard isMachOImage else {
+      throw MCPServerConfigurationError.invalidExecutable
+    }
   }
 
   private static func makePipe() throws -> (read: Int32, write: Int32) {

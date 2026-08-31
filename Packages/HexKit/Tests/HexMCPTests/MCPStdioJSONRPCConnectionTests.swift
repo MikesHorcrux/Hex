@@ -232,11 +232,15 @@ struct MCPStdioJSONRPCConnectionTests {
   func repeatedRejectedSnapshotsReleaseDescriptors() throws {
     let fixtureDirectory = try makeFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let fixtureExecutable = fixtureDirectory.appendingPathComponent("fixture-server")
+    try writeLegitimateExecutable(to: fixtureExecutable)
+    let fixtureBytes = try Data(contentsOf: fixtureExecutable)
     let descriptorCountBefore = try openDescriptorCount()
 
     for index in 0..<32 {
       let executable = fixtureDirectory.appendingPathComponent("server-\(index)")
-      try writeLegitimateExecutable(to: executable)
+      try fixtureBytes.write(to: executable, options: .withoutOverwriting)
+      try makeExecutable(executable)
       let configuration = try mutableExecutableConfiguration(executableURL: executable)
       let observedSnapshotPath = Mutex<String?>(nil)
 
@@ -957,12 +961,10 @@ struct MCPStdioJSONRPCConnectionTests {
   private func mutableExecutableConfiguration(
     executableURL: URL
   ) throws -> MCPServerConfiguration {
-    let program =
-      #"index($0, "\"method\":\"initialize\"") { print "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"Fixture\",\"version\":\"1\"}}}"; fflush(); next }"#
     return try MCPServerConfiguration(
       serverID: "fixture",
       executableURL: executableURL,
-      arguments: [program],
+      arguments: [],
       workingDirectory: URL(fileURLWithPath: "/"),
       environment: ["PATH": "/usr/bin:/bin"],
       requestTimeoutMilliseconds: 2_000,
@@ -997,28 +999,44 @@ struct MCPStdioJSONRPCConnectionTests {
   }
 
   private func writeLegitimateExecutable(to url: URL) throws {
-    let script = """
-      #!/bin/sh
-      while IFS= read -r request; do
-        case "$request" in
-          *'"method":"initialize"'*)
-            printf '%s\\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"Fixture","version":"1"}}}'
-            ;;
-        esac
-      done
+    let response =
+      #"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"Fixture\",\"version\":\"1\"}}}"#
+    let program = """
+      #include <stdio.h>
+      #include <string.h>
+      int main(void) {
+        char line[8192];
+        while (fgets(line, sizeof(line), stdin) != NULL) {
+          if (strstr(line, "\\\"method\\\":\\\"initialize\\\"") != NULL) {
+            fputs("\(response)\\n", stdout);
+            fflush(stdout);
+          }
+        }
+        return 0;
+      }
       """
-    try Data(script.utf8).write(to: url, options: .withoutOverwriting)
-    try makeExecutable(url)
+    try writeCompiledExecutable(program, to: url)
   }
 
   private func writeSilentExecutable(to url: URL) throws {
-    let script = """
-      #!/bin/sh
-      while IFS= read -r request; do
-        :
-      done
+    let program = """
+      #include <stdio.h>
+      int main(void) {
+        char line[8192];
+        while (fgets(line, sizeof(line), stdin) != NULL) {}
+        return 0;
+      }
       """
-    try Data(script.utf8).write(to: url, options: .withoutOverwriting)
+    try writeCompiledExecutable(program, to: url)
+  }
+
+  private func writeCompiledExecutable(_ program: String, to url: URL) throws {
+    let source = url.appendingPathExtension("c")
+    try Data(program.utf8).write(to: source, options: .withoutOverwriting)
+    defer { try? FileManager.default.removeItem(at: source) }
+    try runFixtureCompiler(
+      arguments: ["--sdk", "macosx", "clang", source.path, "-o", url.path]
+    )
     try makeExecutable(url)
   }
 

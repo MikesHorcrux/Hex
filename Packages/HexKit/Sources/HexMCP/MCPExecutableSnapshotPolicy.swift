@@ -9,6 +9,8 @@ public struct MCPExecutableSnapshotPolicy: Equatable, Sendable {
   )
 
   public let maximumRetainedSlots: Int
+  /// Aggregate materialized entries admitted per slot. Source-directory enumeration separately
+  /// fails closed above 2,048 names in any one directory, including under a larger custom policy.
   public let maximumEntriesPerSlot: Int
   public let maximumPathMetadataBytesPerSlot: Int64
   public let maximumCopiedBytesPerSlot: Int64
