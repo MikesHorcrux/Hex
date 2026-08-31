@@ -319,14 +319,17 @@ struct WorkspaceFileSystemWriteTests {
 
     #expect(try String(contentsOf: destination, encoding: .utf8) == externalContent)
     let transactionURL = try #require(observedTransactionURL.withLock { $0 })
-    let retainedOriginal = transactionURL.appending(
-      path: WorkspaceWriteTransaction.candidateName
+    let retainedName = try #require(
+      FileManager.default
+        .contentsOfDirectory(atPath: transactionURL.path)
+        .first { $0.hasPrefix("candidate-") }
     )
+    let retainedOriginal = transactionURL.appending(path: retainedName)
     #expect(try String(contentsOf: retainedOriginal, encoding: .utf8) == "original")
   }
 
   @Test
-  func teardownPreservesMovedTransactionAndAnUnrelatedReplacementAtItsOriginalName() async throws {
+  func teardownPathMutationDoesNotChangeADurableWriteOutcome() async throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let destination = root.appending(path: "Sources/Teardown.swift")
@@ -354,14 +357,12 @@ struct WorkspaceFileSystemWriteTests {
       }
     )
 
-    await #expect(throws: WorkspaceFileSystemError.outcomeUncertain) {
-      _ = try await fileSystem.writeTextFile(
-        "published before teardown",
-        at: "Sources/Teardown.swift",
-        expectedRevision: nil,
-        relativeTo: nil
-      )
-    }
+    _ = try await fileSystem.writeTextFile(
+      "published before teardown",
+      at: "Sources/Teardown.swift",
+      expectedRevision: nil,
+      relativeTo: nil
+    )
 
     #expect(try String(contentsOf: destination, encoding: .utf8) == "published before teardown")
     let transactionURL = try #require(observedTransactionURL.withLock { $0 })

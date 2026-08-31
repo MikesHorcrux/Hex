@@ -7,6 +7,7 @@ public actor WorkspaceFileSystem {
   let rootDevice: UInt64
   let rootInode: UInt64
   let configuration: WorkspaceFileSystemConfiguration
+  let writeTransactionNamespace: WorkspaceWriteTransactionNamespace
   let replacementPublicationHook: (@Sendable () throws -> Void)?
   let replacementPostValidationHook: (@Sendable () throws -> Void)?
   let replacementPostSwapHook: (@Sendable () throws -> Void)?
@@ -18,7 +19,8 @@ public actor WorkspaceFileSystem {
 
   public init(
     root: URL,
-    configuration: WorkspaceFileSystemConfiguration = .standard
+    configuration: WorkspaceFileSystemConfiguration = .standard,
+    writeTransactionNamespace: WorkspaceWriteTransactionNamespace? = nil
   ) throws {
     try self.init(
       root: root,
@@ -30,7 +32,8 @@ public actor WorkspaceFileSystem {
       transactionPreTeardownHook: nil,
       creationPublicationHook: nil,
       creationPostLinkHook: nil,
-      readDataPreflightHook: nil
+      readDataPreflightHook: nil,
+      writeTransactionNamespace: writeTransactionNamespace
     )
   }
 
@@ -44,7 +47,8 @@ public actor WorkspaceFileSystem {
     transactionPreTeardownHook: (@Sendable (URL) throws -> Void)? = nil,
     creationPublicationHook: (@Sendable () throws -> Void)? = nil,
     creationPostLinkHook: (@Sendable () throws -> Void)? = nil,
-    readDataPreflightHook: (@Sendable (Int) -> Void)? = nil
+    readDataPreflightHook: (@Sendable (Int) -> Void)? = nil,
+    writeTransactionNamespace: WorkspaceWriteTransactionNamespace? = nil
   ) throws {
     guard root.isFileURL, root.path.hasPrefix("/"), !root.path.contains("\0") else {
       throw WorkspaceFileSystemError.invalidRoot
@@ -65,11 +69,27 @@ public actor WorkspaceFileSystem {
       Darwin.close(descriptor)
       throw WorkspaceFileSystemError.invalidRoot
     }
+    let namespace: WorkspaceWriteTransactionNamespace
+    do {
+      if let writeTransactionNamespace {
+        namespace = writeTransactionNamespace
+      } else {
+        namespace = try WorkspaceWriteTransactionNamespace(
+          appropriateFor: canonicalRoot,
+          targetDescriptor: descriptor
+        )
+      }
+      try namespace.withExclusiveWriteAccess(targetDescriptor: descriptor) {}
+    } catch {
+      Darwin.close(descriptor)
+      throw error
+    }
     rootURL = canonicalRoot
     rootDescriptor = descriptor
     rootDevice = UInt64(status.st_dev)
     rootInode = UInt64(status.st_ino)
     self.configuration = configuration
+    self.writeTransactionNamespace = namespace
     self.replacementPublicationHook = replacementPublicationHook
     self.replacementPostValidationHook = replacementPostValidationHook
     self.replacementPostSwapHook = replacementPostSwapHook

@@ -235,30 +235,38 @@ extension WorkspaceFileSystem {
     replacing replacedMetadata: WorkspaceFileMetadataSnapshot?,
     expectedRevision: String?
   ) throws {
-    let parentURL = parentComponents.reduce(rootURL) { partialURL, component in
-      partialURL.appending(path: component, directoryHint: .isDirectory)
-    }
-    let transaction = try WorkspaceWriteTransaction(
-      appropriateFor: parentURL,
+    try writeTransactionNamespace.withExclusiveWriteAccess(
       targetDescriptor: parentDescriptor
-    )
-    let temporaryName = WorkspaceWriteTransaction.candidateName
-    let descriptor = openat(
-      transaction.directoryDescriptor,
-      temporaryName,
-      O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-      mode_t(0o600)
-    )
-    guard descriptor >= 0 else {
-      transaction.close()
-      throw WorkspaceFileSystemError.outcomeUncertain
+    ) {
+      try commitWithExclusiveNamespace(
+        data,
+        named: name,
+        in: parentDescriptor,
+        parentComponents: parentComponents,
+        replacing: replacedMetadata,
+        expectedRevision: expectedRevision
+      )
     }
+  }
+
+  private func commitWithExclusiveNamespace(
+    _ data: Data,
+    named name: String,
+    in parentDescriptor: Int32,
+    parentComponents: [String],
+    replacing replacedMetadata: WorkspaceFileMetadataSnapshot?,
+    expectedRevision: String?
+  ) throws {
+    let transaction = try WorkspaceWriteTransaction(
+      namespace: writeTransactionNamespace
+    )
+    let temporaryName = transaction.candidateName
+    let descriptor = transaction.candidateDescriptor
     var shouldRemoveTemporary = true
     defer {
       if shouldRemoveTemporary {
         _ = unlinkat(transaction.directoryDescriptor, temporaryName, 0)
       }
-      Darwin.close(descriptor)
       transaction.close()
     }
 
@@ -478,21 +486,12 @@ extension WorkspaceFileSystem {
     _ transaction: WorkspaceWriteTransaction
   ) throws {
     try transactionPreTeardownHook?(transaction.directoryURL)
-    var descriptorStatus = stat()
-    var namedStatus = stat()
     guard
-      fsync(transaction.directoryDescriptor) == 0,
-      fstat(transaction.directoryDescriptor, &descriptorStatus) == 0,
-      lstat(transaction.directoryURL.path, &namedStatus) == 0,
-      descriptorStatus.st_mode & S_IFMT == S_IFDIR,
-      namedStatus.st_mode & S_IFMT == S_IFDIR,
-      descriptorStatus.st_dev == namedStatus.st_dev,
-      descriptorStatus.st_ino == namedStatus.st_ino
+      fsync(transaction.directoryDescriptor) == 0
     else {
       throw WorkspaceFileSystemError.outcomeUncertain
     }
-    // The system-temporary namespace is intentionally retained for OS reclamation. Removing its
-    // public name after this identity check would reintroduce a name-swap deletion race.
+    try writeTransactionNamespace.validateDescriptor()
   }
 
   private func validatePublishedReplacement(
@@ -573,18 +572,11 @@ extension WorkspaceFileSystem {
     publishedMetadata: WorkspaceFileMetadataSnapshot,
     publishedData: Data
   ) throws {
-    let rejectedName = WorkspaceWriteTransaction.rejectedPublicationName
-    guard
-      renameatx_np(
-        parentDescriptor,
-        name,
-        transactionDescriptor,
-        rejectedName,
-        UInt32(RENAME_EXCL)
-      ) == 0
-    else {
-      throw WorkspaceFileSystemError.outcomeUncertain
-    }
+    let rejectedName = try moveRejectedCreationToUniqueName(
+      named: name,
+      in: parentDescriptor,
+      transactionDescriptor: transactionDescriptor
+    )
 
     do {
       let rejected = try fileSnapshot(
@@ -646,6 +638,29 @@ extension WorkspaceFileSystem {
     else {
       throw WorkspaceFileSystemError.outcomeUncertain
     }
+  }
+
+  private func moveRejectedCreationToUniqueName(
+    named name: String,
+    in parentDescriptor: Int32,
+    transactionDescriptor: Int32
+  ) throws -> String {
+    for _ in 0..<16 {
+      let rejectedName = WorkspaceWriteTransaction.uniqueName(prefix: "rejected-publication")
+      if renameatx_np(
+        parentDescriptor,
+        name,
+        transactionDescriptor,
+        rejectedName,
+        UInt32(RENAME_EXCL)
+      ) == 0 {
+        return rejectedName
+      }
+      guard errno == EEXIST else {
+        throw WorkspaceFileSystemError.outcomeUncertain
+      }
+    }
+    throw WorkspaceFileSystemError.capacityExceeded
   }
 
   private func restoreRejectedReplacement(
