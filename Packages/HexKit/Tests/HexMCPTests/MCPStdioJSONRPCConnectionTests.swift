@@ -322,6 +322,60 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(Self.isRetainedHardenedRegularFile(atPath: launchPath))
   }
 
+  @Test("Rejects a hard-linked framework runtime dependency")
+  func rejectsHardLinkedFrameworkRuntimeDependency() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let bundle = try makeRuntimeDependencyBundle(in: fixtureDirectory)
+    let hardLink = bundle.dependency.deletingLastPathComponent()
+      .appendingPathComponent("MCPFixture-hard-link")
+    #expect(Darwin.link(bundle.dependency.path, hardLink.path) == 0)
+    let configuration = try MCPServerConfiguration(
+      serverID: "hard-linked-framework",
+      executableURL: bundle.executable,
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+    let session = LocalMCPClientSession(configuration: configuration)
+
+    await #expect(throws: MCPClientSessionError.connectionClosed) {
+      try await session.connect()
+    }
+    await session.disconnect()
+  }
+
+  @Test("Rejects an intermediate framework symlink escape before lexical normalization")
+  func rejectsIntermediateFrameworkSymlinkEscape() async throws {
+    let fixtureDirectory = try makeFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    let bundle = try makeRuntimeDependencyBundle(in: fixtureDirectory)
+    let currentAlias = bundle.dependency.deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .appendingPathComponent("Current")
+    #expect(Darwin.unlink(currentAlias.path) == 0)
+    #expect(Darwin.symlink("../../Outside", currentAlias.path) == 0)
+    let configuration = try MCPServerConfiguration(
+      serverID: "escaping-framework-link",
+      executableURL: bundle.executable,
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 2_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024
+    )
+    let session = LocalMCPClientSession(configuration: configuration)
+
+    await #expect(throws: MCPClientSessionError.connectionClosed) {
+      try await session.connect()
+    }
+    await session.disconnect()
+  }
+
   @Test("Rejects absolute and escaping framework binary symlink targets")
   func rejectsUnsafeFrameworkBinarySymlinkTargets() async throws {
     let fixtureDirectory = try makeFixtureDirectory()
@@ -1058,6 +1112,115 @@ struct MCPStdioJSONRPCConnectionTests {
     try await queuedReplacement.value
     drainTask.cancel()
     _ = await firstWrite.result
+
+    await connection.disconnect()
+    await terminator.releaseFirstTermination()
+    await firstShutdown.completion.value
+    await closer.close(firstFixture)
+    await closer.close(secondFixture)
+  }
+
+  @Test("A stale output reader cannot consume a replacement generation burst")
+  func staleOutputReaderCannotConsumeReplacementGenerationBurst() async throws {
+    let firstFixture = try PipeProcessFixture(processID: 10_006)
+    let secondFixture = try PipeProcessFixture(processID: 10_007)
+    let fixtures = [firstFixture, secondFixture]
+    let nextFixture = Mutex(0)
+    let closer = PipeDescriptorCloser()
+    let terminator = GatedPipeTerminator()
+    let configuration = try MCPServerConfiguration(
+      serverID: "reader-race",
+      executableURL: URL(fileURLWithPath: "/bin/cat"),
+      arguments: [],
+      workingDirectory: URL(fileURLWithPath: "/"),
+      environment: ["PATH": "/usr/bin:/bin"],
+      requestTimeoutMilliseconds: 30_000,
+      shutdownGraceMilliseconds: 50,
+      maximumMessageBytes: 4 * 1_024 * 1_024
+    )
+    try Self.fillPipe(firstFixture.inputWriteDescriptor)
+    let connection = MCPStdioJSONRPCConnection(
+      configuration: configuration,
+      spawnProcess: { _ in
+        let index = nextFixture.withLock { value in
+          let index = value
+          value += 1
+          return index
+        }
+        return fixtures[index].spawnedProcess
+      },
+      terminateProcess: { spawned in
+        guard let fixture = fixtures.first(where: { $0.processID == spawned.processID }) else {
+          return
+        }
+        await terminator.terminate(fixture: fixture, closer: closer)
+      }
+    )
+
+    try await connection.connect()
+    let firstGeneration = await connection.generation
+    var burst = Data()
+    burst.append(
+      contentsOf: "{\"jsonrpc\":\"2.0\",\"id\":\"stale-ping\",\"method\":\"ping\"}\n".utf8
+    )
+    burst.append(
+      contentsOf: "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"marker\":\"stale\"}}\n".utf8
+    )
+    let staleBurst = burst
+    let staleReader = Task {
+      await connection.received(staleBurst, from: .output, generation: firstGeneration)
+    }
+    var firstReplyBackpressured = false
+    for _ in 0..<500 {
+      if await connection.activeWriterGeneration == firstGeneration,
+        await connection.activeWriteOperations[firstGeneration] != nil,
+        await connection.writeQueue.isEmpty
+      {
+        firstReplyBackpressured = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(firstReplyBackpressured)
+
+    let firstShutdown = try #require(
+      await connection.beginShutdown(error: MCPClientSessionError.connectionClosed)
+    )
+    await terminator.waitUntilFirstTerminationStarts()
+    await connection.finishShutdown(
+      id: firstShutdown.id,
+      generation: firstShutdown.generation
+    )
+    try await connection.connect()
+    let replacementGeneration = await connection.generation
+    #expect(replacementGeneration == firstGeneration + 1)
+
+    let replacementRequest = Task {
+      try await connection.request(method: "replacement", params: .object([:]))
+    }
+    var replacementPending = false
+    for _ in 0..<500 {
+      if await connection.pendingRequests.count == 1 {
+        replacementPending = true
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(replacementPending)
+    await connection.received(
+      Data("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"marker\":\"fresh\"}}\n".utf8),
+      from: .output,
+      generation: replacementGeneration
+    )
+    let replacementResult = try await replacementRequest.value
+    #expect(replacementResult == .object(["marker": .string("fresh")]))
+    await staleReader.value
+    #expect(await connection.pendingRequests.isEmpty)
+    if case .connected = await connection.state {
+      // The stale reader must not close the replacement generation.
+    } else {
+      Issue.record("A stale output reader changed the replacement state")
+    }
 
     await connection.disconnect()
     await terminator.releaseFirstTermination()

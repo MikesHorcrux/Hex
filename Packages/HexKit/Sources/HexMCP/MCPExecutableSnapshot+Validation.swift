@@ -72,7 +72,7 @@ extension MCPExecutableSnapshot {
     let effectiveUserID = geteuid()
     return status.st_mode & S_IFMT == S_IFREG
       && (status.st_uid == 0 || status.st_uid == effectiveUserID)
-      && status.st_nlink > 0
+      && status.st_nlink == 1
       && status.st_size >= 0
       && status.st_size <= maximumExecutableBytes
       && (!requireExecutable

@@ -234,6 +234,76 @@ struct MCPExecutableSnapshotTests {
     )
   }
 
+  @Test("Keeps a framework target descriptor bound across a pathname swap")
+  func frameworkTargetDescriptorSurvivesPathSwap() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "hex-framework-resolution-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let framework = root.appendingPathComponent("MCPFixture.framework", isDirectory: true)
+    let versions = framework.appendingPathComponent("Versions", isDirectory: true)
+    let version = versions.appendingPathComponent("A", isDirectory: true)
+    let target = version.appendingPathComponent("MCPFixture")
+    let current = versions.appendingPathComponent("Current")
+    try FileManager.default.createDirectory(
+      at: version,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    try Data("old-target".utf8).write(to: target, options: .withoutOverwriting)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o500],
+      ofItemAtPath: target.path
+    )
+    #expect(Darwin.symlink("A", current.path) == 0)
+    let rootDescriptor = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    #expect(rootDescriptor >= 0)
+    guard rootDescriptor >= 0 else { return }
+    defer { Darwin.close(rootDescriptor) }
+
+    let resolved = try #require(
+      try MCPExecutableSnapshot.resolveFrameworkRelativePath(
+        parentPath: "MCPFixture.framework/Versions",
+        target: "Current/MCPFixture",
+        packageRoot: "MCPFixture.framework",
+        beneath: rootDescriptor,
+        expectedParentDescriptor: nil,
+        requireExecutable: false,
+        requireRegular: true,
+        missingIsAllowed: false
+      )
+    )
+    defer { Darwin.close(resolved.descriptor) }
+    var descriptorStatus = stat()
+    #expect(fstat(resolved.descriptor, &descriptorStatus) == 0)
+    var originalByte = UInt8(0)
+    #expect(pread(resolved.descriptor, &originalByte, 1, 0) == 1)
+
+    let replacement = root.appendingPathComponent("replacement")
+    try Data("new-target".utf8).write(to: replacement, options: .withoutOverwriting)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o500],
+      ofItemAtPath: replacement.path
+    )
+    #expect(Darwin.rename(replacement.path, target.path) == 0)
+
+    var boundByte = UInt8(0)
+    var boundStatus = stat()
+    #expect(pread(resolved.descriptor, &boundByte, 1, 0) == 1)
+    #expect(fstat(resolved.descriptor, &boundStatus) == 0)
+    #expect(boundByte == originalByte)
+    #expect(boundStatus.st_dev == descriptorStatus.st_dev)
+    #expect(boundStatus.st_ino == descriptorStatus.st_ino)
+    let reopened = Darwin.open(target.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    #expect(reopened >= 0)
+    guard reopened >= 0 else { return }
+    defer { Darwin.close(reopened) }
+    var reopenedStatus = stat()
+    #expect(fstat(reopened, &reopenedStatus) == 0)
+    #expect(reopenedStatus.st_ino != descriptorStatus.st_ino)
+  }
+
   private func parseImage(_ bytes: Data) throws -> MCPMachOImage? {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "hex-macho-tests-\(UUID().uuidString)",

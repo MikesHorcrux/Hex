@@ -373,23 +373,29 @@ extension MCPExecutableSnapshot {
       }
       return (relativePath: relativePath, file: file)
     }
-    guard let resolvedPath = try resolveFrameworkRelativePath(
-      relativePath,
+    guard let basename = normalized.split(separator: "/").last.map(String.init) else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    let parentPath = normalized.split(separator: "/").dropLast().joined(separator: "/")
+    guard parentPath == packageRoot || parentPath.hasPrefix(packageRoot + "/") else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    guard let resolved = try resolveFrameworkRelativePath(
+      parentPath: parentPath,
+      target: basename,
       packageRoot: packageRoot,
       beneath: rootDescriptor,
-      missingIsAllowed: missingIsAllowed
-    ) else {
-      return nil
-    }
-    guard let file = try openSourceRegularFile(
-      resolvedPath,
-      beneath: rootDescriptor,
+      expectedParentDescriptor: nil,
       requireExecutable: requireExecutable,
+      requireRegular: true,
       missingIsAllowed: missingIsAllowed
     ) else {
       return nil
     }
-    return (relativePath: resolvedPath, file: file)
+    return (
+      relativePath: resolved.relativePath,
+      file: (descriptor: resolved.descriptor, status: resolved.status)
+    )
   }
 
   private static func mappedSnapshotPath(
@@ -428,138 +434,370 @@ extension MCPExecutableSnapshot {
     return snapshotPackagePath + String(sourceSuffix)
   }
 
-  private static func resolveFrameworkRelativePath(
-    _ relativePath: String,
+  static func resolveFrameworkRelativePath(
+    parentPath: String,
+    target: String,
     packageRoot: String,
     beneath rootDescriptor: Int32,
+    expectedParentDescriptor: Int32?,
+    requireExecutable: Bool,
+    requireRegular: Bool,
     missingIsAllowed: Bool
-  ) throws -> String? {
-    var currentPath = relativePath
-    var visited = Set<String>()
-    for _ in 0..<maximumSnapshotPathDepth {
-      guard visited.insert(currentPath).inserted else {
-        throw MCPClientSessionError.connectionClosed
-      }
-      guard let normalized = normalizeRelativePath(currentPath, relativeTo: ""),
-        normalized == currentPath,
-        normalized == packageRoot || normalized.hasPrefix(packageRoot + "/")
+  ) throws -> (relativePath: String, descriptor: Int32, status: stat)? {
+    guard
+      let normalizedParent = normalizeRelativePath(parentPath, relativeTo: ""),
+      normalizedParent == parentPath,
+      normalizedParent == packageRoot || normalizedParent.hasPrefix(packageRoot + "/"),
+      !target.hasPrefix("/"),
+      !target.contains("\0"),
+      target.utf8.count <= maximumSymbolicLinkBytes
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    let packageComponents = packageRoot.split(separator: "/").map(String.init)
+    let parentComponents = normalizedParent.split(separator: "/").map(String.init)
+    guard parentComponents.starts(with: packageComponents) else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    let parentSuffix = Array(parentComponents.dropFirst(packageComponents.count))
+    var targetComponents = target.split(separator: "/", omittingEmptySubsequences: true)
+      .map(String.init)
+      .filter { $0 != "." }
+    guard !target.isEmpty else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    if targetComponents.isEmpty { targetComponents = ["."] }
+
+    guard
+      let packageDescriptor = try openSourceDirectory(
+        packageRoot,
+        beneath: rootDescriptor,
+        missingIsAllowed: missingIsAllowed
+      )
+    else {
+      return nil
+    }
+    var directoryDescriptors = [packageDescriptor]
+    var directoryPaths = [packageRoot]
+    var symlinkBindings: [FrameworkSymlinkBinding] = []
+    var visitedSymlinks = Set<String>()
+    var pendingComponents = parentSuffix + targetComponents
+    var componentIndex = 0
+    var processedParentComponents = 0
+    var atTargetBoundary = expectedParentDescriptor == nil
+    var followedSymlinkCount = 0
+    var expectedParentStatus: stat?
+    defer {
+      for descriptor in directoryDescriptors { Darwin.close(descriptor) }
+      for binding in symlinkBindings { Darwin.close(binding.parentDescriptor) }
+    }
+    if let expectedParentDescriptor {
+      var status = stat()
+      guard
+        fstat(expectedParentDescriptor, &status) == 0,
+        isAcceptableSourceDirectory(status)
       else {
         throw MCPClientSessionError.connectionClosed
       }
-      var descriptor = fcntl(rootDescriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
-      guard descriptor >= 0 else {
-        throw MCPClientSessionError.connectionClosed
-      }
-      var pathComponents = normalized.split(separator: "/").map(String.init)
-      guard !pathComponents.isEmpty else {
-        throw MCPClientSessionError.connectionClosed
-      }
-      var resolvedComponents: [String] = []
-      var followedSymlink = false
-      defer { Darwin.close(descriptor) }
-
-      pathTraversal: for index in pathComponents.indices {
-        let component = pathComponents[index]
-        var componentStatus = stat()
-        let statusResult = component.withCString { name in
-          fstatat(descriptor, name, &componentStatus, AT_SYMLINK_NOFOLLOW)
-        }
-        guard statusResult == 0 else {
-          let missing = errno == ENOENT || errno == ENOTDIR
-          if missingIsAllowed && missing { return nil }
+      expectedParentStatus = status
+      if parentSuffix.isEmpty {
+        var packageStatus = stat()
+        guard
+          fstat(packageDescriptor, &packageStatus) == 0,
+          sameSourceIdentityAndMetadata(status, packageStatus)
+        else {
           throw MCPClientSessionError.connectionClosed
         }
-        let componentPath = (resolvedComponents + [component]).joined(separator: "/")
-        switch componentStatus.st_mode & S_IFMT {
-        case S_IFLNK:
-          guard
-            componentStatus.st_uid == 0 || componentStatus.st_uid == geteuid(),
-            componentStatus.st_nlink == 1,
-            componentStatus.st_size > 0,
-            componentStatus.st_size <= off_t(maximumSymbolicLinkBytes)
-          else {
-            throw MCPClientSessionError.connectionClosed
-          }
-          var targetBytes = [CChar](repeating: 0, count: maximumSymbolicLinkBytes + 1)
-          let targetCount = component.withCString { name in
-            readlinkat(descriptor, name, &targetBytes, maximumSymbolicLinkBytes)
-          }
-          guard
-            targetCount > 0,
-            targetCount < maximumSymbolicLinkBytes,
-            off_t(targetCount) == componentStatus.st_size,
-            let target = String(
-              bytes: targetBytes.prefix(targetCount).map { UInt8(bitPattern: $0) },
-              encoding: .utf8
-            ),
-            !target.hasPrefix("/"),
-            let resolvedTarget = normalizeRelativePath(
-              target,
-              relativeTo: directoryPath(of: componentPath)
-            ),
-            resolvedTarget == packageRoot
-              || resolvedTarget.hasPrefix(packageRoot + "/")
-          else {
-            throw MCPClientSessionError.connectionClosed
-          }
-          var finalStatus = stat()
-          let finalStatusResult = component.withCString { name in
-            fstatat(descriptor, name, &finalStatus, AT_SYMLINK_NOFOLLOW)
-          }
-          guard
-            finalStatusResult == 0,
-            sameSourceIdentityAndMetadata(componentStatus, finalStatus)
-          else {
-            throw MCPClientSessionError.connectionClosed
-          }
-          let remaining = pathComponents.dropFirst(index + 1).joined(separator: "/")
-          currentPath = remaining.isEmpty
-            ? resolvedTarget
-            : resolvedTarget + "/" + remaining
-          followedSymlink = true
-          break pathTraversal
-        case S_IFDIR:
-          guard isAcceptableSourceDirectory(componentStatus) else {
-            throw MCPClientSessionError.connectionClosed
-          }
-          guard index < pathComponents.index(before: pathComponents.endIndex) else {
-            return currentPath
-          }
-          let nextDescriptor = component.withCString { name in
-            openat(
-              descriptor,
-              name,
-              O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-            )
-          }
-          guard nextDescriptor >= 0 else {
-            throw MCPClientSessionError.connectionClosed
-          }
-          var openedStatus = stat()
-          guard
-            fstat(nextDescriptor, &openedStatus) == 0,
-            sameSourceIdentityAndMetadata(componentStatus, openedStatus)
-          else {
-            Darwin.close(nextDescriptor)
-            throw MCPClientSessionError.connectionClosed
-          }
-          Darwin.close(descriptor)
-          descriptor = nextDescriptor
-          resolvedComponents.append(component)
-        case S_IFREG:
-          guard index == pathComponents.index(before: pathComponents.endIndex) else {
-            throw MCPClientSessionError.connectionClosed
-          }
-          return currentPath
-        default:
-          throw MCPClientSessionError.connectionClosed
-        }
-      }
-      if !followedSymlink {
-        return currentPath
+        atTargetBoundary = true
       }
     }
-    throw MCPClientSessionError.connectionClosed
+
+    while true {
+      if !atTargetBoundary && processedParentComponents == parentSuffix.count {
+        var currentStatus = stat()
+        guard
+          let expectedParentStatus,
+          let currentDescriptor = directoryDescriptors.last,
+          fstat(currentDescriptor, &currentStatus) == 0,
+          sameSourceIdentityAndMetadata(expectedParentStatus, currentStatus)
+        else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        atTargetBoundary = true
+      }
+      guard componentIndex < pendingComponents.count else {
+        guard atTargetBoundary, !requireRegular else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        guard let currentDescriptor = directoryDescriptors.last,
+          let currentPath = directoryPaths.last
+        else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        let descriptor = fcntl(
+          currentDescriptor,
+          F_DUPFD_CLOEXEC,
+          STDERR_FILENO + 1
+        )
+        guard descriptor >= 0 else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        var status = stat()
+        guard
+          fstat(descriptor, &status) == 0,
+          isAcceptableSourceDirectory(status)
+        else {
+          Darwin.close(descriptor)
+          throw MCPClientSessionError.connectionClosed
+        }
+        do {
+          try revalidateFrameworkSymlinkBindings(symlinkBindings)
+        } catch {
+          Darwin.close(descriptor)
+          throw error
+        }
+        return (currentPath, descriptor, status)
+      }
+
+      let component = pendingComponents[componentIndex]
+      componentIndex += 1
+      if component.isEmpty || component == "." { continue }
+      if component == ".." {
+        guard atTargetBoundary, directoryDescriptors.count > 1 else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        Darwin.close(directoryDescriptors.removeLast())
+        directoryPaths.removeLast()
+        continue
+      }
+      guard !component.contains("/"), !component.contains("\0"), component.utf8.count <= 255 else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      guard
+        let currentDescriptor = directoryDescriptors.last,
+        let currentPath = directoryPaths.last
+      else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      var componentStatus = stat()
+      let statusResult = component.withCString { name in
+        fstatat(currentDescriptor, name, &componentStatus, AT_SYMLINK_NOFOLLOW)
+      }
+      guard statusResult == 0 else {
+        if missingIsAllowed && (errno == ENOENT || errno == ENOTDIR) { return nil }
+        throw MCPClientSessionError.connectionClosed
+      }
+      switch componentStatus.st_mode & S_IFMT {
+      case S_IFLNK:
+        guard atTargetBoundary else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        let linkTarget = try readFrameworkSymlink(
+          name: component,
+          descriptor: currentDescriptor,
+          status: componentStatus
+        )
+        let linkIdentity = "\(componentStatus.st_dev):\(componentStatus.st_ino)"
+        guard visitedSymlinks.insert(linkIdentity).inserted else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        let parentDuplicate = fcntl(
+          currentDescriptor,
+          F_DUPFD_CLOEXEC,
+          STDERR_FILENO + 1
+        )
+        guard parentDuplicate >= 0 else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        var finalLinkStatus = stat()
+        let finalStatusResult = component.withCString { name in
+          fstatat(currentDescriptor, name, &finalLinkStatus, AT_SYMLINK_NOFOLLOW)
+        }
+        guard
+          finalStatusResult == 0,
+          sameSourceIdentityAndMetadata(componentStatus, finalLinkStatus)
+        else {
+          Darwin.close(parentDuplicate)
+          throw MCPClientSessionError.connectionClosed
+        }
+        let finalLinkTarget: String
+        do {
+          finalLinkTarget = try readFrameworkSymlink(
+            name: component,
+            descriptor: currentDescriptor,
+            status: finalLinkStatus
+          )
+        } catch {
+          Darwin.close(parentDuplicate)
+          throw error
+        }
+        guard finalLinkTarget == linkTarget else {
+          Darwin.close(parentDuplicate)
+          throw MCPClientSessionError.connectionClosed
+        }
+        symlinkBindings.append(
+          FrameworkSymlinkBinding(
+            parentDescriptor: parentDuplicate,
+            name: component,
+            status: componentStatus,
+            target: linkTarget
+          )
+        )
+        followedSymlinkCount += 1
+        guard followedSymlinkCount <= maximumSnapshotPathDepth else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        let remaining = Array(pendingComponents[componentIndex...])
+        pendingComponents = linkTarget
+          .split(separator: "/", omittingEmptySubsequences: true)
+          .map(String.init)
+          .filter { $0 != "." } + remaining
+        if pendingComponents.isEmpty { pendingComponents = ["."] }
+        componentIndex = 0
+      case S_IFDIR:
+        guard isAcceptableSourceDirectory(componentStatus) else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        if componentIndex == pendingComponents.count {
+          guard !requireRegular else {
+            throw MCPClientSessionError.connectionClosed
+          }
+        }
+        let path = currentPath + "/" + component
+        guard
+          let normalizedPath = normalizeRelativePath(path, relativeTo: ""),
+          normalizedPath == path
+        else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        let nextDescriptor = component.withCString { name in
+          openat(
+            currentDescriptor,
+            name,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+          )
+        }
+        guard nextDescriptor >= 0 else {
+          if missingIsAllowed && (errno == ENOENT || errno == ENOTDIR) { return nil }
+          throw MCPClientSessionError.connectionClosed
+        }
+        var openedStatus = stat()
+        guard
+          fstat(nextDescriptor, &openedStatus) == 0,
+          sameSourceIdentityAndMetadata(componentStatus, openedStatus)
+        else {
+          Darwin.close(nextDescriptor)
+          throw MCPClientSessionError.connectionClosed
+        }
+        directoryDescriptors.append(nextDescriptor)
+        directoryPaths.append(path)
+        if !atTargetBoundary { processedParentComponents += 1 }
+      case S_IFREG:
+        guard atTargetBoundary, componentIndex == pendingComponents.count else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        let descriptor = component.withCString { name in
+          openat(
+            currentDescriptor,
+            name,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+          )
+        }
+        guard descriptor >= 0 else {
+          if missingIsAllowed && (errno == ENOENT || errno == ENOTDIR) { return nil }
+          throw MCPClientSessionError.connectionClosed
+        }
+        var status = stat()
+        guard
+          fstat(descriptor, &status) == 0,
+          sameSourceIdentityAndMetadata(componentStatus, status),
+          isAcceptableRuntimeSource(status, requireExecutable: requireExecutable)
+        else {
+          Darwin.close(descriptor)
+          throw MCPClientSessionError.connectionClosed
+        }
+        let path = currentPath + "/" + component
+        guard
+          let normalizedPath = normalizeRelativePath(path, relativeTo: ""),
+          normalizedPath == path
+        else {
+          Darwin.close(descriptor)
+          throw MCPClientSessionError.connectionClosed
+        }
+        do {
+          try revalidateFrameworkSymlinkBindings(symlinkBindings)
+        } catch {
+          Darwin.close(descriptor)
+          throw error
+        }
+        return (path, descriptor, status)
+      default:
+        throw MCPClientSessionError.connectionClosed
+      }
+    }
+  }
+
+  private static func readFrameworkSymlink(
+    name: String,
+    descriptor: Int32,
+    status: stat
+  ) throws -> String {
+    guard
+      status.st_mode & S_IFMT == S_IFLNK,
+      status.st_uid == 0 || status.st_uid == geteuid(),
+      status.st_nlink == 1,
+      status.st_size > 0,
+      status.st_size <= off_t(maximumSymbolicLinkBytes)
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    var targetBytes = [CChar](repeating: 0, count: maximumSymbolicLinkBytes + 1)
+    let targetCount = name.withCString { linkName in
+      readlinkat(descriptor, linkName, &targetBytes, maximumSymbolicLinkBytes)
+    }
+    guard
+      targetCount > 0,
+      targetCount < maximumSymbolicLinkBytes,
+      off_t(targetCount) == status.st_size,
+      let target = String(
+        bytes: targetBytes.prefix(targetCount).map { UInt8(bitPattern: $0) },
+        encoding: .utf8
+      ),
+      !target.hasPrefix("/"),
+      !target.contains("\0")
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    return target
+  }
+
+  private static func revalidateFrameworkSymlinkBindings(
+    _ bindings: [FrameworkSymlinkBinding]
+  ) throws {
+    for binding in bindings {
+      var currentStatus = stat()
+      let result = binding.name.withCString { name in
+        fstatat(
+          binding.parentDescriptor,
+          name,
+          &currentStatus,
+          AT_SYMLINK_NOFOLLOW
+        )
+      }
+      guard
+        result == 0,
+        sameSourceIdentityAndMetadata(binding.status, currentStatus)
+      else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      guard try readFrameworkSymlink(
+        name: binding.name,
+        descriptor: binding.parentDescriptor,
+        status: currentStatus
+      ) == binding.target else {
+        throw MCPClientSessionError.connectionClosed
+      }
+    }
   }
 
   private static func expandedRunpaths(

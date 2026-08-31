@@ -260,6 +260,13 @@ final class MCPExecutableSnapshot: Sendable {
     let status: stat
   }
 
+  struct FrameworkSymlinkBinding {
+    let parentDescriptor: Int32
+    let name: String
+    let status: stat
+    let target: String
+  }
+
   struct SourceDirectoryFrame {
     let descriptor: Int32
     let sourceRelativePath: String
@@ -273,7 +280,7 @@ final class MCPExecutableSnapshot: Sendable {
   struct CopyState {
     let policy: MCPExecutableSnapshotPolicy
     var createdEntries: [CreatedEntry] = []
-    var createdDirectories: Set<String> = []
+    var createdDirectoryStatuses: [String: stat] = [:]
     var copiedFiles: Set<String> = []
     var copiedFileSources: [String: String] = [:]
     var copiedPackages: [String: String] = [:]

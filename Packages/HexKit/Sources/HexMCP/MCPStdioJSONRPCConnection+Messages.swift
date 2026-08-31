@@ -13,8 +13,9 @@ extension MCPStdioJSONRPCConnection {
       retainErrorOutput(data)
     case .output:
       do {
-        try await receiveOutput(data)
+        try await receiveOutput(data, generation: generation)
       } catch {
+        guard generation == self.generation, case .connected = state else { return }
         await closeConnection(error: error)
       }
     }
@@ -49,7 +50,8 @@ extension MCPStdioJSONRPCConnection {
     await closeConnection(error: MCPClientSessionError.connectionClosed)
   }
 
-  private func receiveOutput(_ data: Data) async throws {
+  private func receiveOutput(_ data: Data, generation: UInt64) async throws {
+    guard generation == self.generation, case .connected = state else { return }
     outputBuffer.append(data)
     var cursor = outputBuffer.startIndex
     var messages: [JSONValue] = []
@@ -81,11 +83,14 @@ extension MCPStdioJSONRPCConnection {
       throw MCPClientSessionError.limitExceeded
     }
     for message in messages {
-      try await handleMessage(message)
+      guard generation == self.generation, case .connected = state else { return }
+      try await handleMessage(message, generation: generation)
+      guard generation == self.generation, case .connected = state else { return }
     }
   }
 
-  private func handleMessage(_ value: JSONValue) async throws {
+  private func handleMessage(_ value: JSONValue, generation: UInt64) async throws {
+    guard generation == self.generation, case .connected = state else { return }
     guard
       let object = value.mcpObject,
       object["jsonrpc"] == .string("2.0")
@@ -106,10 +111,19 @@ extension MCPStdioJSONRPCConnection {
           throw MCPClientSessionError.protocolViolation
         }
         if method == "ping" {
-          try await sendResult(id: requestID, result: .object([:]))
+          try await sendResult(
+            id: requestID,
+            result: .object([:]),
+            generation: generation
+          )
         } else {
-          try await sendMethodNotFound(id: requestID, method: method)
+          try await sendMethodNotFound(
+            id: requestID,
+            method: method,
+            generation: generation
+          )
         }
+        guard generation == self.generation, case .connected = state else { return }
       }
       return
     }
@@ -145,7 +159,12 @@ extension MCPStdioJSONRPCConnection {
     pending.continuation.resume(throwing: MCPClientSessionError.remoteError(code: code))
   }
 
-  private func sendResult(id: JSONValue, result: JSONValue) async throws {
+  private func sendResult(
+    id: JSONValue,
+    result: JSONValue,
+    generation: UInt64
+  ) async throws {
+    guard generation == self.generation, case .connected = state else { return }
     try await enqueueCancellableWrite(
       try encodedMessage(
         .object([
@@ -156,12 +175,18 @@ extension MCPStdioJSONRPCConnection {
       ),
       generation: generation
     )
+    guard generation == self.generation, case .connected = state else { return }
   }
 
-  private func sendMethodNotFound(id: JSONValue, method: String) async throws {
+  private func sendMethodNotFound(
+    id: JSONValue,
+    method: String,
+    generation: UInt64
+  ) async throws {
     guard method.utf8.count <= 128, !method.contains("\0") else {
       throw MCPClientSessionError.protocolViolation
     }
+    guard generation == self.generation, case .connected = state else { return }
     try await enqueueCancellableWrite(
       try encodedMessage(
         .object([
@@ -175,6 +200,7 @@ extension MCPStdioJSONRPCConnection {
       ),
       generation: generation
     )
+    guard generation == self.generation, case .connected = state else { return }
   }
 
   private func validServerRequestID(_ value: JSONValue) -> Bool {

@@ -41,7 +41,7 @@ extension MCPExecutableSnapshot {
     for component in normalized.split(separator: "/").map(String.init) {
       accumulated.append(component)
       let currentPath = accumulated.joined(separator: "/")
-      if !copyState.createdDirectories.contains(currentPath) {
+      if copyState.createdDirectoryStatuses[currentPath] == nil {
         do {
           try copyState.admitEntry(relativePath: currentPath, copiedBytes: 0)
         } catch {
@@ -66,16 +66,12 @@ extension MCPExecutableSnapshot {
           Darwin.close(currentDescriptor)
           throw MCPClientSessionError.connectionClosed
         }
-        copyState.createdDirectories.insert(currentPath)
+        copyState.createdDirectoryStatuses[currentPath] = createdStatus
         copyState.createdEntries.append(
           CreatedEntry(relativePath: currentPath, kind: .directory, status: createdStatus)
         )
       }
-      guard
-        let expectedDirectoryStatus = copyState.createdEntries.first(where: {
-          $0.relativePath == currentPath
-        })?.status
-      else {
+      guard let expectedDirectoryStatus = copyState.createdDirectoryStatuses[currentPath] else {
         Darwin.close(currentDescriptor)
         throw MCPClientSessionError.connectionClosed
       }

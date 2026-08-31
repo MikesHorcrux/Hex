@@ -28,6 +28,7 @@ extension MCPExecutableSnapshot {
     }
     try copySourceDirectoryContents(
       sourceDescriptor: sourceDescriptor,
+      sourceRootDescriptor: sourceRootDescriptor,
       sourceRelativePath: sourceRelativePath,
       destinationRelativePath: destinationRelativePath,
       sourcePackageRoot: sourceRelativePath,
@@ -46,6 +47,7 @@ extension MCPExecutableSnapshot {
 
   private static func copySourceDirectoryContents(
     sourceDescriptor: Int32,
+    sourceRootDescriptor: Int32,
     sourceRelativePath: String,
     destinationRelativePath: String,
     sourcePackageRoot: String,
@@ -210,6 +212,7 @@ extension MCPExecutableSnapshot {
           name: name,
           initialStatus: childStatus,
           sourceParentDescriptor: parentDescriptor,
+          sourceRootDescriptor: sourceRootDescriptor,
           sourceRelativePath: sourceChildPath,
           destinationRelativePath: destinationChildPath,
           sourcePackageRoot: sourcePackageRoot,
@@ -317,6 +320,7 @@ extension MCPExecutableSnapshot {
     name: String,
     initialStatus: stat,
     sourceParentDescriptor: Int32,
+    sourceRootDescriptor: Int32,
     sourceRelativePath: String,
     destinationRelativePath: String,
     sourcePackageRoot: String,
@@ -343,23 +347,40 @@ extension MCPExecutableSnapshot {
         encoding: .utf8
       ),
       !target.hasPrefix("/"),
-      let resolvedTarget = normalizeRelativePath(
-        target,
-        relativeTo: directoryPath(of: sourceRelativePath)
-      ),
-      resolvedTarget == sourcePackageRoot || resolvedTarget.hasPrefix(sourcePackageRoot + "/"),
-      let destinationTarget = normalizeRelativePath(
-        target,
-        relativeTo: directoryPath(of: destinationRelativePath)
-      ),
-      destinationTarget == destinationPackageRoot
-        || destinationTarget.hasPrefix(destinationPackageRoot + "/")
+      !target.contains("\0")
     else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    guard let resolvedTarget = try MCPExecutableSnapshot.resolveFrameworkRelativePath(
+      parentPath: directoryPath(of: sourceRelativePath),
+      target: target,
+      packageRoot: sourcePackageRoot,
+      beneath: sourceRootDescriptor,
+      expectedParentDescriptor: sourceParentDescriptor,
+      requireExecutable: false,
+      requireRegular: false,
+      missingIsAllowed: false
+    ) else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    defer { Darwin.close(resolvedTarget.descriptor) }
+    guard
+      resolvedTarget.relativePath == sourcePackageRoot
+        || resolvedTarget.relativePath.hasPrefix(sourcePackageRoot + "/")
+    else {
+      throw MCPClientSessionError.connectionClosed
+    }
+    let sourceSuffix = String(resolvedTarget.relativePath.dropFirst(sourcePackageRoot.count))
+    let destinationResolvedPath = destinationPackageRoot + sourceSuffix
+    guard let destinationTarget = relativePath(
+      fromDirectory: directoryPath(of: destinationRelativePath),
+      toPath: destinationResolvedPath
+    ) else {
       throw MCPClientSessionError.connectionClosed
     }
     try copyState.admitEntry(
       relativePath: destinationRelativePath,
-      additionalPathMetadataBytes: Int64(target.utf8.count + 1),
+      additionalPathMetadataBytes: Int64(destinationTarget.utf8.count + 1),
       copiedBytes: 0
     )
     var finalStatus = stat()
@@ -378,7 +399,7 @@ extension MCPExecutableSnapshot {
       copyState: &copyState
     )
     defer { Darwin.close(parent.descriptor) }
-    let result = target.withCString { targetName in
+    let result = destinationTarget.withCString { targetName in
       parent.basename.withCString { linkName in
         symlinkat(targetName, parent.descriptor, linkName)
       }
@@ -393,7 +414,8 @@ extension MCPExecutableSnapshot {
     guard
       createdStatusResult == 0,
       createdStatus.st_mode & S_IFMT == S_IFLNK,
-      createdStatus.st_uid == geteuid()
+      createdStatus.st_uid == geteuid(),
+      createdStatus.st_nlink == 1
     else {
       throw MCPClientSessionError.connectionClosed
     }
@@ -428,6 +450,37 @@ extension MCPExecutableSnapshot {
       CreatedEntry(
         relativePath: destinationRelativePath, kind: .symbolicLink, status: createdStatus)
     )
+  }
+
+  private static func relativePath(fromDirectory basePath: String, toPath: String) -> String? {
+    guard
+      let normalizedBase = normalizeRelativePath(basePath, relativeTo: ""),
+      normalizedBase == basePath,
+      let normalizedTarget = normalizeRelativePath(toPath, relativeTo: ""),
+      normalizedTarget == toPath
+    else {
+      return nil
+    }
+    let baseComponents = normalizedBase.split(separator: "/").map(String.init)
+    let targetComponents = normalizedTarget.split(separator: "/").map(String.init)
+    var commonCount = 0
+    while commonCount < baseComponents.count,
+      commonCount < targetComponents.count,
+      baseComponents[commonCount] == targetComponents[commonCount]
+    {
+      commonCount += 1
+    }
+    let parentSteps = Array(repeating: "..", count: baseComponents.count - commonCount)
+    let targetSteps = Array(targetComponents.dropFirst(commonCount))
+    let result = (parentSteps + targetSteps).joined(separator: "/")
+    if result.isEmpty { return "." }
+    guard
+      result.utf8.count <= maximumSnapshotPathBytes,
+      result.split(separator: "/").count <= maximumSnapshotPathDepth
+    else {
+      return nil
+    }
+    return result
   }
 
   private static func copyExactBytes(
