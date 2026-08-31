@@ -22,3 +22,8 @@ DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcrun swift format lint --recursiv
     Packages/HexKit/Tests
 
 git diff --check
+git diff --cached --check
+
+if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    git diff --check HEAD^..HEAD
+fi

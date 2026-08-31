@@ -33,8 +33,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 git diff --check
 ```
 
-The Codex Run action calls `./script/build_and_run.sh`. Its `--verify` mode intentionally builds and
-stages the unsigned app without launching a GUI, then validates the staged executable and property list.
+The Codex Run action calls `./script/build_and_run.sh`. Its `--verify` mode builds and stages the
+unsigned app, validates the executable and property list, briefly launches that exact staged binary,
+and terminates the verified process.
 
 Use a conventional commit subject. Do not merge your own branch into `dev`; the integration owner
 reviews and merges completed feature commits.

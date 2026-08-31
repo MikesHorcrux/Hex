@@ -14,6 +14,10 @@ DECLARATION_PATTERN = re.compile(
     r"\b(actor|class|enum|protocol|struct)\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
 EXTENSION_PATTERN = re.compile(r"\bextension\s+([A-Za-z_][A-Za-z0-9_]*)")
+INHERITING_TYPE_PATTERN = re.compile(
+    r"\b(?:class|enum|struct)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    r"(?:\s*<[^{}\n]+>)?\s*:\s*([^{}\n]+)\{"
+)
 FORBIDDEN_FILENAMES = {"Enums.swift", "Helpers.swift", "Models.swift", "Utilities.swift"}
 
 
@@ -126,6 +130,20 @@ def top_level_matches(pattern: re.Pattern[str], source: str) -> list[re.Match[st
     return [match for match in pattern.finditer(source) if depths[match.start()] == 0]
 
 
+def nested_view_names(source: str) -> list[str]:
+    depths = depths_for(source)
+    names: list[str] = []
+    for match in INHERITING_TYPE_PATTERN.finditer(source):
+        if depths[match.start()] == 0:
+            continue
+
+        inheritance_clause = re.split(r"\s+where\s+", match.group(2), maxsplit=1)[0]
+        inherited_types = {item.strip() for item in inheritance_clause.split(",")}
+        if inherited_types.intersection({"SwiftUI.View", "View"}):
+            names.append(match.group(1))
+    return names
+
+
 def validate_file(path: pathlib.Path) -> list[str]:
     errors: list[str] = []
     if path.name in FORBIDDEN_FILENAMES:
@@ -134,6 +152,13 @@ def validate_file(path: pathlib.Path) -> list[str]:
     source = sanitized_source(path.read_text(encoding="utf-8"))
     declarations = top_level_matches(DECLARATION_PATTERN, source)
     declaration_names = [match.group(2) for match in declarations]
+    extensions = top_level_matches(EXTENSION_PATTERN, source)
+    extension_names = {match.group(1) for match in extensions}
+
+    for nested_view_name in nested_view_names(source):
+        errors.append(
+            f"{path}: nested SwiftUI View {nested_view_name} must move to its own file"
+        )
 
     if len(declaration_names) > 1:
         names = ", ".join(declaration_names)
@@ -146,10 +171,14 @@ def validate_file(path: pathlib.Path) -> list[str]:
             errors.append(
                 f"{path}: filename must match top-level type {declaration_name}.swift"
             )
+        unrelated_extensions = extension_names - {declaration_name}
+        if unrelated_extensions:
+            names = ", ".join(sorted(unrelated_extensions))
+            errors.append(
+                f"{path}: top-level extension target {names} must match {declaration_name}"
+            )
         return errors
 
-    extensions = top_level_matches(EXTENSION_PATTERN, source)
-    extension_names = {match.group(1) for match in extensions}
     if not extension_names:
         errors.append(f"{path}: no top-level named type or conformance extension")
         return errors
@@ -162,6 +191,14 @@ def validate_file(path: pathlib.Path) -> list[str]:
     if owner_name not in extension_names:
         names = ", ".join(sorted(extension_names))
         errors.append(f"{path}: filename owner does not match extension target ({names})")
+        return errors
+
+    unrelated_extensions = extension_names - {owner_name}
+    if unrelated_extensions:
+        names = ", ".join(sorted(unrelated_extensions))
+        errors.append(
+            f"{path}: extension-only file for {owner_name} targets unrelated types ({names})"
+        )
     return errors
 
 
@@ -192,7 +229,8 @@ def run_self_test() -> bool:
         invalid.mkdir()
 
         (valid / "Widget.swift").write_text(
-            "struct Widget {\n    enum Nested {}\n}\n", encoding="utf-8"
+            "struct Widget {\n    enum CodingKeys: String, CodingKey { case value }\n}\n",
+            encoding="utf-8",
         )
         (valid / "Widget+Equatable.swift").write_text(
             "extension Widget: Equatable {}\n", encoding="utf-8"
@@ -202,6 +240,18 @@ def run_self_test() -> bool:
         )
         (invalid / "Wrong.swift").write_text("actor Actual {}\n", encoding="utf-8")
         (invalid / "Helpers.swift").write_text("enum Helpers {}\n", encoding="utf-8")
+        (invalid / "NestedViewContainer.swift").write_text(
+            "import SwiftUI\nstruct NestedViewContainer {\n"
+            "    struct ChildView: View {}\n}\n",
+            encoding="utf-8",
+        )
+        (invalid / "Owner.swift").write_text(
+            "struct Owner {}\nextension Unrelated {}\n", encoding="utf-8"
+        )
+        (invalid / "Widget+Mixed.swift").write_text(
+            "extension Widget: Equatable {}\nextension Other: Hashable {}\n",
+            encoding="utf-8",
+        )
 
         valid_errors = validate_paths([valid])
         invalid_errors = validate_paths([invalid])
@@ -209,6 +259,9 @@ def run_self_test() -> bool:
             "catch-all filename is forbidden",
             "multiple top-level named types",
             "filename must match top-level type Actual.swift",
+            "nested SwiftUI View ChildView must move to its own file",
+            "top-level extension target Unrelated must match Owner",
+            "extension-only file for Widget targets unrelated types (Other)",
         }
         observed = "\n".join(invalid_errors)
         return not valid_errors and all(fragment in observed for fragment in expected_fragments)
