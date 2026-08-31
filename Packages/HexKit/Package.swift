@@ -13,6 +13,7 @@ let package = Package(
     .library(name: "HexPersistence", targets: ["HexPersistence"]),
     .library(name: "HexProviders", targets: ["HexProviders"]),
     .library(name: "HexCapabilities", targets: ["HexCapabilities"]),
+    .library(name: "HexMCP", targets: ["HexMCP"]),
     .library(name: "HexPersonality", targets: ["HexPersonality"]),
     .library(name: "HexIPC", targets: ["HexIPC"]),
     .executable(name: "HexGateway", targets: ["HexGateway"]),
@@ -29,6 +30,10 @@ let package = Package(
     ),
     .target(
       name: "HexCapabilities",
+      dependencies: ["HexCore"]
+    ),
+    .target(
+      name: "HexMCP",
       dependencies: ["HexCore"]
     ),
     .target(
@@ -51,6 +56,7 @@ let package = Package(
         "HexPersistence",
         "HexProviders",
         "HexCapabilities",
+        "HexMCP",
         "HexPersonality",
         "HexIPC",
       ]
@@ -74,6 +80,10 @@ let package = Package(
     .testTarget(
       name: "HexCapabilitiesTests",
       dependencies: ["HexCapabilities"]
+    ),
+    .testTarget(
+      name: "HexMCPTests",
+      dependencies: ["HexMCP"]
     ),
     .testTarget(
       name: "HexPersonalityTests",

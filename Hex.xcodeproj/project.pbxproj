@@ -14,6 +14,7 @@
 		484558424C44000000000005 /* HexCapabilities in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000005 /* HexCapabilities */; };
 		484558424C44000000000006 /* HexPersonality in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000006 /* HexPersonality */; };
 		484558424C44000000000007 /* HexIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000007 /* HexIPC */; };
+		484558424C44000000000008 /* HexMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000008 /* HexMCP */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +70,7 @@
 				484558424C44000000000005 /* HexCapabilities in Frameworks */,
 				484558424C44000000000006 /* HexPersonality in Frameworks */,
 				484558424C44000000000007 /* HexIPC in Frameworks */,
+				484558424C44000000000008 /* HexMCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -136,6 +138,7 @@
 				484558505244000000000005 /* HexCapabilities */,
 				484558505244000000000006 /* HexPersonality */,
 				484558505244000000000007 /* HexIPC */,
+				484558505244000000000008 /* HexMCP */,
 			);
 			productName = Hex;
 			productReference = 7FCF29493044FB760069F58B /* Hex.app */;
@@ -653,6 +656,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
 			productName = HexIPC;
+		};
+		484558505244000000000008 /* HexMCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexMCP;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,6 +1,7 @@
 import HexCapabilities
 import HexCore
 import HexIPC
+import HexMCP
 import HexPersistence
 import HexPersonality
 import HexProviders
@@ -13,6 +14,7 @@ public enum HexGatewayComposition: Sendable {
     HexPersistenceModule.name,
     HexProvidersModule.name,
     HexCapabilitiesModule.name,
+    HexMCPModule.name,
     HexPersonalityModule.name,
     HexIPCModule.name,
   ]
