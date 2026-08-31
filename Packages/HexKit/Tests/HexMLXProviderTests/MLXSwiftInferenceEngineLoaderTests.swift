@@ -24,32 +24,35 @@ struct MLXSwiftInferenceEngineLoaderTests {
     }
     let replacementConfiguration = Data("{\"replacement\":true}".utf8)
     let recorder = ReplacementLoadRecorder()
-    let loader = MLXSwiftInferenceEngineLoader(loadContainer: { directory in
-      try FileManager.default.setAttributes(
-        [.posixPermissions: 0o700],
-        ofItemAtPath: directory.path
-      )
-      try FileManager.default.moveItem(at: directory, to: capturedSnapshot)
-      try FileManager.default.createDirectory(
-        at: directory,
-        withIntermediateDirectories: false
-      )
-      try replacementConfiguration.write(
-        to: directory.appending(path: "config.json")
-      )
-      try Data("{}".utf8).write(to: directory.appending(path: "tokenizer.json"))
-      try Data("replacement-weights".utf8).write(
-        to: directory.appending(path: "model.safetensors")
-      )
-      let observedConfiguration = try Data(
-        contentsOf: directory.appending(path: "config.json")
-      )
-      await recorder.record(
-        directory: directory,
-        observedConfiguration: observedConfiguration
-      )
-      throw StubError.unexpectedLoad
-    })
+    let loader = MLXSwiftInferenceEngineLoader(
+      loadContainer: { directory in
+        try FileManager.default.setAttributes(
+          [.posixPermissions: 0o700],
+          ofItemAtPath: directory.path
+        )
+        try FileManager.default.moveItem(at: directory, to: capturedSnapshot)
+        try FileManager.default.createDirectory(
+          at: directory,
+          withIntermediateDirectories: false
+        )
+        try replacementConfiguration.write(
+          to: directory.appending(path: "config.json")
+        )
+        try Data("{}".utf8).write(to: directory.appending(path: "tokenizer.json"))
+        try Data("replacement-weights".utf8).write(
+          to: directory.appending(path: "model.safetensors")
+        )
+        let observedConfiguration = try Data(
+          contentsOf: directory.appending(path: "config.json")
+        )
+        await recorder.record(
+          directory: directory,
+          observedConfiguration: observedConfiguration
+        )
+        throw StubError.unexpectedLoad
+      },
+      snapshotBuilder: try makeSnapshotBuilder(root: root)
+    )
 
     await #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
       _ = try await loader.loadModel(configuration)
@@ -85,7 +88,8 @@ struct MLXSwiftInferenceEngineLoaderTests {
     let replacedPath = try releaseSnapshotAfterReplacingPath(
       configuration: makeConfiguration(directory: modelDirectory),
       movedSnapshot: movedSnapshot,
-      replacement: .directory(sentinel)
+      replacement: .directory(sentinel),
+      builder: makeSnapshotBuilder(root: root)
     )
     defer { try? FileManager.default.removeItem(at: replacedPath) }
 
@@ -114,7 +118,8 @@ struct MLXSwiftInferenceEngineLoaderTests {
     let replacedPath = try releaseSnapshotAfterReplacingPath(
       configuration: makeConfiguration(directory: modelDirectory),
       movedSnapshot: movedSnapshot,
-      replacement: .file(sentinel)
+      replacement: .file(sentinel),
+      builder: makeSnapshotBuilder(root: root)
     )
     defer { try? FileManager.default.removeItem(at: replacedPath) }
 
@@ -146,7 +151,216 @@ struct MLXSwiftInferenceEngineLoaderTests {
     try exhaustSnapshotCapacity(builder: builder, configuration: configuration)
 
     let names = try FileManager.default.contentsOfDirectory(atPath: namespaceDirectory.path)
-    #expect(Set(names) == ["snapshot-0", "snapshot-1"])
+    #expect(
+      Set(names) == ["claim-0", "snapshot-0", "claim-1", "snapshot-1"]
+    )
+  }
+
+  @Test
+  func movedSnapshotSlotsRemainConsumedAndBoundTheRuntimeResidue() throws {
+    let root = try makeRoot()
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let namespaceDirectory = root.appending(
+      path: "snapshot-namespace",
+      directoryHint: .isDirectory
+    )
+    let firstMovedSnapshot = root.appending(
+      path: "first-moved-snapshot",
+      directoryHint: .isDirectory
+    )
+    let secondMovedSnapshot = root.appending(
+      path: "second-moved-snapshot",
+      directoryHint: .isDirectory
+    )
+    defer {
+      try? makeNamespaceWritable(namespaceDirectory)
+      try? makeDirectoryWritable(firstMovedSnapshot)
+      try? makeDirectoryWritable(secondMovedSnapshot)
+      try? FileManager.default.removeItem(at: root)
+    }
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: namespaceDirectory,
+      snapshotLimit: 2
+    )
+    let builder = MLXModelArtifactSnapshotBuilder(namespace: namespace)
+    let configuration = try makeConfiguration(directory: modelDirectory)
+
+    let firstDirectory = try moveAndReleaseSnapshot(
+      builder: builder,
+      configuration: configuration,
+      destination: firstMovedSnapshot
+    )
+    let secondDirectory = try moveAndReleaseSnapshot(
+      builder: builder,
+      configuration: configuration,
+      destination: secondMovedSnapshot
+    )
+
+    #expect(secondDirectory != firstDirectory)
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try builder.makeSnapshot(for: configuration)
+    }
+  }
+
+  @Test
+  func concurrentBuildersAtomicallyClaimUniqueSlots() async throws {
+    let root = try makeRoot()
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let namespaceDirectory = root.appending(
+      path: "snapshot-namespace",
+      directoryHint: .isDirectory
+    )
+    defer {
+      try? makeNamespaceWritable(namespaceDirectory)
+      try? FileManager.default.removeItem(at: root)
+    }
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: namespaceDirectory,
+      snapshotLimit: 8
+    )
+    let configuration = try makeConfiguration(directory: modelDirectory)
+
+    let snapshots = try await withThrowingTaskGroup(
+      of: MLXModelArtifactSnapshot.self,
+      returning: [MLXModelArtifactSnapshot].self
+    ) { group in
+      for _ in 0..<8 {
+        group.addTask {
+          try MLXModelArtifactSnapshotBuilder(namespace: namespace).makeSnapshot(
+            for: configuration
+          )
+        }
+      }
+      var snapshots: [MLXModelArtifactSnapshot] = []
+      for try await snapshot in group {
+        snapshots.append(snapshot)
+      }
+      return snapshots
+    }
+
+    #expect(Set(snapshots.map(\.directory)).count == 8)
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try MLXModelArtifactSnapshotBuilder(namespace: namespace).makeSnapshot(
+        for: configuration
+      )
+    }
+    withExtendedLifetime(snapshots) {}
+  }
+
+  @Test
+  func crossProcessClaimProbe() async throws {
+    let environment = ProcessInfo.processInfo.environment
+    let rootPath = environment["HEX_MLX_CROSS_PROCESS_PROBE_ROOT"]
+    let workerID = environment["HEX_MLX_CROSS_PROCESS_PROBE_WORKER"]
+    let mode = environment["HEX_MLX_CROSS_PROCESS_PROBE_MODE"]
+    if rootPath == nil, workerID == nil, mode == nil {
+      return
+    }
+    guard
+      let rootPath,
+      let workerID,
+      let mode
+    else {
+      throw StubError.invalidProcessProbeMode
+    }
+    let root = URL(filePath: rootPath, directoryHint: .isDirectory)
+    try Data(workerID.utf8).write(
+      to: root.appending(path: "ready-\(workerID)")
+    )
+    let start = root.appending(path: "start")
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(60))
+    while !FileManager.default.fileExists(atPath: start.path) {
+      guard clock.now < deadline else {
+        throw StubError.processProbeTimedOut
+      }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: root.appending(
+        path: "snapshot-namespace",
+        directoryHint: .isDirectory
+      ),
+      snapshotLimit: 8
+    )
+    let builder = MLXModelArtifactSnapshotBuilder(namespace: namespace)
+    let configuration = try makeConfiguration(
+      directory: root.appending(path: "model", directoryHint: .isDirectory)
+    )
+
+    if mode == "claim" {
+      let snapshot = try builder.makeSnapshot(for: configuration)
+      try snapshot.validateBoundPath()
+      withExtendedLifetime(snapshot) {}
+    } else if mode == "refuse" {
+      #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+        _ = try builder.makeSnapshot(for: configuration)
+      }
+    } else {
+      throw StubError.invalidProcessProbeMode
+    }
+  }
+
+  @Test
+  func rejectsSnapshotReservationWithoutMatchingClaim() throws {
+    let root = try makeRoot()
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let namespaceDirectory = root.appending(
+      path: "snapshot-namespace",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(
+      at: namespaceDirectory.appending(path: "snapshot-0"),
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: namespaceDirectory,
+      snapshotLimit: 2
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try MLXModelArtifactSnapshotBuilder(namespace: namespace).makeSnapshot(
+        for: makeConfiguration(directory: modelDirectory)
+      )
+    }
+  }
+
+  @Test
+  func retainedClaimIdentityRejectsAReplacedClaimPath() throws {
+    let root = try makeRoot()
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let namespaceDirectory = root.appending(
+      path: "snapshot-namespace",
+      directoryHint: .isDirectory
+    )
+    let movedClaim = root.appending(path: "moved-claim")
+    defer {
+      try? makeNamespaceWritable(namespaceDirectory)
+      try? FileManager.default.removeItem(at: root)
+    }
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: namespaceDirectory,
+      snapshotLimit: 2
+    )
+    let snapshot = try MLXModelArtifactSnapshotBuilder(namespace: namespace).makeSnapshot(
+      for: makeConfiguration(directory: modelDirectory)
+    )
+    let claim = namespaceDirectory.appending(path: "claim-0")
+    try FileManager.default.moveItem(at: claim, to: movedClaim)
+    try Data().write(to: claim)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o400],
+      ofItemAtPath: claim.path
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      try snapshot.validateBoundPath()
+    }
   }
 
   @Test
@@ -206,6 +420,46 @@ struct MLXSwiftInferenceEngineLoaderTests {
   }
 
   @Test
+  func rejectsHardLinkedSnapshotClaims() throws {
+    let root = try makeRoot()
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let namespaceDirectory = root.appending(
+      path: "snapshot-namespace",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(
+      at: namespaceDirectory,
+      withIntermediateDirectories: false
+    )
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: namespaceDirectory.path
+    )
+    let externalClaim = root.appending(path: "external-claim")
+    try Data().write(to: externalClaim)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o400],
+      ofItemAtPath: externalClaim.path
+    )
+    try FileManager.default.linkItem(
+      at: externalClaim,
+      to: namespaceDirectory.appending(path: "claim-0")
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: namespaceDirectory,
+      snapshotLimit: 2
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try MLXModelArtifactSnapshotBuilder(namespace: namespace).makeSnapshot(
+        for: makeConfiguration(directory: modelDirectory)
+      )
+    }
+  }
+
+  @Test
   func rejectsHardLinkedSourceArtifacts() throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -232,7 +486,7 @@ struct MLXSwiftInferenceEngineLoaderTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
     try makeCompleteModelDirectory(at: modelDirectory)
-    let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(
+    let snapshot = try makeSnapshotBuilder(root: root).makeSnapshot(
       for: makeConfiguration(directory: modelDirectory)
     )
     let alias = root.appending(path: "snapshot-config-alias")
@@ -327,7 +581,7 @@ struct MLXSwiftInferenceEngineLoaderTests {
     )
     let configuration = try makeConfiguration(directory: modelDirectory)
 
-    let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(for: configuration)
+    let snapshot = try makeSnapshotBuilder(root: root).makeSnapshot(for: configuration)
     try Data("mutated".utf8).write(to: modelDirectory.appending(path: "config.json"))
 
     var directoryStatus = stat()
@@ -336,6 +590,21 @@ struct MLXSwiftInferenceEngineLoaderTests {
     #expect(directoryStatus.st_uid == geteuid())
     #expect(directoryStatus.st_mode & mode_t(0o7777) == mode_t(0o500))
     #expect(UInt64(directoryStatus.st_nlink) == 5)
+    let namespaceDirectory = snapshot.directory.deletingLastPathComponent()
+    var namespaceStatus = stat()
+    #expect(lstat(namespaceDirectory.path, &namespaceStatus) == 0)
+    #expect(namespaceStatus.st_mode & S_IFMT == S_IFDIR)
+    #expect(namespaceStatus.st_uid == geteuid())
+    #expect(namespaceStatus.st_mode & mode_t(0o7777) == mode_t(0o700))
+    var claimStatus = stat()
+    #expect(
+      lstat(namespaceDirectory.appending(path: "claim-0").path, &claimStatus) == 0
+    )
+    #expect(claimStatus.st_mode & S_IFMT == S_IFREG)
+    #expect(claimStatus.st_uid == geteuid())
+    #expect(claimStatus.st_mode & mode_t(0o7777) == mode_t(0o400))
+    #expect(UInt64(claimStatus.st_nlink) == 1)
+    #expect(claimStatus.st_size == 0)
     var artifactStatus = stat()
     #expect(
       lstat(snapshot.directory.appending(path: "config.json").path, &artifactStatus) == 0
@@ -460,9 +729,10 @@ struct MLXSwiftInferenceEngineLoaderTests {
   private func releaseSnapshotAfterReplacingPath(
     configuration: MLXLocalModelConfiguration,
     movedSnapshot: URL,
-    replacement: SnapshotPathReplacement
+    replacement: SnapshotPathReplacement,
+    builder: MLXModelArtifactSnapshotBuilder
   ) throws -> URL {
-    let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(for: configuration)
+    let snapshot = try builder.makeSnapshot(for: configuration)
     let replacedPath = snapshot.directory
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o700],
@@ -480,6 +750,33 @@ struct MLXSwiftInferenceEngineLoaderTests {
       try sentinel.write(to: replacedPath)
     }
     return replacedPath
+  }
+
+  private func makeSnapshotBuilder(
+    root: URL,
+    snapshotLimit: Int = MLXModelArtifactSnapshotNamespace.maximumSnapshotCount
+  ) throws -> MLXModelArtifactSnapshotBuilder {
+    try MLXModelArtifactSnapshotBuilder(
+      namespace: MLXModelArtifactSnapshotNamespace(
+        directory: root.appending(
+          path: "snapshot-namespace",
+          directoryHint: .isDirectory
+        ),
+        snapshotLimit: snapshotLimit
+      )
+    )
+  }
+
+  private func moveAndReleaseSnapshot(
+    builder: MLXModelArtifactSnapshotBuilder,
+    configuration: MLXLocalModelConfiguration,
+    destination: URL
+  ) throws -> URL {
+    let snapshot = try builder.makeSnapshot(for: configuration)
+    let directory = snapshot.directory
+    try makeDirectoryWritable(directory)
+    try FileManager.default.moveItem(at: directory, to: destination)
+    return directory
   }
 
   private func exhaustSnapshotCapacity(
@@ -552,6 +849,8 @@ struct MLXSwiftInferenceEngineLoaderTests {
   }
 
   private enum StubError: Error {
+    case invalidProcessProbeMode
+    case processProbeTimedOut
     case unexpectedLoad
   }
 }

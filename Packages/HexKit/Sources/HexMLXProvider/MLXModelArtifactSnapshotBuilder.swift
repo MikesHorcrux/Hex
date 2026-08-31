@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import HexProviders
 
-struct MLXModelArtifactSnapshotBuilder {
+struct MLXModelArtifactSnapshotBuilder: Sendable {
   private let namespace: MLXModelArtifactSnapshotNamespace
   private let cloneArtifact: @Sendable (Int32, Int32, String) -> Int32
 
@@ -58,6 +58,7 @@ struct MLXModelArtifactSnapshotBuilder {
     let snapshotLocation = try namespace.makeSnapshotDirectory()
     let snapshotDirectory = snapshotLocation.directory
     let destinationDescriptor = snapshotLocation.fileDescriptor
+    let claim = snapshotLocation.claim
     var snapshotEntries: [MLXModelArtifactSnapshotEntry] = []
     var preserveSnapshot = false
     defer {
@@ -70,6 +71,7 @@ struct MLXModelArtifactSnapshotBuilder {
         }
         _ = fchmod(destinationDescriptor, 0)
         close(destinationDescriptor)
+        close(claim.fileDescriptor)
       }
     }
 
@@ -98,7 +100,8 @@ struct MLXModelArtifactSnapshotBuilder {
       directory: snapshotDirectory,
       directoryDescriptor: destinationDescriptor,
       directoryIdentity: directoryIdentity,
-      entries: snapshotEntries
+      entries: snapshotEntries,
+      claim: claim
     )
     preserveSnapshot = true
     try snapshot.validateBoundPath()

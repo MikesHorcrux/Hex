@@ -7,20 +7,24 @@ actor MLXModelArtifactSnapshot {
   private nonisolated let directoryDescriptor: Int32
   private nonisolated let directoryIdentity: MLXModelArtifactSnapshotIdentity
   private nonisolated let entries: [MLXModelArtifactSnapshotEntry]
+  private nonisolated let claim: MLXModelArtifactSnapshotClaim
 
   init(
     directory: URL,
     directoryDescriptor: Int32,
     directoryIdentity: MLXModelArtifactSnapshotIdentity,
-    entries: [MLXModelArtifactSnapshotEntry]
+    entries: [MLXModelArtifactSnapshotEntry],
+    claim: MLXModelArtifactSnapshotClaim
   ) {
     self.directory = directory
     self.directoryDescriptor = directoryDescriptor
     self.directoryIdentity = directoryIdentity
     self.entries = entries
+    self.claim = claim
   }
 
   nonisolated func validateBoundPath() throws {
+    try validateClaimBinding()
     var retainedDirectoryStatus = stat()
     guard
       fstat(directoryDescriptor, &retainedDirectoryStatus) == 0,
@@ -80,6 +84,31 @@ actor MLXModelArtifactSnapshot {
     }
     _ = fchmod(directoryDescriptor, 0)
     close(directoryDescriptor)
+    close(claim.fileDescriptor)
+  }
+
+  private nonisolated func validateClaimBinding() throws {
+    var retainedStatus = stat()
+    guard
+      fstat(claim.fileDescriptor, &retainedStatus) == 0,
+      claim.identity.matches(retainedStatus)
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    let pathDescriptor = claim.url.path.withCString {
+      open($0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    }
+    guard pathDescriptor >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
+    defer { close(pathDescriptor) }
+    var pathStatus = stat()
+    guard
+      fstat(pathDescriptor, &pathStatus) == 0,
+      claim.identity.matches(pathStatus)
+    else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
   }
 
   private nonisolated func artifactNames(in fileDescriptor: Int32) throws -> [String] {

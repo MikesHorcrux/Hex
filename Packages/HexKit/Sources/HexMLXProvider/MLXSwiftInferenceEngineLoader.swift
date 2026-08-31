@@ -5,11 +5,21 @@ import MLXLMCommon
 
 public struct MLXSwiftInferenceEngineLoader: MLXInferenceEngineLoader, Sendable {
   private let loadContainer: @Sendable (URL) async throws -> ModelContainer
+  private let snapshotBuilder: MLXModelArtifactSnapshotBuilder
 
   public init(
     loadContainer: @escaping @Sendable (URL) async throws -> ModelContainer
   ) {
     self.loadContainer = loadContainer
+    snapshotBuilder = MLXModelArtifactSnapshotBuilder()
+  }
+
+  init(
+    loadContainer: @escaping @Sendable (URL) async throws -> ModelContainer,
+    snapshotBuilder: MLXModelArtifactSnapshotBuilder
+  ) {
+    self.loadContainer = loadContainer
+    self.snapshotBuilder = snapshotBuilder
   }
 
   public init(factory: LLMModelFactory) {
@@ -19,6 +29,7 @@ public struct MLXSwiftInferenceEngineLoader: MLXInferenceEngineLoader, Sendable 
         using: MLXSwiftTokenizerLoader()
       )
     }
+    snapshotBuilder = MLXModelArtifactSnapshotBuilder()
   }
 
   public func loadModel(
@@ -26,7 +37,7 @@ public struct MLXSwiftInferenceEngineLoader: MLXInferenceEngineLoader, Sendable 
   ) async throws -> any MLXInferenceEngine {
     try Task.checkCancellation()
     try validateDirectoryIdentity(configuration)
-    let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(for: configuration)
+    let snapshot = try snapshotBuilder.makeSnapshot(for: configuration)
     try Task.checkCancellation()
     try snapshot.validateBoundPath()
     let container: ModelContainer

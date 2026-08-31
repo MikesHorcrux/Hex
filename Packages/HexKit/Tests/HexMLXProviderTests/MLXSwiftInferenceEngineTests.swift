@@ -275,7 +275,16 @@ struct MLXSwiftInferenceEngineTests {
     root: URL,
     generationAttempts: GenerationAttemptProbe
   ) async throws -> (capturedSnapshot: URL, replacement: URL) {
-    let snapshot = try MLXModelArtifactSnapshotBuilder().makeSnapshot(for: configuration)
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: root.appending(
+        path: "snapshot-namespace",
+        directoryHint: .isDirectory
+      ),
+      snapshotLimit: 1
+    )
+    let snapshot = try MLXModelArtifactSnapshotBuilder(namespace: namespace).makeSnapshot(
+      for: configuration
+    )
     let capturedSnapshot = root.appending(
       path: "captured-snapshot",
       directoryHint: .isDirectory
