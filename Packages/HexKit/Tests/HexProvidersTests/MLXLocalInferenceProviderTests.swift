@@ -100,10 +100,11 @@ struct MLXLocalInferenceProviderTests {
     )
 
     #expect(provider.descriptor.capabilities == [.textInput, .streaming])
-    #expect((try await provider.availableModels()).map(\.capabilities) == [
-      [.textInput, .streaming, .toolCalling],
-      [.textInput, .streaming],
-    ])
+    #expect(
+      (try await provider.availableModels()).map(\.capabilities) == [
+        [.textInput, .streaming, .toolCalling],
+        [.textInput, .streaming],
+      ])
     await #expect(throws: MLXLocalInferenceProviderError.invalidToolChoice) {
       _ = try await provider.stream(
         makeRequest(
