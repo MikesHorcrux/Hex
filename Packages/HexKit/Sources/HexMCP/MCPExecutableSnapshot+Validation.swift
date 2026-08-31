@@ -105,7 +105,7 @@ extension MCPExecutableSnapshot {
     guard
       SecStaticCodeCreateWithPath(
         URL(fileURLWithPath: rootPath, isDirectory: true) as CFURL,
-        SecCSFlags(rawValue: kSecCSDefaultFlags),
+        SecCSFlags(rawValue: 0),
         &staticCode
       ) == errSecSuccess,
       let staticCode
@@ -117,7 +117,7 @@ extension MCPExecutableSnapshot {
     guard
       SecRequirementCreateWithString(
         xcodeCodeSigningRequirement as CFString,
-        SecCSFlags(rawValue: kSecCSDefaultFlags),
+        SecCSFlags(rawValue: 0),
         &requirement
       ) == errSecSuccess,
       let requirement
