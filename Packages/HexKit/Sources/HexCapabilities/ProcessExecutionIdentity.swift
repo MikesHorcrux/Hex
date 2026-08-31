@@ -108,8 +108,8 @@ public struct ProcessExecutionIdentity: Equatable, Sendable {
   }
 }
 
-private extension ProcessExecutionIdentity.FileIdentity {
-  init(status: stat) {
+extension ProcessExecutionIdentity.FileIdentity {
+  fileprivate init(status: stat) {
     self.init(
       device: UInt64(status.st_dev),
       inode: UInt64(status.st_ino),

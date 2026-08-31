@@ -839,7 +839,8 @@ struct MLXSwiftInferenceEngineLoaderTests {
       path: "snapshot-namespace",
       directoryHint: .isDirectory
     )
-    try FileManager.default.createDirectory(at: namespaceDirectory, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(
+      at: namespaceDirectory, withIntermediateDirectories: false)
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o700],
       ofItemAtPath: namespaceDirectory.path

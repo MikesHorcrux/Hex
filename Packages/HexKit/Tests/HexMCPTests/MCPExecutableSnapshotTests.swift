@@ -163,10 +163,10 @@ struct MCPExecutableSnapshotTests {
       )
     }
     var countState = MCPExecutableSnapshot.CopyState(policy: .standard)
-    for _ in 0..<(
-      MCPExecutableSnapshot.maximumClosureRunpaths
-        / MCPExecutableSnapshot.maximumRunpathsPerImage
-    ) {
+    for _
+      in 0..<(MCPExecutableSnapshot.maximumClosureRunpaths
+      / MCPExecutableSnapshot.maximumRunpathsPerImage)
+    {
       try countState.admitRunpathBudget(source: shortRunpaths, snapshot: [])
     }
     #expect(throws: MCPClientSessionError.limitExceeded) {

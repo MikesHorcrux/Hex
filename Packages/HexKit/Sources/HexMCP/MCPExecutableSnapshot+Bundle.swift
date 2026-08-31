@@ -363,12 +363,14 @@ extension MCPExecutableSnapshot {
       throw MCPClientSessionError.connectionClosed
     }
     guard let packageRoot = frameworkPackagePath(containing: relativePath) else {
-      guard let file = try openSourceRegularFile(
-        relativePath,
-        beneath: rootDescriptor,
-        requireExecutable: requireExecutable,
-        missingIsAllowed: missingIsAllowed
-      ) else {
+      guard
+        let file = try openSourceRegularFile(
+          relativePath,
+          beneath: rootDescriptor,
+          requireExecutable: requireExecutable,
+          missingIsAllowed: missingIsAllowed
+        )
+      else {
         return nil
       }
       return (relativePath: relativePath, file: file)
@@ -380,16 +382,18 @@ extension MCPExecutableSnapshot {
     guard parentPath == packageRoot || parentPath.hasPrefix(packageRoot + "/") else {
       throw MCPClientSessionError.connectionClosed
     }
-    guard let resolved = try resolveFrameworkRelativePath(
-      parentPath: parentPath,
-      target: basename,
-      packageRoot: packageRoot,
-      beneath: rootDescriptor,
-      expectedParentDescriptor: nil,
-      requireExecutable: requireExecutable,
-      requireRegular: true,
-      missingIsAllowed: missingIsAllowed
-    ) else {
+    guard
+      let resolved = try resolveFrameworkRelativePath(
+        parentPath: parentPath,
+        target: basename,
+        packageRoot: packageRoot,
+        beneath: rootDescriptor,
+        expectedParentDescriptor: nil,
+        requireExecutable: requireExecutable,
+        requireRegular: true,
+        missingIsAllowed: missingIsAllowed
+      )
+    else {
       return nil
     }
     return (
@@ -648,7 +652,8 @@ extension MCPExecutableSnapshot {
           throw MCPClientSessionError.connectionClosed
         }
         let remaining = Array(pendingComponents[componentIndex...])
-        pendingComponents = linkTarget
+        pendingComponents =
+          linkTarget
           .split(separator: "/", omittingEmptySubsequences: true)
           .map(String.init)
           .filter { $0 != "." } + remaining
@@ -790,11 +795,13 @@ extension MCPExecutableSnapshot {
       else {
         throw MCPClientSessionError.connectionClosed
       }
-      guard try readFrameworkSymlink(
-        name: binding.name,
-        descriptor: binding.parentDescriptor,
-        status: currentStatus
-      ) == binding.target else {
+      guard
+        try readFrameworkSymlink(
+          name: binding.name,
+          descriptor: binding.parentDescriptor,
+          status: currentStatus
+        ) == binding.target
+      else {
         throw MCPClientSessionError.connectionClosed
       }
     }

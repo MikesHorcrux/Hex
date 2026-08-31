@@ -1,7 +1,8 @@
 import Foundation
-@testable import HexCapabilities
 import HexCore
 import Testing
+
+@testable import HexCapabilities
 
 @Suite("Process authorization ledger")
 struct ProcessAuthorizationLedgerTests {

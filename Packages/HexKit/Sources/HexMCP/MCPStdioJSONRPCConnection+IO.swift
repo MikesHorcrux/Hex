@@ -64,7 +64,8 @@ extension MCPStdioJSONRPCConnection {
       throw MCPClientSessionError.connectionClosed
     }
     let deadline = writeDeadlineUptimeNanoseconds()
-    try await withCheckedThrowingContinuation { continuation in
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, any Error>) in
       guard !Task.isCancelled else {
         continuation.resume(throwing: CancellationError())
         return

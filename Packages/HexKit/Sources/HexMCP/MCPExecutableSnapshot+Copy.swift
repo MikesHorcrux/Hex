@@ -351,16 +351,18 @@ extension MCPExecutableSnapshot {
     else {
       throw MCPClientSessionError.connectionClosed
     }
-    guard let resolvedTarget = try MCPExecutableSnapshot.resolveFrameworkRelativePath(
-      parentPath: directoryPath(of: sourceRelativePath),
-      target: target,
-      packageRoot: sourcePackageRoot,
-      beneath: sourceRootDescriptor,
-      expectedParentDescriptor: sourceParentDescriptor,
-      requireExecutable: false,
-      requireRegular: false,
-      missingIsAllowed: false
-    ) else {
+    guard
+      let resolvedTarget = try MCPExecutableSnapshot.resolveFrameworkRelativePath(
+        parentPath: directoryPath(of: sourceRelativePath),
+        target: target,
+        packageRoot: sourcePackageRoot,
+        beneath: sourceRootDescriptor,
+        expectedParentDescriptor: sourceParentDescriptor,
+        requireExecutable: false,
+        requireRegular: false,
+        missingIsAllowed: false
+      )
+    else {
       throw MCPClientSessionError.connectionClosed
     }
     defer { Darwin.close(resolvedTarget.descriptor) }
@@ -372,10 +374,12 @@ extension MCPExecutableSnapshot {
     }
     let sourceSuffix = String(resolvedTarget.relativePath.dropFirst(sourcePackageRoot.count))
     let destinationResolvedPath = destinationPackageRoot + sourceSuffix
-    guard let destinationTarget = relativePath(
-      fromDirectory: directoryPath(of: destinationRelativePath),
-      toPath: destinationResolvedPath
-    ) else {
+    guard
+      let destinationTarget = relativePath(
+        fromDirectory: directoryPath(of: destinationRelativePath),
+        toPath: destinationResolvedPath
+      )
+    else {
       throw MCPClientSessionError.connectionClosed
     }
     try copyState.admitEntry(

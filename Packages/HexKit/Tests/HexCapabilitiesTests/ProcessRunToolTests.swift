@@ -38,11 +38,13 @@ struct ProcessRunToolTests {
     #expect(request.resource?.hasPrefix("process:hmac-sha256:") == true)
     #expect(request.details["executable"] == .string("/usr/bin/printf"))
     #expect(request.details["working_directory"] == .string("/private/tmp"))
-    #expect(request.details["argv"] == .array([
-      .string("\"/usr/bin/printf\""),
-      .string("\"%s\""),
-      .string("\"\(commandArgument)\""),
-    ]))
+    #expect(
+      request.details["argv"]
+        == .array([
+          .string("\"/usr/bin/printf\""),
+          .string("\"%s\""),
+          .string("\"\(commandArgument)\""),
+        ]))
     #expect(request.details["argv_count"] == .integer(3))
     #expect(request.details["argument_count"] == .integer(2))
     #expect(String(describing: request).contains(commandArgument))
@@ -102,20 +104,24 @@ struct ProcessRunToolTests {
     let request = try await tool.authorizationRequest(for: call, in: context)
 
     #expect(request.details["environment_variable_count"] == .integer(2))
-    #expect(request.details["environment_names"] == .array([
-      .string("HEX_SECRET"),
-      .string("PATH"),
-    ]))
-    #expect(request.details["environment_bytes"] == .integer(
-      Int64(
-        "PATH".utf8.count
-          + "/usr/bin:/bin".utf8.count
-          + 2
-          + "HEX_SECRET".utf8.count
-          + secret.utf8.count
-          + 2
-      )
-    ))
+    #expect(
+      request.details["environment_names"]
+        == .array([
+          .string("HEX_SECRET"),
+          .string("PATH"),
+        ]))
+    #expect(
+      request.details["environment_bytes"]
+        == .integer(
+          Int64(
+            "PATH".utf8.count
+              + "/usr/bin:/bin".utf8.count
+              + 2
+              + "HEX_SECRET".utf8.count
+              + secret.utf8.count
+              + 2
+          )
+        ))
     #expect(!String(describing: request).contains(secret))
   }
 

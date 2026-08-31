@@ -357,7 +357,8 @@ final class MCPExecutableSnapshot: Sendable {
       let imageCount = source.count + snapshot.count
       let (nextCount, countOverflowed) = admittedRunpathCount.addingReportingOverflow(imageCount)
       let imageBytes = sourceBytes + snapshotBytes
-      let (nextBytes, bytesOverflowed) = admittedRunpathByteCount
+      let (nextBytes, bytesOverflowed) =
+        admittedRunpathByteCount
         .addingReportingOverflow(imageBytes)
       guard
         !countOverflowed,

@@ -28,8 +28,8 @@ public struct ProcessRunTool: HostTool, Sendable {
       name: "process_run",
       description:
         "Run one non-interactive local executable with bounded combined output and no implicit shell. "
-          + "Authorization shows the complete escaped argv; never put secrets in arguments. "
-          + "Injected environment values remain private and only names, count, and bytes are shown.",
+        + "Authorization shows the complete escaped argv; never put secrets in arguments. "
+        + "Injected environment values remain private and only names, count, and bytes are shown.",
       inputSchema: WorkspaceToolSchema.object(
         properties: [
           "executable": WorkspaceToolSchema.string(
@@ -79,10 +79,12 @@ public struct ProcessRunTool: HostTool, Sendable {
         throw ProcessExecutionError.invalidRequest
       }
 
-      guard let renderedArguments = ProcessPromptText.renderArguments(
-        [request.executable.path] + request.arguments,
-        maximumBytes: maximumAuthorizationDetailsBytes
-      ) else {
+      guard
+        let renderedArguments = ProcessPromptText.renderArguments(
+          [request.executable.path] + request.arguments,
+          maximumBytes: maximumAuthorizationDetailsBytes
+        )
+      else {
         throw ProcessExecutionError.authorizationDetailsTooLarge
       }
       let environmentNames = request.environment.keys.sorted()
@@ -161,10 +163,12 @@ public struct ProcessRunTool: HostTool, Sendable {
     do {
       try Task.checkCancellation()
       let request = try validatedRequest(for: call, in: context)
-      guard let snapshot = await authorizationLedger.take(
-        runID: context.runID,
-        toolCallID: call.id
-      ) else {
+      guard
+        let snapshot = await authorizationLedger.take(
+          runID: context.runID,
+          toolCallID: call.id
+        )
+      else {
         throw ProcessExecutionError.authorizationRequired
       }
       try Task.checkCancellation()
