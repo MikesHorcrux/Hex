@@ -154,7 +154,15 @@ extension POSIXProcessExecutor {
     var cleanupFailed = false
     let groupSignalResult = Darwin.kill(-processID, SIGKILL)
     let groupSignalError = groupSignalResult == 0 ? 0 : errno
-    if groupSignalResult < 0, groupSignalError != ESRCH {
+    // Darwin excludes zombie members from POSIX process-group signalling. When WNOWAIT has
+    // already observed this owned leader's exit, a zombie-only group therefore reports EPERM
+    // even though there is no live descendant left to terminate. Keep the leader waitable until
+    // after this signal so the PID/PGID cannot be reused, and retain every other kill failure.
+    let groupSignalWasBenign =
+      groupSignalResult == 0
+      || groupSignalError == ESRCH
+      || (leaderHasExited && groupSignalError == EPERM)
+    if !groupSignalWasBenign {
       cleanupFailed = true
     }
 
