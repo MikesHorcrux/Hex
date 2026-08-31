@@ -6,11 +6,22 @@ import Testing
 
 @Suite("MCP executable snapshot bounds", .serialized)
 struct MCPExecutableSnapshotTests {
-  @Test("Uses a non-generic Apple anchor for the Xcode hard-link exception")
+  @Test("Uses the complete Apple Xcode designated requirement")
   func xcodeCodeSigningRequirementIsAppleOwned() {
     let requirement = MCPExecutableSnapshot.xcodeCodeSigningRequirement
-    #expect(requirement == #"anchor apple and identifier "com.apple.dt.Xcode""#)
-    #expect(!requirement.contains("generic"))
+    let expected =
+      #"(anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "59GAB85EFG") and identifier "com.apple.dt.Xcode""#
+    #expect(requirement == expected)
+    #expect(requirement.contains("anchor apple generic"))
+    #expect(requirement.contains("certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */"))
+    #expect(requirement.contains("certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */"))
+    #expect(requirement.contains("certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */"))
+    #expect(requirement.contains("certificate leaf[subject.OU] = \"59GAB85EFG\""))
+    #expect(requirement.contains("identifier \"com.apple.dt.Xcode\""))
+    #expect(
+      requirement
+        != #"anchor apple generic and identifier "com.apple.dt.Xcode""#
+    )
   }
 
   @Test("Allows only the exact standard Applications metadata")
@@ -39,10 +50,11 @@ struct MCPExecutableSnapshotTests {
     )
     #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(wrongMode))
 
+    let nonRootOwner = geteuid() == 0 ? uid_t(501) : geteuid()
     let wrongOwner = metadata(
       fileType: S_IFDIR,
       permissions: 0o775,
-      uid: geteuid(),
+      uid: nonRootOwner,
       gid: MCPExecutableSnapshot.standardApplicationsGroupID
     )
     #expect(!MCPExecutableSnapshot.isAcceptableStandardApplicationsDirectory(wrongOwner))
@@ -81,6 +93,26 @@ struct MCPExecutableSnapshotTests {
     #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(worldWritable))
 
     let setID = metadata(fileType: S_IFDIR, permissions: 0o4755, uid: 0, gid: 0)
+    #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(setID))
+  }
+
+  @Test("Ignores non-authoritative permission bits on trusted framework symlinks")
+  func acceptsTrustedFrameworkSymlinkModeBits() {
+    let symlink = metadata(
+      fileType: S_IFLNK,
+      permissions: 0o777,
+      uid: 0,
+      gid: 0,
+      size: 1
+    )
+    #expect(MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(symlink))
+
+    var userOwned = symlink
+    userOwned.st_uid = geteuid() == 0 ? uid_t(501) : geteuid()
+    #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(userOwned))
+
+    var setID = symlink
+    setID.st_mode |= S_ISUID
     #expect(!MCPExecutableSnapshot.isAcceptableTrustedBundleComponent(setID))
   }
 

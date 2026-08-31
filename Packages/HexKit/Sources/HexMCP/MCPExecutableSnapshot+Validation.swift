@@ -86,7 +86,7 @@ extension MCPExecutableSnapshot {
   }
 
   static let xcodeCodeSigningRequirement =
-    #"anchor apple and identifier "com.apple.dt.Xcode""#
+    #"(anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "59GAB85EFG") and identifier "com.apple.dt.Xcode""#
 
   static let standardApplicationsPath = "/Applications"
   static let standardXcodeBundlePath = "/Applications/Xcode.app"
