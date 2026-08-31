@@ -45,7 +45,10 @@ actor MLXModelArtifactSnapshot {
     guard
       fstat(pathDescriptor, &pathDirectoryStatus) == 0,
       directoryIdentity.matches(pathDirectoryStatus),
-      try artifactNames(in: pathDescriptor) == entries.map(\.name).sorted()
+      try artifactNames(
+        in: pathDescriptor,
+        maximumCount: entries.count
+      ) == entries.map(\.name).sorted()
     else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
@@ -111,7 +114,13 @@ actor MLXModelArtifactSnapshot {
     }
   }
 
-  private nonisolated func artifactNames(in fileDescriptor: Int32) throws -> [String] {
+  private nonisolated func artifactNames(
+    in fileDescriptor: Int32,
+    maximumCount: Int
+  ) throws -> [String] {
+    guard maximumCount >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
     let enumerationDescriptor = ".".withCString {
       openat(fileDescriptor, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     }
@@ -124,6 +133,8 @@ actor MLXModelArtifactSnapshot {
     defer { closedir(directory) }
 
     var names: [String] = []
+    let enumerationCapacity = maximumCount == Int.max ? Int.max : maximumCount + 1
+    names.reserveCapacity(min(enumerationCapacity, 64))
     errno = 0
     while let entry = readdir(directory) {
       let length = Int(entry.pointee.d_namlen)
@@ -135,7 +146,19 @@ actor MLXModelArtifactSnapshot {
         throw MLXLocalInferenceProviderError.invalidModelConfiguration
       }
       if name != "." && name != ".." {
+        guard
+          !name.isEmpty,
+          name.utf8.count <= 255,
+          !name.contains("/"),
+          !name.contains("\0"),
+          names.count <= maximumCount
+        else {
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
         names.append(name)
+        if names.count > maximumCount {
+          throw MLXLocalInferenceProviderError.invalidModelConfiguration
+        }
       }
     }
     guard errno == 0 else {

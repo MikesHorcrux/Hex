@@ -6,6 +6,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
   private let modelID: ModelID
   private let defaultMaximumOutputTokens: Int
   private let maximumContextTokens: Int
+  private let supportsToolCalling: Bool
   private let maximumBufferedEvents: Int
   private let artifactSnapshot: MLXModelArtifactSnapshot?
   private let generationRuns:
@@ -16,12 +17,14 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     modelID: ModelID,
     defaultMaximumOutputTokens: Int,
     maximumContextTokens: Int,
+    supportsToolCalling: Bool = false,
     artifactSnapshot: MLXModelArtifactSnapshot,
     maximumBufferedEvents: Int = 64
   ) {
     self.modelID = modelID
     self.defaultMaximumOutputTokens = defaultMaximumOutputTokens
     self.maximumContextTokens = maximumContextTokens
+    self.supportsToolCalling = supportsToolCalling
     self.artifactSnapshot = artifactSnapshot
     self.maximumBufferedEvents = maximumBufferedEvents
     generationRuns = { request, maximumOutputTokens, maximumContextTokens in
@@ -41,6 +44,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     modelID: ModelID,
     defaultMaximumOutputTokens: Int,
     maximumContextTokens: Int = 32_768,
+    supportsToolCalling: Bool = false,
     maximumBufferedEvents: Int = 64,
     artifactSnapshot: MLXModelArtifactSnapshot? = nil,
     generationRuns:
@@ -53,6 +57,7 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     self.modelID = modelID
     self.defaultMaximumOutputTokens = defaultMaximumOutputTokens
     self.maximumContextTokens = maximumContextTokens
+    self.supportsToolCalling = supportsToolCalling
     self.maximumBufferedEvents = maximumBufferedEvents
     self.artifactSnapshot = artifactSnapshot
     self.generationRuns = generationRuns
@@ -62,18 +67,15 @@ struct MLXSwiftInferenceEngine: MLXInferenceEngine, Sendable {
     _ request: InferenceRequest
   ) async throws -> MLXInferenceEngineRun {
     try Task.checkCancellation()
+    try MLXInferenceRequestAdmission.validate(
+      request,
+      modelID: modelID,
+      maximumOutputTokens: defaultMaximumOutputTokens,
+      maximumContextTokens: maximumContextTokens,
+      supportsToolCalling: supportsToolCalling
+    )
     try artifactSnapshot?.validateBoundPath()
     let maximumOutputTokens = request.options.maxOutputTokens ?? defaultMaximumOutputTokens
-    guard
-      request.modelID == modelID,
-      (1...defaultMaximumOutputTokens).contains(maximumOutputTokens),
-      maximumOutputTokens <= maximumContextTokens,
-      request.options.temperature.map({
-        $0.isFinite && (0...2).contains($0)
-      }) ?? true
-    else {
-      throw MLXLocalInferenceProviderError.invalidRequest
-    }
 
     let (stream, continuation) = AsyncThrowingStream.makeStream(
       of: MLXInferenceEngineEvent.self,

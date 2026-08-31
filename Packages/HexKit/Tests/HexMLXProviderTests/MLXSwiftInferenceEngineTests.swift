@@ -112,6 +112,72 @@ struct MLXSwiftInferenceEngineTests {
   }
 
   @Test
+  func rejectsDirectlyStartedIncoherentRequestsBeforeGeneration() async throws {
+    let generationAttempts = GenerationAttemptProbe()
+    let engine = MLXSwiftInferenceEngine(
+      modelID: ModelID(rawValue: "model"),
+      defaultMaximumOutputTokens: 128,
+      generationRuns: { _, _, _ in
+        await generationAttempts.record()
+        throw MLXLocalInferenceProviderError.generationFailed
+      }
+    )
+    let messageID = MessageID()
+    let request = InferenceRequest(
+      providerID: ProviderID(rawValue: "mlx.local"),
+      modelID: ModelID(rawValue: "model"),
+      messages: [
+        Message(id: messageID, role: .user, content: [.text("first")]),
+        Message(id: messageID, role: .user, content: [.text("duplicate")]),
+      ]
+    )
+
+    await #expect(throws: MLXLocalInferenceProviderError.invalidRequest) {
+      _ = try await engine.start(request)
+    }
+    #expect(await generationAttempts.count() == 0)
+  }
+
+  @Test
+  func rejectsDirectlyStartedUnsupportedToolSchemasBeforeGeneration() async throws {
+    let generationAttempts = GenerationAttemptProbe()
+    let engine = MLXSwiftInferenceEngine(
+      modelID: ModelID(rawValue: "model"),
+      defaultMaximumOutputTokens: 128,
+      supportsToolCalling: true,
+      generationRuns: { _, _, _ in
+        await generationAttempts.record()
+        throw MLXLocalInferenceProviderError.generationFailed
+      }
+    )
+    let request = InferenceRequest(
+      providerID: ProviderID(rawValue: "mlx.local"),
+      modelID: ModelID(rawValue: "model"),
+      messages: [Message(role: .user, content: [.text("use the tool")])],
+      tools: [
+        ToolDefinition(
+          name: "unsafe",
+          description: "Contains an unsupported schema keyword.",
+          inputSchema: [
+            "type": .string("object"),
+            "properties": .object([
+              "path": .object([
+                "type": .string("string"),
+                "pattern": .string(".+"),
+              ])
+            ]),
+          ]
+        )
+      ]
+    )
+
+    await #expect(throws: MLXLocalInferenceProviderError.invalidRequest) {
+      _ = try await engine.start(request)
+    }
+    #expect(await generationAttempts.count() == 0)
+  }
+
+  @Test
   func rejectsSnapshotReplacementBeforeInjectedGenerationStarts() async throws {
     let root = FileManager.default.temporaryDirectory.appending(
       path: "hex-mlx-generation-snapshot-\(UUID().uuidString)",

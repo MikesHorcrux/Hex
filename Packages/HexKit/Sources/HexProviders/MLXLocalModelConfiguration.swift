@@ -20,7 +20,8 @@ public struct MLXLocalModelConfiguration: Equatable, Sendable {
     directory: URL,
     contextWindow: Int? = nil,
     maximumOutputTokens: Int,
-    supportsToolCalling: Bool = true,
+    /// Tool calling is opt-in and should only be enabled after model support is verified.
+    supportsToolCalling: Bool = false,
     supportsParallelToolCalling: Bool = false,
     resourcePolicy: MLXLocalModelResourcePolicy? = nil
   ) throws {

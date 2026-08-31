@@ -44,7 +44,11 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     }
     defer { close(sourceDescriptor) }
 
-    let initialNames = try artifactNames(in: sourceDescriptor)
+    let maximumArtifactCount = configuration.resourcePolicy.maximumArtifactCount
+    let initialNames = try artifactNames(
+      in: sourceDescriptor,
+      maximumCount: maximumArtifactCount
+    )
     let artifacts = try openArtifacts(
       named: initialNames,
       in: sourceDescriptor,
@@ -81,7 +85,8 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     try validateSourceStillMatches(
       artifacts,
       sourceDescriptor: sourceDescriptor,
-      initialNames: initialNames
+      initialNames: initialNames,
+      maximumArtifactCount: maximumArtifactCount
     )
     var directoryStatus = stat()
     guard
@@ -107,7 +112,13 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     return snapshot
   }
 
-  private func artifactNames(in directoryDescriptor: Int32) throws -> [String] {
+  private func artifactNames(
+    in directoryDescriptor: Int32,
+    maximumCount: Int
+  ) throws -> [String] {
+    guard maximumCount >= 0 else {
+      throw MLXLocalInferenceProviderError.invalidModelConfiguration
+    }
     let enumerationDescriptor = ".".withCString {
       openat(directoryDescriptor, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     }
@@ -120,6 +131,8 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
     defer { closedir(directory) }
 
     var names: [String] = []
+    let enumerationCapacity = maximumCount == Int.max ? Int.max : maximumCount + 1
+    names.reserveCapacity(min(enumerationCapacity, 64))
     errno = 0
     while let entry = readdir(directory) {
       let length = Int(entry.pointee.d_namlen)
@@ -141,7 +154,13 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
       else {
         throw MLXLocalInferenceProviderError.invalidModelConfiguration
       }
+      guard names.count <= maximumCount else {
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
+      }
       names.append(name)
+      if names.count > maximumCount {
+        throw MLXLocalInferenceProviderError.invalidModelConfiguration
+      }
     }
     guard errno == 0 else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
@@ -400,9 +419,15 @@ struct MLXModelArtifactSnapshotBuilder: Sendable {
   private func validateSourceStillMatches(
     _ artifacts: [MLXModelArtifact],
     sourceDescriptor: Int32,
-    initialNames: [String]
+    initialNames: [String],
+    maximumArtifactCount: Int
   ) throws {
-    guard try artifactNames(in: sourceDescriptor) == initialNames else {
+    guard
+      try artifactNames(
+        in: sourceDescriptor,
+        maximumCount: maximumArtifactCount
+      ) == initialNames
+    else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
     for artifact in artifacts {

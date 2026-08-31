@@ -87,8 +87,7 @@ struct MLXLocalInferenceProviderTests {
       modelID: ModelID(rawValue: "model-b"),
       displayName: "Model B",
       directory: modelBDirectory,
-      maximumOutputTokens: 512,
-      supportsToolCalling: false
+      maximumOutputTokens: 512
     )
     let provider = try MLXLocalInferenceProvider(
       configuration: MLXLocalProviderConfiguration(
@@ -104,6 +103,15 @@ struct MLXLocalInferenceProviderTests {
       [.textInput, .streaming, .toolCalling],
       [.textInput, .streaming],
     ])
+    await #expect(throws: MLXLocalInferenceProviderError.invalidToolChoice) {
+      _ = try await provider.stream(
+        makeRequest(
+          modelID: ModelID(rawValue: "model-b"),
+          tools: [sampleTool],
+          toolChoice: .required
+        )
+      )
+    }
   }
 
   @Test

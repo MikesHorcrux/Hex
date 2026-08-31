@@ -16,7 +16,12 @@ struct MLXModelArtifactSnapshotIdentity: Sendable {
   let changedNanoseconds: Int
 
   init(status: stat) throws {
-    guard status.st_size >= 0 else {
+    let permissions = status.st_mode & mode_t(0o7777)
+    guard
+      status.st_size >= 0,
+      status.st_uid == geteuid(),
+      permissions & mode_t(0o022) == 0
+    else {
       throw MLXLocalInferenceProviderError.invalidModelConfiguration
     }
     device = UInt64(status.st_dev)
@@ -24,7 +29,7 @@ struct MLXModelArtifactSnapshotIdentity: Sendable {
     owner = status.st_uid
     group = status.st_gid
     fileType = status.st_mode & S_IFMT
-    permissions = status.st_mode & mode_t(0o7777)
+    self.permissions = permissions
     linkCount = UInt64(status.st_nlink)
     size = UInt64(status.st_size)
     modifiedSeconds = status.st_mtimespec.tv_sec
@@ -34,13 +39,15 @@ struct MLXModelArtifactSnapshotIdentity: Sendable {
   }
 
   func matches(_ status: stat) -> Bool {
+    let permissions = status.st_mode & mode_t(0o7777)
     status.st_size >= 0
       && UInt64(status.st_dev) == device
       && UInt64(status.st_ino) == inode
       && status.st_uid == owner
+      && owner == geteuid()
       && status.st_gid == group
       && status.st_mode & S_IFMT == fileType
-      && status.st_mode & mode_t(0o7777) == permissions
+      && permissions == self.permissions
       && UInt64(status.st_nlink) == linkCount
       && UInt64(status.st_size) == size
       && status.st_mtimespec.tv_sec == modifiedSeconds

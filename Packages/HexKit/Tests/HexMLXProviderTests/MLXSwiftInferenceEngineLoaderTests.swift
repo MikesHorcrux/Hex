@@ -659,6 +659,157 @@ struct MLXSwiftInferenceEngineLoaderTests {
   }
 
   @Test
+  func rejectsGroupWritableSourceArtifactsBeforeSnapshotting() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let writableArtifact = modelDirectory.appending(path: "config.json")
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o664],
+      ofItemAtPath: writableArtifact.path
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try makeSnapshotBuilder(root: root).makeSnapshot(
+        for: makeConfiguration(directory: modelDirectory)
+      )
+    }
+  }
+
+  @Test
+  func rejectsSourceEnumerationBeyondTheArtifactBound() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    try Data("extra".utf8).write(to: modelDirectory.appending(path: "extra.json"))
+    let policy = try MLXLocalModelResourcePolicy(
+      maximumArtifactBytes: 64,
+      maximumControlFileBytes: 64,
+      maximumArtifactCount: 3
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try makeSnapshotBuilder(root: root).makeSnapshot(
+        for: makeConfiguration(directory: modelDirectory, resourcePolicy: policy)
+      )
+    }
+  }
+
+  @Test
+  func rejectsSourceArtifactModeChangesDuringSnapshot() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let configuration = try makeConfiguration(directory: modelDirectory)
+    let sourceArtifact = modelDirectory.appending(path: "config.json")
+    let builder = MLXModelArtifactSnapshotBuilder(
+      namespace: try MLXModelArtifactSnapshotNamespace(
+        directory: root.appending(path: "snapshot-namespace", directoryHint: .isDirectory),
+        snapshotLimit: 1
+      ),
+      copyArtifact: { sourceDescriptor, destinationDescriptor, byteCount in
+        var copiedBytes: UInt64 = 0
+        var buffer = [UInt8](repeating: 0, count: 1_024)
+        while copiedBytes < byteCount {
+          let requested = min(buffer.count, Int(byteCount - copiedBytes))
+          let readCount = buffer.withUnsafeMutableBytes { bytes -> Int in
+            guard let baseAddress = bytes.baseAddress else {
+              return -1
+            }
+            return Darwin.read(sourceDescriptor, baseAddress, requested)
+          }
+          guard readCount > 0 else {
+            throw MLXLocalInferenceProviderError.invalidModelConfiguration
+          }
+          var writtenBytes = 0
+          while writtenBytes < readCount {
+            let writeCount = buffer.withUnsafeBytes { bytes -> Int in
+              guard let baseAddress = bytes.baseAddress else {
+                return -1
+              }
+              return Darwin.write(
+                destinationDescriptor,
+                baseAddress.advanced(by: writtenBytes),
+                readCount - writtenBytes
+              )
+            }
+            guard writeCount > 0 else {
+              throw MLXLocalInferenceProviderError.invalidModelConfiguration
+            }
+            writtenBytes += writeCount
+          }
+          copiedBytes += UInt64(readCount)
+        }
+        try FileManager.default.setAttributes(
+          [.posixPermissions: 0o600],
+          ofItemAtPath: sourceArtifact.path
+        )
+      }
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try builder.makeSnapshot(for: configuration)
+    }
+  }
+
+  @Test
+  func rejectsNamespaceEnumerationBeyondItsBound() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let namespaceDirectory = root.appending(
+      path: "snapshot-namespace",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: namespaceDirectory, withIntermediateDirectories: false)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: namespaceDirectory.path
+    )
+    for name in ["claim-0", "snapshot-0", "claim-1", "snapshot-1", "unexpected"] {
+      try Data().write(to: namespaceDirectory.appending(path: name))
+    }
+    let namespace = try MLXModelArtifactSnapshotNamespace(
+      directory: namespaceDirectory,
+      snapshotLimit: 2
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      _ = try MLXModelArtifactSnapshotBuilder(namespace: namespace).makeSnapshot(
+        for: makeConfiguration(directory: modelDirectory)
+      )
+    }
+  }
+
+  @Test
+  func rejectsExtraSnapshotEntriesBeforeUnboundedEnumeration() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let modelDirectory = root.appending(path: "model", directoryHint: .isDirectory)
+    try makeCompleteModelDirectory(at: modelDirectory)
+    let snapshot = try makeSnapshotBuilder(root: root, snapshotLimit: 1).makeSnapshot(
+      for: makeConfiguration(directory: modelDirectory)
+    )
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: snapshot.directory.path
+    )
+    try Data().write(to: snapshot.directory.appending(path: "unexpected.json"))
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o500],
+      ofItemAtPath: snapshot.directory.path
+    )
+
+    #expect(throws: MLXLocalInferenceProviderError.invalidModelConfiguration) {
+      try snapshot.validateBoundPath()
+    }
+  }
+
+  @Test
   func defaultsToA16GBMacResourceEnvelope() throws {
     let policy = try MLXLocalModelResourcePolicy.macWith16GBMemory
     #expect(policy.maximumArtifactBytes == 6 * 1_024 * 1_024 * 1_024)

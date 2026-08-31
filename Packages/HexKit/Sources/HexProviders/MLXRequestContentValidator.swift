@@ -7,6 +7,13 @@ enum MLXRequestContentValidator {
   static let maximumJSONNodes = 100_000
 
   static func validate(_ request: InferenceRequest) -> Bool {
+    guard
+      !request.messages.isEmpty,
+      request.messages.count <= 4_096,
+      request.tools.count <= 4_096
+    else {
+      return false
+    }
     var remainingBytes = maximumRequestBytes
     var remainingNodes = maximumJSONNodes
     var seenMessageIDs = Set<MessageID>()
@@ -62,6 +69,9 @@ enum MLXRequestContentValidator {
       return false
     }
 
+    guard request.tools.allSatisfy({ isValidToolName($0.name) }) else {
+      return false
+    }
     let toolNames = request.tools.map(\.name)
     guard Set(toolNames).count == toolNames.count else {
       return false

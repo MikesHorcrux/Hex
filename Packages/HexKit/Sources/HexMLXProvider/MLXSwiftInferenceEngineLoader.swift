@@ -59,6 +59,7 @@ public struct MLXSwiftInferenceEngineLoader: MLXInferenceEngineLoader, Sendable 
       defaultMaximumOutputTokens: configuration.maximumOutputTokens,
       maximumContextTokens:
         configuration.contextWindow ?? configuration.resourcePolicy.maximumContextTokens,
+      supportsToolCalling: configuration.supportsToolCalling,
       artifactSnapshot: snapshot
     )
   }

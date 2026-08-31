@@ -14,35 +14,14 @@ extension MLXLocalInferenceProvider {
     guard let model = configuration.models.first(where: { $0.modelID == request.modelID }) else {
       throw MLXLocalInferenceProviderError.unknownModel
     }
-    guard
-      !request.messages.isEmpty,
-      request.messages.count <= 4_096,
-      request.tools.count <= 4_096,
-      request.options.maxOutputTokens.map({
-        (1...model.maximumOutputTokens).contains($0)
-      }) ?? true,
-      request.options.temperature.map({
-        $0.isFinite && (0...2).contains($0)
-      }) ?? true,
-      MLXRequestContentValidator.validate(request)
-    else {
-      throw MLXLocalInferenceProviderError.invalidRequest
-    }
-    if !request.tools.isEmpty, !model.supportsToolCalling {
-      throw MLXLocalInferenceProviderError.invalidToolChoice
-    }
-    switch request.toolChoice {
-    case .automatic, .none:
-      break
-    case .required:
-      guard !request.tools.isEmpty else {
-        throw MLXLocalInferenceProviderError.invalidToolChoice
-      }
-    case .named(let name):
-      guard request.tools.contains(where: { $0.name == name }) else {
-        throw MLXLocalInferenceProviderError.invalidToolChoice
-      }
-    }
+    try MLXInferenceRequestAdmission.validate(
+      request,
+      modelID: model.modelID,
+      maximumOutputTokens: model.maximumOutputTokens,
+      maximumContextTokens:
+        model.contextWindow ?? model.resourcePolicy.maximumContextTokens,
+      supportsToolCalling: model.supportsToolCalling
+    )
     return model
   }
 
