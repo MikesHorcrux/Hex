@@ -155,18 +155,20 @@ extension POSIXProcessExecutor {
     let groupSignalResult = Darwin.kill(-processID, SIGKILL)
     let groupSignalError = groupSignalResult == 0 ? 0 : errno
     // Darwin excludes zombie members from POSIX process-group signalling. When WNOWAIT has
-    // already observed this owned leader's exit, a zombie-only group therefore reports EPERM
-    // even though there is no live descendant left to terminate. Keep the leader waitable until
-    // after this signal so the PID/PGID cannot be reused, and retain every other kill failure.
-    let groupSignalWasBenign =
-      groupSignalResult == 0
-      || groupSignalError == ESRCH
-      || (leaderHasExited && groupSignalError == EPERM)
-    if !groupSignalWasBenign {
+    // already observed this owned leader's exit, a zombie-only group can therefore report EPERM
+    // even though there is no live descendant left to terminate. Keep that result provisional:
+    // the leader remains waitable while it is signalled and reaped, then the old group is probed
+    // without a signal. This preserves the PID/PGID reuse guard and does not hide a live group.
+    let groupSignalPermissionDenied =
+      leaderHasExited && groupSignalResult < 0 && groupSignalError == EPERM
+    if groupSignalResult < 0,
+      groupSignalError != ESRCH,
+      !groupSignalPermissionDenied
+    {
       cleanupFailed = true
     }
 
-    if !leaderHasExited {
+    if !leaderHasExited || groupSignalPermissionDenied {
       let leaderSignalResult = Darwin.kill(processID, SIGKILL)
       let leaderSignalError = leaderSignalResult == 0 ? 0 : errno
       if leaderSignalResult < 0, leaderSignalError != ESRCH {
@@ -187,6 +189,18 @@ extension POSIXProcessExecutor {
       }
       cleanupFailed = true
       break
+    }
+
+    if didReap, groupSignalPermissionDenied {
+      // The leader PID is no longer protected after waitpid succeeds, so this must remain a
+      // non-signaling probe. ESRCH proves the EPERM came from the old, zombie-only group; 0,
+      // EPERM, or any other error means cleanup cannot prove that group is gone.
+      let groupProbeResult = Darwin.kill(-processID, 0)
+      let groupProbeError = groupProbeResult == 0 ? 0 : errno
+      let oldGroupIsGone = groupProbeResult < 0 && groupProbeError == ESRCH
+      if !oldGroupIsGone {
+        cleanupFailed = true
+      }
     }
 
     guard didReap, !cleanupFailed else {
