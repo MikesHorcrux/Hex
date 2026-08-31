@@ -5,7 +5,7 @@ import Testing
 
 @testable import HexCapabilities
 
-@Suite("Workspace file-system writes")
+@Suite("Workspace file-system writes", .serialized)
 struct WorkspaceFileSystemWriteTests {
   @Test
   func rejectsHighExpansionBeforeConstructingTheReplacement() throws {

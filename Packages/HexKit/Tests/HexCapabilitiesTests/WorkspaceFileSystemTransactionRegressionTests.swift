@@ -5,7 +5,7 @@ import Testing
 
 @testable import HexCapabilities
 
-@Suite("Workspace file-system transaction regressions")
+@Suite("Workspace file-system transaction regressions", .serialized)
 struct WorkspaceFileSystemTransactionRegressionTests {
   @Test
   func namespaceConstructionFailureCannotCreateUnboundedReplacementDirectories() throws {
