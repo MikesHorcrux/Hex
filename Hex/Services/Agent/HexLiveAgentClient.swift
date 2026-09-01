@@ -258,7 +258,7 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling {
     let values = try configuration.liveValues()
     let fileSystem = try WorkspaceFileSystem(root: values.workspaceRoot)
     let processExecutor = POSIXProcessExecutor()
-    let toolExecutor = try WorkspaceCodingToolExecutor(
+    let toolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
       processExecutor: processExecutor
     )

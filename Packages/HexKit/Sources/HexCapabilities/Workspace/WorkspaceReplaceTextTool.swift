@@ -5,25 +5,25 @@ public struct WorkspaceReplaceTextTool: HostTool, Sendable {
     name: "workspace_replace_text",
     description:
       "Revision-guardedly replace an exact number of text occurrences in one workspace file.",
-    inputSchema: WorkspaceToolSchema.object(
+    inputSchema: HostToolSchema.object(
       properties: [
-        "path": WorkspaceToolSchema.string(
+        "path": HostToolSchema.string(
           "A file path relative to the run working directory.",
           maximumLength: 4_096
         ),
-        "old_text": WorkspaceToolSchema.string(
+        "old_text": HostToolSchema.string(
           "The exact nonempty text to replace.",
           maximumLength: 1 * 1_024 * 1_024
         ),
-        "new_text": WorkspaceToolSchema.string(
+        "new_text": HostToolSchema.string(
           "The replacement text, which may be empty.",
           maximumLength: 1 * 1_024 * 1_024
         ),
-        "expected_revision": WorkspaceToolSchema.string(
+        "expected_revision": HostToolSchema.string(
           "The 64-character revision returned by a read.",
           maximumLength: 64
         ),
-        "expected_occurrences": WorkspaceToolSchema.integer(
+        "expected_occurrences": HostToolSchema.integer(
           "The exact number of non-overlapping occurrences that must be present.",
           minimum: 1,
           maximum: 10_000

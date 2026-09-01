@@ -45,6 +45,8 @@ struct HexResidentSetupView: View {
         Text("Workspace")
       }
 
+      HexComputerAccessView()
+
       if let statusMessage = model.statusMessage {
         Text(statusMessage)
           .font(.callout)

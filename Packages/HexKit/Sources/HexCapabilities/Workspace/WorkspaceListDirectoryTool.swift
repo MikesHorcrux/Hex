@@ -5,9 +5,9 @@ public struct WorkspaceListDirectoryTool: HostTool, Sendable {
     name: "workspace_list_directory",
     description:
       "List one directory inside the selected workspace without following symbolic links.",
-    inputSchema: WorkspaceToolSchema.object(
+    inputSchema: HostToolSchema.object(
       properties: [
-        "path": WorkspaceToolSchema.string(
+        "path": HostToolSchema.string(
           "A path relative to the run working directory. Use a single dot for that directory.",
           maximumLength: 4_096
         )

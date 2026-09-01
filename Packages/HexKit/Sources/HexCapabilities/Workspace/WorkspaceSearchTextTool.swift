@@ -4,13 +4,13 @@ public struct WorkspaceSearchTextTool: HostTool, Sendable {
   public let definition = ToolDefinition(
     name: "workspace_search_text",
     description: "Search bounded UTF-8 workspace files for an exact single-line text fragment.",
-    inputSchema: WorkspaceToolSchema.object(
+    inputSchema: HostToolSchema.object(
       properties: [
-        "path": WorkspaceToolSchema.string(
+        "path": HostToolSchema.string(
           "A directory path relative to the run working directory.",
           maximumLength: 4_096
         ),
-        "query": WorkspaceToolSchema.string(
+        "query": HostToolSchema.string(
           "The exact single-line text fragment to find.",
           maximumLength: 4_096
         ),

@@ -43,7 +43,7 @@ public final class HexGatewayResidentHost {
     let authorizationBroker = HexGatewayAuthorizationBroker()
     let fileSystem = try WorkspaceFileSystem(root: configuration.workspaceRoot)
     let processExecutor = POSIXProcessExecutor()
-    let toolExecutor = try WorkspaceCodingToolExecutor(
+    let toolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
       processExecutor: processExecutor
     )

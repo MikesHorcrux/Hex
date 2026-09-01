@@ -4,17 +4,17 @@ public struct WorkspaceWriteTextFileTool: HostTool, Sendable {
   public let definition = ToolDefinition(
     name: "workspace_write_text_file",
     description: "Create or revision-guardedly replace one UTF-8 workspace file.",
-    inputSchema: WorkspaceToolSchema.object(
+    inputSchema: HostToolSchema.object(
       properties: [
-        "path": WorkspaceToolSchema.string(
+        "path": HostToolSchema.string(
           "A file path relative to the run working directory.",
           maximumLength: 4_096
         ),
-        "content": WorkspaceToolSchema.string(
+        "content": HostToolSchema.string(
           "The complete UTF-8 file content.",
           maximumLength: 16 * 1_024 * 1_024
         ),
-        "expected_revision": WorkspaceToolSchema.string(
+        "expected_revision": HostToolSchema.string(
           "The 64-character revision returned by a read. Omit only when creating a new file.",
           maximumLength: 64
         ),

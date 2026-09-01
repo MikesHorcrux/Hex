@@ -30,19 +30,19 @@ public struct ProcessRunTool: HostTool, Sendable {
         "Run one non-interactive local executable with bounded combined output and no implicit shell. "
         + "Authorization shows the complete escaped argv; never put secrets in arguments. "
         + "Injected environment values remain private and only names, count, and bytes are shown.",
-      inputSchema: WorkspaceToolSchema.object(
+      inputSchema: HostToolSchema.object(
         properties: [
-          "executable": WorkspaceToolSchema.string(
+          "executable": HostToolSchema.string(
             "An absolute executable path. No shell interpolation is performed.",
             maximumLength: 4_096
           ),
-          "arguments": WorkspaceToolSchema.stringArray(
+          "arguments": HostToolSchema.stringArray(
             "The exact argument vector passed to the executable; every argument is displayed in "
               + "authorization, so never put secrets here.",
             maximumItems: configuration.maximumArguments,
             maximumItemLength: configuration.maximumArgumentBytes
           ),
-          "timeout_seconds": WorkspaceToolSchema.integer(
+          "timeout_seconds": HostToolSchema.integer(
             "The maximum non-interactive execution time.",
             minimum: 1,
             maximum: configuration.maximumTimeoutSeconds

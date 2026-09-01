@@ -1,6 +1,6 @@
 import HexCore
 
-enum WorkspaceToolSchema {
+enum HostToolSchema {
   static func object(
     properties: [String: JSONValue],
     required: [String]
@@ -18,6 +18,14 @@ enum WorkspaceToolSchema {
       "type": .string("string"),
       "description": .string(description),
       "maxLength": .integer(Int64(maximumLength)),
+    ])
+  }
+
+  static func stringEnum(_ description: String, values: [String]) -> JSONValue {
+    .object([
+      "type": .string("string"),
+      "description": .string(description),
+      "enum": .array(values.map(JSONValue.string)),
     ])
   }
 

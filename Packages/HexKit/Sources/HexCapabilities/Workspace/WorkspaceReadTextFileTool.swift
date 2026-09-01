@@ -5,9 +5,9 @@ public struct WorkspaceReadTextFileTool: HostTool, Sendable {
     name: "workspace_read_text_file",
     description:
       "Read one bounded UTF-8 file inside the selected workspace and return its revision.",
-    inputSchema: WorkspaceToolSchema.object(
+    inputSchema: HostToolSchema.object(
       properties: [
-        "path": WorkspaceToolSchema.string(
+        "path": HostToolSchema.string(
           "A file path relative to the run working directory.",
           maximumLength: 4_096
         )
