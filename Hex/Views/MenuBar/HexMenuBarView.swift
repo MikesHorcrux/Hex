@@ -8,6 +8,7 @@ struct HexMenuBarView: View {
   @Environment(\.openWindow) private var openWindow
 
   let route: HexGatewayRoute
+  let suppressAutomaticRefresh: Bool
   let onQuitHexUI: () -> Void
 
   var body: some View {
@@ -63,36 +64,44 @@ struct HexMenuBarView: View {
 
       Divider()
 
-      HStack {
-        Label("Start at login", systemImage: "arrow.clockwise.circle")
-        Spacer(minLength: 8)
-        Text(startAtLogin.status.label)
-          .font(.caption.weight(.medium))
-          .foregroundStyle(.secondary)
-      }
-
       if route.kind == .developerInProcess {
         Text("Start at login is unavailable for the in-process developer route.")
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-      } else if startAtLogin.isAvailable {
-        Button(startAtLogin.buttonTitle) {
-          startAtLogin.toggle()
+      } else {
+        HStack {
+          Label("Start at login", systemImage: "arrow.clockwise.circle")
+          Spacer(minLength: 8)
+          Text(startAtLogin.status.label)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
         }
-        .disabled(!startAtLogin.canChange)
 
-        if startAtLogin.status == .notFound {
-          Text("Pending the bundled gateway helper; no launch service has been registered.")
+        if startAtLogin.isAvailable {
+          Button(startAtLogin.buttonTitle) {
+            startAtLogin.toggle()
+          }
+          .disabled(!startAtLogin.canChange)
+
+          if startAtLogin.status == .notFound {
+            Text("Pending the bundled gateway helper; no launch service has been registered.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          } else if startAtLogin.status == .requiresApproval {
+            Button("Open Login Items Settings") {
+              Task {
+                await startAtLogin.openLoginItemsSettings()
+              }
+            }
+          }
+        } else if let readinessMessage = startAtLogin.readinessMessage {
+          Text(readinessMessage)
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
-      } else if let readinessMessage = startAtLogin.readinessMessage {
-        Text(readinessMessage)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
       }
 
       if startAtLogin.isAvailable, let message = startAtLogin.message {
@@ -109,6 +118,10 @@ struct HexMenuBarView: View {
       }
       .keyboardShortcut(.defaultAction)
 
+      SettingsLink {
+        Label("Resident setup…", systemImage: "gearshape")
+      }
+
       Button("Quit Hex UI", action: onQuitHexUI)
 
       Text("Closing this window does not stop the resident gateway.")
@@ -119,6 +132,7 @@ struct HexMenuBarView: View {
     .padding(12)
     .frame(minWidth: 280)
     .task {
+      guard !suppressAutomaticRefresh else { return }
       await gateway.refresh()
       await startAtLogin.refresh()
     }

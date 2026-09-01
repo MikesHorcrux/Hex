@@ -3,7 +3,9 @@
 /// Real macOS lifecycle adapter for the resident gateway LaunchAgent. Constructing this adapter is
 /// inert; registration and unregistration occur only when the injected controller is explicitly
 /// called by a user-facing action.
-actor HexSMAppServiceLifecycleController: HexGatewayLifecycleControlling {
+actor HexSMAppServiceLifecycleController: HexGatewayLifecycleControlling,
+  HexLoginItemsSettingsOpening
+{
   static let gatewayPlistName = "com.lunarmothstudios.hex.gateway.plist"
 
   private let service: SMAppService
@@ -35,5 +37,9 @@ actor HexSMAppServiceLifecycleController: HexGatewayLifecycleControlling {
 
   func unregister() async throws {
     try await service.unregister()
+  }
+
+  func openLoginItemsSettings() async {
+    SMAppService.openSystemSettingsLoginItems()
   }
 }

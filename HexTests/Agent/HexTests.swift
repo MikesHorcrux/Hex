@@ -3,6 +3,14 @@ import Testing
 @testable import Hex
 
 struct HexTests {
+  @Test
+  func verificationLaunchArgumentIsExplicitAndDeterministic() {
+    #expect(!HexApp.isVerificationOnlyLaunch(arguments: ["Hex"]))
+    #expect(
+      HexApp.isVerificationOnlyLaunch(arguments: ["Hex", "--hex-verify-no-connect"])
+    )
+  }
+
   @Test @MainActor
   func disconnectedWorkspaceExplainsWhyPromptCannotSend() {
     let model = AgentWorkspaceModel(client: PreviewHexAgentClient())
@@ -11,6 +19,21 @@ struct HexTests {
 
     #expect(model.connectionState == .disconnected)
     #expect(model.errorMessage == "Connect to the gateway before sending a prompt.")
+  }
+
+  @Test @MainActor
+  func connectedWorkspaceRequiresAModelBeforeSending() async {
+    let model = AgentWorkspaceModel(client: PreviewHexAgentClient(), modelID: "")
+    await model.connect()
+    model.draft = "Inspect this project"
+
+    model.send()
+
+    #expect(!model.canSend)
+    #expect(
+      model.errorMessage == "Configure a model in Resident setup before sending a prompt."
+    )
+    #expect(model.draft == "Inspect this project")
   }
 
   @Test @MainActor

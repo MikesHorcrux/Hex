@@ -40,6 +40,7 @@ final class AgentWorkspaceModel {
   var canSend: Bool {
     connectionState == .connected
       && !isRunActive
+      && !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
@@ -141,6 +142,11 @@ final class AgentWorkspaceModel {
       errorMessage = "Enter a prompt before sending it to Hex."
       return
     }
+    let selectedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !selectedModelID.isEmpty else {
+      errorMessage = "Configure a model in Resident setup before sending a prompt."
+      return
+    }
 
     draft = ""
     errorMessage = nil
@@ -159,7 +165,6 @@ final class AgentWorkspaceModel {
     )
 
     let runID = currentRunID
-    let selectedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let runID else {
       errorMessage = "Hex could not create a run identity. Try again."
       runState = .failed

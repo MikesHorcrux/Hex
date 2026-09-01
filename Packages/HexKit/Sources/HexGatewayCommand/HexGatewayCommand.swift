@@ -6,9 +6,13 @@ import HexGatewayKit
 enum HexGatewayCommand {
   static func main() async {
     do {
-      let configuration = try HexGatewayResidentConfiguration(
-        environment: ProcessInfo.processInfo.environment
-      )
+      let environment = ProcessInfo.processInfo.environment
+      let configuration: HexGatewayResidentConfiguration
+      if HexGatewayResidentConfiguration.hasEnvironmentOverride(in: environment) {
+        configuration = try HexGatewayResidentConfiguration(environment: environment)
+      } else {
+        configuration = try await HexGatewayResidentConfiguration.loadPersisted()
+      }
       let host = try await HexGatewayResidentHost.open(configuration: configuration)
       try await host.run()
     } catch is CancellationError {

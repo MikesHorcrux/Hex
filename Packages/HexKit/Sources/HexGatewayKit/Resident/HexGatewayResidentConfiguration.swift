@@ -1,15 +1,20 @@
 import Foundation
+import HexCore
 import HexIPC
+import HexPersistence
+import HexProviders
 
-/// Explicit environment configuration for the headless resident gateway. Secrets are retained only
-/// in this process-scoped value and are intentionally absent from equality, descriptions, and
-/// diagnostics. A future `SMAppService` launch path must provision credentials through a durable
-/// user-controlled channel; this type deliberately does not place secrets in a launch-agent plist.
+/// Resident gateway composition settings. Credentials are injected as a provider and are never
+/// part of this value's persisted, Codable, or diagnostic surface. The `SMAppService` launch path
+/// loads non-secret settings from Application Support and credentials from the shared data-protection
+/// Keychain; this type deliberately does not place secrets in a launch-agent plist.
 public struct HexGatewayResidentConfiguration: Sendable {
   public enum ConfigurationError: Swift.Error, Equatable, LocalizedError, Sendable {
     case missingVariables([String])
     case invalidVariable(String)
     case applicationSupportUnavailable
+    case settingsUnavailable
+    case credentialsUnavailable
 
     public var errorDescription: String? {
       switch self {
@@ -18,7 +23,11 @@ public struct HexGatewayResidentConfiguration: Sendable {
       case .invalidVariable(let variable):
         "The \(variable) resident gateway setting is invalid."
       case .applicationSupportUnavailable:
-        "Hex could not locate Application Support for the resident gateway journal."
+        "Hex could not locate Application Support for the resident gateway."
+      case .settingsUnavailable:
+        "Hex resident settings are unavailable or invalid."
+      case .credentialsUnavailable:
+        "Hex resident credentials are unavailable."
       }
     }
   }
@@ -37,8 +46,10 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let databaseURL: URL
   public let heartbeatStoreURL: URL
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
-  private let apiKey: String
+  public let credentialProvider: any OpenAICredentialProvider
 
+  /// Parses the complete, explicit developer environment override. The API key remains in the
+  /// resulting process-only memory provider and is never copied to a persisted settings file.
   public init(environment: [String: String]) throws {
     var missing: [String] = []
     let apiKey = Self.value(named: Self.apiKeyVariable, in: environment)
@@ -101,12 +112,15 @@ public struct HexGatewayResidentConfiguration: Sendable {
     )
   }
 
+  /// Creates a configuration around a caller-owned credential provider. The provider is queried
+  /// only by the inference provider immediately before a request, so this initializer never needs
+  /// to receive or encode a secret value.
   public init(
     machServiceName: String,
     modelID: String,
     workspaceRoot: URL,
     databaseURL: URL,
-    apiKey: String,
+    credentialProvider: any OpenAICredentialProvider,
     heartbeatStoreURL: URL? = nil,
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
   ) throws {
@@ -116,37 +130,149 @@ public struct HexGatewayResidentConfiguration: Sendable {
     guard Self.isPrintableASCII(modelID), modelID.utf8.count <= 512 else {
       throw ConfigurationError.invalidVariable(Self.modelVariable)
     }
-    guard Self.isPrintableASCII(apiKey) else {
-      throw ConfigurationError.invalidVariable(Self.apiKeyVariable)
-    }
-    guard Self.isAbsoluteFileURL(workspaceRoot) else {
+    let standardizedWorkspaceRoot = workspaceRoot.standardizedFileURL
+    guard
+      Self.isAbsoluteFileURL(workspaceRoot),
+      Self.isAbsoluteFileURL(standardizedWorkspaceRoot)
+    else {
       throw ConfigurationError.invalidVariable(Self.workspaceVariable)
     }
-    guard Self.isAbsoluteFileURL(databaseURL), databaseURL.lastPathComponent != "." else {
+    let standardizedDatabaseURL = databaseURL.standardizedFileURL
+    guard
+      Self.isValidDataFileURL(databaseURL),
+      Self.isValidDataFileURL(standardizedDatabaseURL)
+    else {
       throw ConfigurationError.invalidVariable(Self.databaseVariable)
     }
     let resolvedHeartbeatStoreURL =
       heartbeatStoreURL
       ?? databaseURL.deletingLastPathComponent()
       .appendingPathComponent("heartbeats.json", isDirectory: false)
+    let standardizedHeartbeatStoreURL = resolvedHeartbeatStoreURL.standardizedFileURL
     guard
-      Self.isAbsoluteFileURL(resolvedHeartbeatStoreURL),
-      resolvedHeartbeatStoreURL.lastPathComponent != "."
+      Self.isValidDataFileURL(resolvedHeartbeatStoreURL),
+      Self.isValidDataFileURL(standardizedHeartbeatStoreURL)
     else {
       throw ConfigurationError.invalidVariable(Self.heartbeatStoreVariable)
     }
 
     self.machServiceName = machServiceName
     self.modelID = modelID
-    self.workspaceRoot = workspaceRoot.standardizedFileURL
-    self.databaseURL = databaseURL.standardizedFileURL
-    self.heartbeatStoreURL = resolvedHeartbeatStoreURL.standardizedFileURL
+    self.workspaceRoot = standardizedWorkspaceRoot
+    self.databaseURL = standardizedDatabaseURL
+    self.heartbeatStoreURL = standardizedHeartbeatStoreURL
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
-    self.apiKey = apiKey
+    self.credentialProvider = credentialProvider
   }
 
-  public func makeCredentialProvider() -> HexGatewayMemoryCredentialProvider {
-    HexGatewayMemoryCredentialProvider(apiKey: apiKey)
+  /// Keeps the explicit environment initializer source-compatible for local development and
+  /// staging while moving normal resident startup to the injected secret-store path.
+  public init(
+    machServiceName: String,
+    modelID: String,
+    workspaceRoot: URL,
+    databaseURL: URL,
+    apiKey: String,
+    heartbeatStoreURL: URL? = nil,
+    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
+  ) throws {
+    guard Self.isPrintableASCII(apiKey) else {
+      throw ConfigurationError.invalidVariable(Self.apiKeyVariable)
+    }
+    try self.init(
+      machServiceName: machServiceName,
+      modelID: modelID,
+      workspaceRoot: workspaceRoot,
+      databaseURL: databaseURL,
+      credentialProvider: HexGatewayMemoryCredentialProvider(apiKey: apiKey),
+      heartbeatStoreURL: heartbeatStoreURL,
+      connectionAdmissionPolicy: connectionAdmissionPolicy
+    )
+  }
+
+  /// Loads non-secret settings from the durable store and injects a generic secret store adapter.
+  /// The API key is not read during startup; only item existence is checked so a missing credential
+  /// fails deterministically before the resident host begins serving requests. Actual credential
+  /// decoding and format validation remain deferred to provider use.
+  public static func loadPersisted(
+    paths: HexResidentDataPaths? = nil,
+    settingsStore: (any HexResidentRuntimeSettingsStore)? = nil,
+    secretStore: (any HexSecretStore)? = nil,
+    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
+  ) async throws -> Self {
+    let resolvedPaths: HexResidentDataPaths
+    do {
+      resolvedPaths = try paths ?? HexResidentDataPaths.live()
+    } catch {
+      throw ConfigurationError.applicationSupportUnavailable
+    }
+
+    let resolvedSettingsStore: any HexResidentRuntimeSettingsStore
+    do {
+      if let settingsStore {
+        resolvedSettingsStore = settingsStore
+      } else {
+        resolvedSettingsStore = try JSONHexResidentRuntimeSettingsStore(
+          fileURL: resolvedPaths.settingsURL
+        )
+      }
+    } catch {
+      throw ConfigurationError.settingsUnavailable
+    }
+
+    let settings: HexResidentRuntimeSettings
+    do {
+      guard let loadedSettings = try await resolvedSettingsStore.load() else {
+        throw ConfigurationError.settingsUnavailable
+      }
+      settings = loadedSettings
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw ConfigurationError.settingsUnavailable
+    }
+
+    let resolvedSecretStore: any HexSecretStore = secretStore ?? KeychainHexSecretStore()
+    do {
+      guard try await resolvedSecretStore.exists(.openAIAPIKey) else {
+        throw ConfigurationError.credentialsUnavailable
+      }
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch let error as ConfigurationError {
+      throw error
+    } catch {
+      throw ConfigurationError.credentialsUnavailable
+    }
+
+    return try Self(
+      machServiceName: HexGatewayServiceIdentity.machServiceName,
+      modelID: settings.modelID,
+      workspaceRoot: settings.workspaceRoot,
+      databaseURL: resolvedPaths.databaseURL,
+      credentialProvider: HexSecretStoreOpenAICredentialProvider(store: resolvedSecretStore),
+      heartbeatStoreURL: resolvedPaths.heartbeatStoreURL,
+      connectionAdmissionPolicy: connectionAdmissionPolicy
+    )
+  }
+
+  /// Returns true when any resident environment key was supplied. This lets the command preserve
+  /// the all-explicit developer path while rejecting partial overrides instead of silently mixing
+  /// them with persisted settings.
+  public static func hasEnvironmentOverride(in environment: [String: String]) -> Bool {
+    [
+      Self.apiKeyVariable,
+      Self.modelVariable,
+      Self.workspaceVariable,
+      Self.serviceVariable,
+      Self.databaseVariable,
+      Self.heartbeatStoreVariable,
+      Self.heartbeatDatabaseVariable,
+    ].contains { environment[$0] != nil }
+  }
+
+  public func makeCredentialProvider() -> any OpenAICredentialProvider {
+    credentialProvider
   }
 
   private static func value(
@@ -171,6 +297,35 @@ public struct HexGatewayResidentConfiguration: Sendable {
   }
 
   private static func isAbsoluteFileURL(_ url: URL) -> Bool {
-    url.isFileURL && url.path.hasPrefix("/") && !url.path.contains("\0")
+    url.isFileURL
+      && !url.path.isEmpty
+      && url.path.hasPrefix("/")
+      && url.path.utf8.count <= 4_096
+      && !url.path.contains("\0")
+  }
+
+  private static func isValidDataFileURL(_ url: URL) -> Bool {
+    let pathComponents = url.path.split(separator: "/", omittingEmptySubsequences: true)
+    guard
+      Self.isAbsoluteFileURL(url),
+      !pathComponents.isEmpty,
+      !pathComponents.contains(where: { component in
+        component == "." || component == ".."
+      })
+    else {
+      return false
+    }
+
+    let standardizedURL = url.standardizedFileURL
+    let standardizedComponents = standardizedURL.path.split(
+      separator: "/",
+      omittingEmptySubsequences: true
+    )
+    return
+      Self.isAbsoluteFileURL(standardizedURL)
+      && standardizedURL.path != "/"
+      && !standardizedComponents.contains(where: { component in
+        component == "." || component == ".."
+      })
   }
 }

@@ -1,14 +1,12 @@
-/// Readiness for exposing start-at-login registration. The current production value is
-/// deliberately blocked until the resident bundle and its credential/configuration handoff are
-/// ready for a signed distribution path.
+/// Readiness for exposing start-at-login registration. Debug computes this from the signed bundle,
+/// persisted settings, and credential presence; unsupported compositions use the blocked value.
 nonisolated struct HexGatewayActivationReadiness: Equatable, Sendable {
   let isReady: Bool
   let message: String
 
   static let blocked = Self(
     isReady: false,
-    message:
-      "Start at login is blocked because signed resident packaging and secure credential configuration are not complete."
+    message: "Resident activation is unavailable in this build."
   )
 
   static let ready = Self(isReady: true, message: "")
