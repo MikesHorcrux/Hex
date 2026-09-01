@@ -4,6 +4,9 @@ set -euo pipefail
 readonly MODE="${1:-run}"
 readonly APP_NAME="Hex"
 readonly BUNDLE_ID="com.lunarmothstudios.Hex"
+readonly EXPECTED_TEAM_ID="5V5PZUN2HG"
+readonly HELPER_BUNDLE_ID="com.lunarmothstudios.hex.gateway"
+readonly RESIDENT_KEYCHAIN_GROUP="5V5PZUN2HG.com.lunarmothstudios.Hex.resident"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PROJECT_PATH="$ROOT_DIR/Hex.xcodeproj"
 readonly DERIVED_DATA_PATH="$ROOT_DIR/.build/DerivedData"
@@ -15,12 +18,131 @@ readonly APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 readonly GATEWAY_BUNDLE_BINARY="$APP_BUNDLE/Contents/Resources/HexGateway"
 readonly BUNDLED_LAUNCH_AGENT="$APP_BUNDLE/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist"
 readonly LAUNCH_AGENT_SOURCE="$ROOT_DIR/Resources/LaunchAgent/com.lunarmothstudios.hex.gateway.plist"
+readonly APP_ENTITLEMENTS_SOURCE="$ROOT_DIR/Config/Hex.Debug.entitlements"
 readonly XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 gateway_bin_path=""
 verified_app_pid=""
+signing_material_dir=""
+app_entitlements_path=""
+app_entitlements_after_path=""
+helper_entitlements_path=""
+helper_entitlements_after_path=""
+signing_identity=""
 
 usage() {
     echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+}
+
+fail() {
+    echo "$*" >&2
+    exit 1
+}
+
+cleanup_signing_material() {
+    if [[ -n "$signing_material_dir" && -d "$signing_material_dir" ]]; then
+        /bin/rm -rf "$signing_material_dir"
+    fi
+}
+
+codesign_details_for() {
+    local artifact="$1"
+    /usr/bin/codesign -dvvv "$artifact" 2>&1
+}
+
+codesign_field() {
+    local field="$1"
+    local details="$2"
+    /usr/bin/printf '%s\n' "$details" | /usr/bin/sed -n "s/^${field}=//p" | /usr/bin/head -n 1
+}
+
+apple_development_identity_for() {
+    local details="$1"
+    /usr/bin/printf '%s\n' "$details" \
+        | /usr/bin/sed -n 's/^Authority=Apple Development: /Apple Development: /p' \
+        | /usr/bin/head -n 1
+}
+
+extract_entitlements() {
+    local artifact="$1"
+    local destination="$2"
+    if ! /usr/bin/codesign -d --entitlements :- "$artifact" > "$destination" 2>/dev/null; then
+        fail "could not extract entitlements from $artifact"
+    fi
+    if ! /usr/bin/plutil -lint "$destination" >/dev/null; then
+        fail "extracted entitlements are not a valid plist for $artifact"
+    fi
+}
+
+validate_single_keychain_group() {
+    local entitlements="$1"
+    local expected_group="$2"
+    local actual_group
+
+    actual_group="$(/usr/bin/plutil -extract keychain-access-groups.0 raw -o - "$entitlements" 2>/dev/null)" \
+        || fail "missing keychain-access-groups in $entitlements"
+    if [[ "$actual_group" != "$expected_group" ]]; then
+        fail "unexpected keychain access group in $entitlements: $actual_group"
+    fi
+    if /usr/bin/plutil -extract keychain-access-groups.1 raw -o - "$entitlements" >/dev/null 2>&1; then
+        fail "more than one keychain access group is present in $entitlements"
+    fi
+}
+
+write_helper_entitlements() {
+    /bin/cat > "$helper_entitlements_path" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>keychain-access-groups</key>
+    <array>
+        <string>5V5PZUN2HG.com.lunarmothstudios.Hex.resident</string>
+    </array>
+</dict>
+</plist>
+EOF
+    if ! /usr/bin/plutil -lint "$helper_entitlements_path" >/dev/null; then
+        fail "generated helper entitlements are not a valid plist"
+    fi
+    validate_single_keychain_group "$helper_entitlements_path" "$RESIDENT_KEYCHAIN_GROUP"
+}
+
+verify_signed_artifact() {
+    local artifact="$1"
+    local expected_identifier="$2"
+    local expected_team="$3"
+    local expected_identity="$4"
+    local label="$5"
+    local details
+    local identifier
+    local team_identifier
+    local authority
+
+    details="$(codesign_details_for "$artifact")" \
+        || fail "could not inspect the $label code signature"
+    if ! /usr/bin/codesign --verify --strict "$artifact" >/dev/null; then
+        fail "the $label code signature did not pass strict verification"
+    fi
+    identifier="$(codesign_field Identifier "$details")"
+    if [[ "$identifier" != "$expected_identifier" ]]; then
+        fail "unexpected $label identifier: $identifier"
+    fi
+    team_identifier="$(codesign_field TeamIdentifier "$details")"
+    if [[ "$team_identifier" != "$expected_team" ]]; then
+        fail "unexpected $label team identifier: $team_identifier"
+    fi
+    authority="$(apple_development_identity_for "$details")"
+    if [[ "$authority" != "$expected_identity" ]]; then
+        fail "the $label was not signed by the built app's Apple Development identity"
+    fi
+    if [[ "$details" != *"(runtime)"* ]]; then
+        fail "the $label is missing the hardened runtime flag"
+    fi
+}
+
+cleanup_all() {
+    cleanup_verified_app
+    cleanup_signing_material
 }
 
 is_staged_app_pid() {
@@ -93,6 +215,8 @@ cleanup_verified_app() {
     fi
 }
 
+trap cleanup_all EXIT
+
 stop_running_staged_apps() {
     local candidate_pid
 
@@ -144,8 +268,7 @@ DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcodebuild \
     -destination "platform=macOS" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
     -parallelizeTargets NO \
-    -jobs 1 \
-    CODE_SIGNING_ALLOWED=NO
+    -jobs 1
 
 if [[ ! -d "$BUILD_APP" ]]; then
     echo "built app was not found at $BUILD_APP" >&2
@@ -173,19 +296,54 @@ if [[ ! -x "$gateway_bin_path/HexGateway" ]]; then
     exit 1
 fi
 
+/bin/mkdir -p "$ROOT_DIR/.build"
+signing_material_dir="$(/usr/bin/mktemp -d "$ROOT_DIR/.build/hex-signing.XXXXXX")" \
+    || fail "could not create temporary signing material directory"
+app_entitlements_path="$signing_material_dir/app-before.entitlements"
+app_entitlements_after_path="$signing_material_dir/app-after.entitlements"
+helper_entitlements_path="$signing_material_dir/helper.entitlements"
+helper_entitlements_after_path="$signing_material_dir/helper-after.entitlements"
+
+if ! /usr/bin/plutil -lint "$APP_ENTITLEMENTS_SOURCE" >/dev/null; then
+    fail "Debug app entitlements are not a valid plist at $APP_ENTITLEMENTS_SOURCE"
+fi
+validate_single_keychain_group \
+    "$APP_ENTITLEMENTS_SOURCE" \
+    '$(AppIdentifierPrefix)com.lunarmothstudios.Hex.resident'
+
+build_signature_details="$(codesign_details_for "$BUILD_APP")" \
+    || fail "could not inspect the automatically signed Debug app"
+build_identifier="$(codesign_field Identifier "$build_signature_details")"
+if [[ "$build_identifier" != "$BUNDLE_ID" ]]; then
+    fail "unexpected automatically signed app identifier: $build_identifier"
+fi
+build_team_identifier="$(codesign_field TeamIdentifier "$build_signature_details")"
+if [[ "$build_team_identifier" != "$EXPECTED_TEAM_ID" ]]; then
+    fail "unexpected automatically signed app team identifier: $build_team_identifier"
+fi
+signing_identity="$(apple_development_identity_for "$build_signature_details")"
+if [[ -z "$signing_identity" ]]; then
+    fail "the Debug app was not signed with an Apple Development identity"
+fi
+extract_entitlements "$BUILD_APP" "$app_entitlements_path"
+validate_single_keychain_group "$app_entitlements_path" "$RESIDENT_KEYCHAIN_GROUP"
+write_helper_entitlements
+
 mkdir -p "$DIST_DIR"
 rm -rf "$APP_BUNDLE"
 /usr/bin/ditto "$BUILD_APP" "$APP_BUNDLE"
 
 if [[ ! -f "$LAUNCH_AGENT_SOURCE" ]]; then
     echo "bundle-ready LaunchAgent plist is missing at $LAUNCH_AGENT_SOURCE" >&2
-    echo "This developer packaging path does not synthesize or install a LaunchAgent." >&2
+    echo "This developer packaging path does not synthesize or register a LaunchAgent." >&2
     exit 1
 fi
 
 mkdir -p "$(dirname "$GATEWAY_BUNDLE_BINARY")" "$(dirname "$BUNDLED_LAUNCH_AGENT")"
-/usr/bin/install -m 0755 "$gateway_bin_path/HexGateway" "$GATEWAY_BUNDLE_BINARY"
-/usr/bin/install -m 0644 "$LAUNCH_AGENT_SOURCE" "$BUNDLED_LAUNCH_AGENT"
+/bin/cp "$gateway_bin_path/HexGateway" "$GATEWAY_BUNDLE_BINARY"
+/bin/chmod 0755 "$GATEWAY_BUNDLE_BINARY"
+/bin/cp "$LAUNCH_AGENT_SOURCE" "$BUNDLED_LAUNCH_AGENT"
+/bin/chmod 0644 "$BUNDLED_LAUNCH_AGENT"
 
 verify_gateway_bundle() {
     if [[ ! -x "$GATEWAY_BUNDLE_BINARY" ]]; then
@@ -206,6 +364,51 @@ verify_gateway_bundle() {
 }
 
 verify_gateway_bundle
+
+/usr/bin/codesign \
+    --force \
+    --sign "$signing_identity" \
+    --timestamp=none \
+    --options runtime \
+    --identifier "$HELPER_BUNDLE_ID" \
+    --entitlements "$helper_entitlements_path" \
+    "$GATEWAY_BUNDLE_BINARY"
+verify_signed_artifact \
+    "$GATEWAY_BUNDLE_BINARY" \
+    "$HELPER_BUNDLE_ID" \
+    "$EXPECTED_TEAM_ID" \
+    "$signing_identity" \
+    "HexGateway helper"
+extract_entitlements "$GATEWAY_BUNDLE_BINARY" "$helper_entitlements_after_path"
+validate_single_keychain_group "$helper_entitlements_after_path" "$RESIDENT_KEYCHAIN_GROUP"
+
+/usr/bin/codesign \
+    --force \
+    --sign "$signing_identity" \
+    --timestamp=none \
+    --options runtime \
+    --identifier "$BUNDLE_ID" \
+    --entitlements "$app_entitlements_path" \
+    "$APP_BUNDLE"
+extract_entitlements "$APP_BUNDLE" "$app_entitlements_after_path"
+validate_single_keychain_group "$app_entitlements_after_path" "$RESIDENT_KEYCHAIN_GROUP"
+/usr/bin/plutil -convert xml1 \
+    -o "$signing_material_dir/app-before.normalized.plist" \
+    "$app_entitlements_path"
+/usr/bin/plutil -convert xml1 \
+    -o "$signing_material_dir/app-after.normalized.plist" \
+    "$app_entitlements_after_path"
+if ! /usr/bin/cmp -s \
+    "$signing_material_dir/app-before.normalized.plist" \
+    "$signing_material_dir/app-after.normalized.plist"; then
+    fail "re-signing changed the app entitlements"
+fi
+verify_signed_artifact \
+    "$APP_BUNDLE" \
+    "$BUNDLE_ID" \
+    "$EXPECTED_TEAM_ID" \
+    "$signing_identity" \
+    "staged Hex app"
 
 open_app() {
     /usr/bin/open -n "$APP_BUNDLE"
@@ -237,8 +440,6 @@ case "$MODE" in
             echo "staged $APP_NAME did not launch within five seconds" >&2
             exit 1
         fi
-        trap cleanup_verified_app EXIT
-
         /bin/sleep 0.25
         if ! is_staged_app_pid "$verified_app_pid"; then
             echo "staged $APP_NAME process exited during launch verification" >&2
@@ -249,7 +450,6 @@ case "$MODE" in
             exit 1
         fi
         verified_app_pid=""
-        trap - EXIT
 
         echo "verified staged Debug app launch and packaged gateway layout at $APP_BUNDLE"
         ;;

@@ -435,6 +435,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 5V5PZUN2HG;
+				CODE_SIGN_ENTITLEMENTS = Config/Hex.Debug.entitlements;
 				// Debug-only developer mode needs direct access to HEX_WORKSPACE_ROOT and local tools.
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;

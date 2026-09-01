@@ -57,8 +57,11 @@ product. The project-local `script/build_and_run.sh` builds that product seriall
 `Hex.app/Contents/Resources/HexGateway` alongside
 `Hex.app/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist`. This keeps one source
 and build definition for the headless binary while giving `SMAppService.agent(plistName:)` the bundle
-layout it expects. The script's Debug staging is unsigned developer output; it does not alter Release
-signing, entitlements, or distribution packaging.
+layout it expects. For Debug staging, the script uses the app's automatic Apple Development
+signature, signs the helper first with the same identity and hardened runtime, then re-signs the
+outer app after staging. The Debug app is limited to the resident keychain group declared in
+`Config/Hex.Debug.entitlements`; this does not alter Release signing, entitlements, or distribution
+packaging.
 
 ## Conflict-file ownership
 
@@ -81,13 +84,14 @@ do not merge into `dev`, modify `main`, or mix unrelated repairs into their feat
 
 ## Approval boundaries
 
-Source changes, local unsigned builds, deterministic tests, and bundle-layout validation are in scope.
-The developer run script may build `HexGateway` and copy it, together with its plist, into the local
-ignored `dist/Hex.app` staging directory. That copy is not an installation and does not contact
-launchd. The following require separate user approval: pushing or creating remotes, merging to `main`,
-accessing live credentials, starting an OAuth login, downloading models, installing or registering a
-LaunchAgent, requesting macOS privacy/TCC permissions, changing distribution entitlements, signing,
-notarizing, or contacting external services.
+Source changes, local development signing, deterministic tests, and bundle-layout validation are in
+scope. The developer run script may build `HexGateway`, copy it and its plist into the local ignored
+`dist/Hex.app` staging directory, and validate the resulting nested and outer signatures. That copy
+is not an installation and does not contact launchd. The following require separate user approval:
+pushing or creating remotes, merging to `main`, accessing live credentials, starting an OAuth login,
+downloading models, installing or registering a LaunchAgent, requesting macOS privacy/TCC
+permissions, changing distribution entitlements, distribution signing or notarizing, or contacting
+external services.
 
 ## MLX snapshot boundary
 
