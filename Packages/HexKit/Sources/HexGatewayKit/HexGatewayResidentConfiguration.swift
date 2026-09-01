@@ -67,13 +67,16 @@ public struct HexGatewayResidentConfiguration: Sendable {
     if let rawDatabaseURL = Self.value(named: Self.databaseVariable, in: environment) {
       databaseURL = URL(fileURLWithPath: rawDatabaseURL, isDirectory: false)
     } else {
-      guard let applicationSupport = FileManager.default.urls(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask
-      ).first else {
+      guard
+        let applicationSupport = FileManager.default.urls(
+          for: .applicationSupportDirectory,
+          in: .userDomainMask
+        ).first
+      else {
         throw ConfigurationError.applicationSupportUnavailable
       }
-      databaseURL = applicationSupport
+      databaseURL =
+        applicationSupport
         .appendingPathComponent("Hex", isDirectory: true)
         .appendingPathComponent("agent-events.sqlite", isDirectory: false)
     }
@@ -122,9 +125,10 @@ public struct HexGatewayResidentConfiguration: Sendable {
     guard Self.isAbsoluteFileURL(databaseURL), databaseURL.lastPathComponent != "." else {
       throw ConfigurationError.invalidVariable(Self.databaseVariable)
     }
-    let resolvedHeartbeatStoreURL = heartbeatStoreURL
+    let resolvedHeartbeatStoreURL =
+      heartbeatStoreURL
       ?? databaseURL.deletingLastPathComponent()
-        .appendingPathComponent("heartbeats.json", isDirectory: false)
+      .appendingPathComponent("heartbeats.json", isDirectory: false)
     guard
       Self.isAbsoluteFileURL(resolvedHeartbeatStoreURL),
       resolvedHeartbeatStoreURL.lastPathComponent != "."

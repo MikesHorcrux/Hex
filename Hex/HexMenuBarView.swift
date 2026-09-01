@@ -107,7 +107,7 @@ struct HexMenuBarView: View {
       Button("Open Hex") {
         openWindow(id: "main")
       }
-        .keyboardShortcut(.defaultAction)
+      .keyboardShortcut(.defaultAction)
 
       Button("Quit Hex UI", action: onQuitHexUI)
 

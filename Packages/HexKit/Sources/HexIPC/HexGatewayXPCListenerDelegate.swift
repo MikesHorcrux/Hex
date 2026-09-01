@@ -20,9 +20,11 @@ public final class HexGatewayXPCListenerDelegate: NSObject, NSXPCListenerDelegat
     _ listener: NSXPCListener,
     shouldAcceptNewConnection newConnection: NSXPCConnection
   ) -> Bool {
-    guard admissionPolicy.accepts(
-      effectiveUserIdentifier: UInt32(newConnection.effectiveUserIdentifier)
-    ) else {
+    guard
+      admissionPolicy.accepts(
+        effectiveUserIdentifier: UInt32(newConnection.effectiveUserIdentifier)
+      )
+    else {
       newConnection.invalidate()
       return false
     }

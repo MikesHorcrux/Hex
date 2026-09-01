@@ -5,14 +5,10 @@ nonisolated struct HexGatewayActivationReadiness: Equatable, Sendable {
   let isReady: Bool
   let message: String
 
-  init(isReady: Bool, message: String) {
-    self.isReady = isReady
-    self.message = message
-  }
-
   static let blocked = Self(
     isReady: false,
-    message: "Start at login is blocked because signed resident packaging and secure credential configuration are not complete."
+    message:
+      "Start at login is blocked because signed resident packaging and secure credential configuration are not complete."
   )
 
   static let ready = Self(isReady: true, message: "")

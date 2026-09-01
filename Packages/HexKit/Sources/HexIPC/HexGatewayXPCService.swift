@@ -10,11 +10,13 @@ public final class HexGatewayXPCService: NSObject {
     private let service: HexGatewayService
     private let codec: GatewayWireCodec
     private let authorizationDecisionHandler:
-      (@Sendable (
-        AuthorizationRequest,
-        GatewayAuthorizationDecisionChoice,
-        HexGatewayAuthorizationCommitGate
-      ) async throws -> Void)?
+      (
+        @Sendable (
+          AuthorizationRequest,
+          GatewayAuthorizationDecisionChoice,
+          HexGatewayAuthorizationCommitGate
+        ) async throws -> Void
+      )?
     private let residentControlHandlers: HexGatewayResidentControlHandlers
     private var activeLease: GatewayTransportConnectionLease?
     private var sessionID: GatewaySessionID?
@@ -25,11 +27,13 @@ public final class HexGatewayXPCService: NSObject {
       service: HexGatewayService,
       configuration: GatewayConfiguration,
       authorizationDecisionHandler:
-        (@Sendable (
-          AuthorizationRequest,
-          GatewayAuthorizationDecisionChoice,
-          HexGatewayAuthorizationCommitGate
-        ) async throws -> Void)?,
+        (
+          @Sendable (
+            AuthorizationRequest,
+            GatewayAuthorizationDecisionChoice,
+            HexGatewayAuthorizationCommitGate
+          ) async throws -> Void
+        )?,
       residentControlHandlers: HexGatewayResidentControlHandlers
     ) {
       self.service = service

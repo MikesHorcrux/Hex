@@ -15,7 +15,9 @@ struct HexResidentGatewayTests {
     model.togglePause()
 
     #expect(model.status == .unavailable)
-    #expect(model.message == "Heartbeat controls are unavailable until the resident gateway is connected.")
+    #expect(
+      model.message == "Heartbeat controls are unavailable until the resident gateway is connected."
+    )
   }
 
   @Test @MainActor

@@ -11,7 +11,8 @@ public struct TaskHexHeartbeatSleeper: HexHeartbeatSleeper, Sendable {
         return
       }
       let requestedNanoseconds = seconds * 1_000_000_000
-      let nanoseconds = requestedNanoseconds >= Double(UInt64.max)
+      let nanoseconds =
+        requestedNanoseconds >= Double(UInt64.max)
         ? UInt64.max
         : UInt64(requestedNanoseconds.rounded(.up))
       try await Task.sleep(nanoseconds: nanoseconds)

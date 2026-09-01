@@ -1,11 +1,11 @@
+import Darwin
 import Dispatch
+@preconcurrency import Foundation
 import HexCapabilities
 import HexCore
 import HexIPC
 import HexPersistence
 import HexProviders
-@preconcurrency import Foundation
-import Darwin
 
 /// Owns the headless gateway process lifetime. It composes the real provider/tool/runtime graph,
 /// advertises one user-session Mach service, and remains alive until launchd or an operator asks it

@@ -55,9 +55,11 @@ public actor JSONHexHeartbeatStore: HexHeartbeatStore {
       guard !snapshot.isPaused else {
         return .schedulePaused
       }
-      guard let index = snapshot.schedules.firstIndex(where: {
-        $0.id == lease.occurrence.scheduleID
-      }) else {
+      guard
+        let index = snapshot.schedules.firstIndex(where: {
+          $0.id == lease.occurrence.scheduleID
+        })
+      else {
         return .scheduleMissing
       }
 
@@ -109,9 +111,11 @@ public actor JSONHexHeartbeatStore: HexHeartbeatStore {
 
     return try withFileLock {
       var snapshot = try readSnapshot()
-      guard let index = snapshot.schedules.firstIndex(where: {
-        $0.id == completion.lease.occurrence.scheduleID
-      }) else {
+      guard
+        let index = snapshot.schedules.firstIndex(where: {
+          $0.id == completion.lease.occurrence.scheduleID
+        })
+      else {
         throw HexHeartbeatStoreError.scheduleNotFound(completion.lease.occurrence.scheduleID)
       }
 

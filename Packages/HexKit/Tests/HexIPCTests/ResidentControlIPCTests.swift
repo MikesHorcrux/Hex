@@ -144,7 +144,8 @@ struct ResidentControlIPCTests {
   }
 
   private actor DelayedResidentControlTransport: HexGatewayTransport,
-    HexGatewayResidentControlTransport {
+    HexGatewayResidentControlTransport
+  {
     private var handshakeResponses: [GatewayHandshakeResponse] = [
       GatewayHandshakeResponse(
         sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(226)),

@@ -52,9 +52,10 @@ nonisolated struct HexDeveloperConfiguration: Equatable, Sendable {
     } else {
       workspaceRoot = nil
     }
-    gatewayMode = HexGatewayMode(
-      rawValue: Self.value(named: Self.gatewayModeVariable, in: environment) ?? ""
-    ) ?? .residentXPC
+    gatewayMode =
+      HexGatewayMode(
+        rawValue: Self.value(named: Self.gatewayModeVariable, in: environment) ?? ""
+      ) ?? .residentXPC
     gatewayMachServiceName = Self.gatewayMachServiceName(in: environment)
     allowsInProcessFallback = Self.boolean(
       named: Self.inProcessFallbackVariable,
