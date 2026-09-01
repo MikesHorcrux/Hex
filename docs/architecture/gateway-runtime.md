@@ -45,30 +45,36 @@ and checks the outer app against the resident app's exact Apple code-signing req
 launching only the staged UI. The UI must consume the dedicated `--hex-verify-no-connect` argument
 passed by this mode and suppress its normal startup gateway connection; otherwise a registered
 resident service could be awakened during verification. The script never calls `SMAppService`,
-`launchctl`, or any installation command, and never starts the gateway helper itself.
+`launchctl`, or any installation command. Its normal run modes open Hex, whose ordinary XPC startup
+may awaken a service that the user previously registered; `--verify` makes no resident contact.
 
 ## Registration and distribution boundary
 
-Start-at-login registration is currently blocked. The app does not invoke `SMAppService` until signed
-resident packaging and secure credential/configuration handoff are complete; the UI reports that
-`Start at login is blocked because signed resident packaging and secure credential configuration are
-not complete.` The source-level `SMAppService` adapter remains available for that future signed path,
-but the current default readiness is false. A signed local bundle is therefore resident-compatible,
-not registered or started automatically.
+The staged Debug app exposes resident registration only after a read-only preflight confirms the
+persisted model and workspace, the presence (not the value) of the OpenAI credential, the executable
+helper, and the LaunchAgent identity and service contract. Registration and unregistration happen
+only when the user presses the corresponding menu-bar control. If macOS requires approval, Hex links
+the user to Login Items settings. A registered helper can always be disabled even if its configuration
+later becomes invalid.
+
+Non-secret settings are versioned JSON beneath the user's Application Support directory. The store
+uses bounded reads, owner-only files, no-follow descriptors, an OS lock, atomic replacement, and
+durable flushes. The API key is a separate data-protection Keychain item shared only by the signed app
+and helper. It is available after the user's first unlock for background work and is device-only.
 
 The in-process route remains an explicit developer fallback selected with
 `HEX_GATEWAY_MODE=in-process` together with `HEX_ALLOW_IN_PROCESS_FALLBACK=true` (and the required
 live developer variables). That route keeps the gateway inside the app and cannot register the
-resident LaunchAgent. Resident registration is not actionable until a signed bundle and secure
-resident configuration channel are delivered.
+resident LaunchAgent.
 
 The Debug app grants only the resident keychain access group through
 `Config/Hex.Debug.entitlements`. Staging generates matching helper entitlements with the concrete
 `5V5PZUN2HG.com.lunarmothstudios.Hex.resident` group, signs the helper with identifier
 `com.lunarmothstudios.hex.gateway`, and verifies both artifacts use team `5V5PZUN2HG`. This is a
-local development signing boundary, not a secure credential handoff.
+local development signing and credential-sharing boundary.
 
 A distributable Release app still requires normal signing of the app and the nested helper, plus the
 separate distribution/notarization validation appropriate to the selected entitlements. This local
-staging path does not change Release entitlements or perform notarization, registration, or model
-provider startup.
+staging path does not change Release entitlements or perform notarization or registration by itself.
+Release composition remains fail-closed until its distribution entitlements and packaging are
+deliberately enabled and validated.

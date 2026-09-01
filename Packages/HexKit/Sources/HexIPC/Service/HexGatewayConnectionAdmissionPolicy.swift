@@ -5,9 +5,8 @@ import Darwin
 /// The listener installs `codeSigningRequirement` before activation, which makes the operating
 /// system reject a peer that does not satisfy the requirement before the delegate is consulted. The
 /// delegate then applies `expectedEffectiveUserIdentifier` as a second, same-user boundary. The
-/// production policy intentionally rejects unsigned staged Debug app bundles; those builds must
-/// explicitly select `InProcessHexGatewayTransport` for local development instead of weakening this
-/// requirement.
+/// production policy intentionally rejects unsigned app bundles. The supported resident Debug path
+/// signs and verifies its staged bundle against this exact requirement instead of weakening it.
 public struct HexGatewayConnectionAdmissionPolicy: Equatable, Sendable {
   public static let productionApplicationBundleIdentifier = "com.lunarmothstudios.Hex"
   public static let productionApplicationTeamIdentifier = "5V5PZUN2HG"

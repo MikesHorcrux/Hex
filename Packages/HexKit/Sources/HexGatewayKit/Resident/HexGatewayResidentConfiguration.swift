@@ -5,9 +5,9 @@ import HexPersistence
 import HexProviders
 
 /// Resident gateway composition settings. Credentials are injected as a provider and are never
-/// part of this value's persisted, Codable, or diagnostic surface. A future `SMAppService` launch
-/// path must provision credentials through a durable user-controlled channel; this type deliberately
-/// does not place secrets in a launch-agent plist.
+/// part of this value's persisted, Codable, or diagnostic surface. The `SMAppService` launch path
+/// loads non-secret settings from Application Support and credentials from the shared data-protection
+/// Keychain; this type deliberately does not place secrets in a launch-agent plist.
 public struct HexGatewayResidentConfiguration: Sendable {
   public enum ConfigurationError: Swift.Error, Equatable, LocalizedError, Sendable {
     case missingVariables([String])
