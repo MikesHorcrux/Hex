@@ -115,6 +115,25 @@ public final class HexGatewayResidentHost {
     let service = composition.service
     let gatewayConfiguration = composition.gatewayConfiguration
     let broker = authorizationBroker
+    let scheduler = heartbeatScheduler
+    let statusHandler: @Sendable () async throws -> GatewayResidentStatus = {
+      let snapshot = try await scheduler.snapshot()
+      if snapshot.isPaused {
+        return .paused
+      }
+      return await service.hasActiveRun() ? .active : .idle
+    }
+    let residentControlHandlers = HexGatewayResidentControlHandlers(
+      status: statusHandler,
+      pauseHeartbeats: {
+        try await scheduler.pauseAll()
+        return try await statusHandler()
+      },
+      resumeHeartbeats: {
+        try await scheduler.resumeAll()
+        return try await statusHandler()
+      }
+    )
     listenerDelegate = HexGatewayXPCListenerDelegate(
       serviceFactory: {
         HexGatewayXPCService(
@@ -122,7 +141,8 @@ public final class HexGatewayResidentHost {
           configuration: gatewayConfiguration,
           authorizationDecisionHandler: { request, choice, gate in
             try await broker.submit(request, choice: choice, gate: gate)
-          }
+          },
+          residentControlHandlers: residentControlHandlers
         )
       },
       admissionPolicy: configuration.connectionAdmissionPolicy
