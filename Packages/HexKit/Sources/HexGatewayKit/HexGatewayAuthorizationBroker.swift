@@ -105,16 +105,23 @@ public actor HexGatewayAuthorizationBroker: AuthorizationPrompting {
   /// validated the connection lease and session; this actor independently validates request content.
   public func submit(
     _ request: AuthorizationRequest,
-    choice: GatewayAuthorizationDecisionChoice
+    choice: GatewayAuthorizationDecisionChoice,
+    gate: HexGatewayAuthorizationCommitGate
   ) throws {
-    guard let pending = waiters[request.id] else {
+    do {
+      try gate.withValidCommit {
+        guard let pending = waiters[request.id] else {
+          throw BrokerError.requestNotPending
+        }
+        guard pending.request == request else {
+          throw BrokerError.requestMismatch
+        }
+        waiters.removeValue(forKey: request.id)
+        pending.continuation.resume(returning: Self.response(for: choice))
+      }
+    } catch HexGatewayAuthorizationCommitGate.GateError.closed {
       throw BrokerError.requestNotPending
     }
-    guard pending.request == request else {
-      throw BrokerError.requestMismatch
-    }
-    waiters.removeValue(forKey: request.id)
-    pending.continuation.resume(returning: Self.response(for: choice))
   }
 
   public func cancelAll() {

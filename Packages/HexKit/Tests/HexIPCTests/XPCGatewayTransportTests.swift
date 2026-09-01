@@ -252,7 +252,7 @@ struct XPCGatewayTransportTests {
     let gateway = HexGatewayService(driver: ImmediateGatewayRunDriver())
     let exportedService = HexGatewayXPCService(
       service: gateway,
-      authorizationDecisionHandler: { request, choice in
+      authorizationDecisionHandler: { request, choice, _ in
         await store.record(request: request, choice: choice)
       }
     )
@@ -330,6 +330,86 @@ struct XPCGatewayTransportTests {
       from: malformedResponseData
     ).validated()
     #expect(malformedResponse.failure?.code == .malformedPayload)
+  }
+
+  @Test
+  func replacementHandshakeInvalidatesThePreviousAuthorizationCommitGate() async throws {
+    let coordinator = AuthorizationCommitCoordinator()
+    let gateway = HexGatewayService(driver: ImmediateGatewayRunDriver())
+    let exportedService = HexGatewayXPCService(
+      service: gateway,
+      authorizationDecisionHandler: { _, _, gate in
+        await coordinator.enter()
+        await coordinator.waitForRelease()
+        do {
+          try gate.withValidCommit {}
+          await coordinator.recordCommit()
+        } catch HexGatewayAuthorizationCommitGate.GateError.closed {
+          await coordinator.recordRejection()
+        }
+      }
+    )
+    let codec = GatewayWireCodec(configuration: .standard)
+    let firstLease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(201))
+    let firstHandshake = try codec.encode(
+      GatewayXPCRequestEnvelope(
+        operation: .handshake,
+        lease: firstLease,
+        body: try codec.encode(GatewayTestValues.handshakeRequest(202))
+      )
+    )
+    let firstHandshakeData = try await sendRequest(firstHandshake, to: exportedService)
+    let firstHandshakeResponse = try responseValue(
+      firstHandshakeData,
+      operation: .handshake,
+      as: GatewayHandshakeResponse.self,
+      codec: codec
+    )
+    let request = AuthorizationRequest(
+      runID: GatewayTestValues.runID(203),
+      capability: CapabilityID(rawValue: "process.execute"),
+      operation: "run",
+      details: ["argv_count": .integer(1)],
+      explanation: "Allow this exact process invocation."
+    )
+    let decision = try codec.encode(
+      GatewayXPCRequestEnvelope(
+        operation: .submitAuthorizationDecision,
+        lease: firstLease,
+        sessionID: firstHandshakeResponse.sessionID,
+        body: try codec.encode(
+          GatewayAuthorizationDecisionRequest(request: request, choice: .allowOnce)
+        )
+      )
+    )
+    let decisionTask = Task {
+      try await sendRequest(decision, to: exportedService)
+    }
+    await coordinator.waitUntilEntered()
+
+    let replacementLease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(204))
+    let replacementHandshake = try codec.encode(
+      GatewayXPCRequestEnvelope(
+        operation: .handshake,
+        lease: replacementLease,
+        body: try codec.encode(GatewayTestValues.handshakeRequest(205))
+      )
+    )
+    let replacementHandshakeData = try await sendRequest(
+      replacementHandshake,
+      to: exportedService
+    )
+    _ = try responseValue(
+      replacementHandshakeData,
+      operation: .handshake,
+      as: GatewayHandshakeResponse.self,
+      codec: codec
+    )
+    await coordinator.release()
+    _ = try await decisionTask.value
+
+    #expect(await coordinator.didCommit == false)
+    #expect(await coordinator.wasRejected)
   }
 
   private actor ScriptedConnection: HexGatewayXPCConnection {
@@ -518,6 +598,53 @@ struct XPCGatewayTransportTests {
     ) {
       self.request = request
       self.choice = choice
+    }
+  }
+
+  private actor AuthorizationCommitCoordinator {
+    private(set) var didCommit = false
+    private(set) var wasRejected = false
+    private var hasEntered = false
+    private var hasReleased = false
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func enter() {
+      hasEntered = true
+      enteredContinuation?.resume()
+      enteredContinuation = nil
+    }
+
+    func waitUntilEntered() async {
+      guard !hasEntered else {
+        return
+      }
+      await withCheckedContinuation { continuation in
+        enteredContinuation = continuation
+      }
+    }
+
+    func waitForRelease() async {
+      guard !hasReleased else {
+        return
+      }
+      await withCheckedContinuation { continuation in
+        releaseContinuation = continuation
+      }
+    }
+
+    func release() {
+      hasReleased = true
+      releaseContinuation?.resume()
+      releaseContinuation = nil
+    }
+
+    func recordCommit() {
+      didCommit = true
+    }
+
+    func recordRejection() {
+      wasRejected = true
     }
   }
 

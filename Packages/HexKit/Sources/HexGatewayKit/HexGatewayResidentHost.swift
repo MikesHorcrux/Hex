@@ -95,8 +95,8 @@ public final class HexGatewayResidentHost {
         HexGatewayXPCService(
           service: service,
           configuration: gatewayConfiguration,
-          authorizationDecisionHandler: { request, choice in
-            try await broker.submit(request, choice: choice)
+          authorizationDecisionHandler: { request, choice, gate in
+            try await broker.submit(request, choice: choice, gate: gate)
           }
         )
       },

@@ -10,20 +10,30 @@ public final class HexGatewayXPCService: NSObject {
     private let service: HexGatewayService
     private let codec: GatewayWireCodec
     private let authorizationDecisionHandler:
-      (@Sendable (AuthorizationRequest, GatewayAuthorizationDecisionChoice) async throws -> Void)?
+      (@Sendable (
+        AuthorizationRequest,
+        GatewayAuthorizationDecisionChoice,
+        HexGatewayAuthorizationCommitGate
+      ) async throws -> Void)?
     private var activeLease: GatewayTransportConnectionLease?
     private var sessionID: GatewaySessionID?
     private var subscriptions: [GatewayXPCSubscriptionID: Task<Void, Never>] = [:]
+    private var authorizationCommitGate: HexGatewayAuthorizationCommitGate
 
     init(
       service: HexGatewayService,
       configuration: GatewayConfiguration,
       authorizationDecisionHandler:
-        (@Sendable (AuthorizationRequest, GatewayAuthorizationDecisionChoice) async throws -> Void)?
+        (@Sendable (
+          AuthorizationRequest,
+          GatewayAuthorizationDecisionChoice,
+          HexGatewayAuthorizationCommitGate
+        ) async throws -> Void)?
     ) {
       self.service = service
       codec = GatewayWireCodec(configuration: configuration)
       self.authorizationDecisionHandler = authorizationDecisionHandler
+      authorizationCommitGate = HexGatewayAuthorizationCommitGate()
     }
 
     func request(_ rawEnvelope: Data) async -> Data {
@@ -119,6 +129,7 @@ public final class HexGatewayXPCService: NSObject {
     }
 
     func invalidate() async {
+      authorizationCommitGate.invalidate()
       let tasks = subscriptions.values
       subscriptions.removeAll()
       for task in tasks {
@@ -166,7 +177,11 @@ public final class HexGatewayXPCService: NSObject {
           GatewayAuthorizationDecisionRequest.self,
           from: envelope.body
         )
-        try await authorizationDecisionHandler(decision.request, decision.choice)
+        try await authorizationDecisionHandler(
+          decision.request,
+          decision.choice,
+          authorizationCommitGate
+        )
         return try successResponse(
           operation: .submitAuthorizationDecision,
           body: nil
@@ -258,6 +273,8 @@ public final class HexGatewayXPCService: NSObject {
     }
 
     private func disconnectActiveSession() async {
+      authorizationCommitGate.invalidate()
+      authorizationCommitGate = HexGatewayAuthorizationCommitGate()
       if let sessionID {
         await service.disconnect(sessionID: sessionID)
       }
@@ -330,14 +347,17 @@ public final class HexGatewayXPCService: NSObject {
   }
 
   /// Creates an exported service with a handler owned by the resident composition root. The
-  /// handler receives the complete request echoed by the app and must preserve the broker's
-  /// exact-match and pending-request policy.
+  /// handler receives the complete request echoed by the app and the active connection's commit
+  /// gate; it must pass that gate to the broker so invalidation cannot race the final commit.
   public init(
     service: HexGatewayService,
     configuration: GatewayConfiguration = .standard,
     authorizationDecisionHandler:
-      @escaping @Sendable (AuthorizationRequest, GatewayAuthorizationDecisionChoice) async throws
-        -> Void
+      @escaping @Sendable (
+        AuthorizationRequest,
+        GatewayAuthorizationDecisionChoice,
+        HexGatewayAuthorizationCommitGate
+      ) async throws -> Void
   ) {
     state = State(
       service: service,
