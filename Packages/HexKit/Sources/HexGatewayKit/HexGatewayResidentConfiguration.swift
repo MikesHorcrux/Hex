@@ -28,11 +28,14 @@ public struct HexGatewayResidentConfiguration: Sendable {
   private static let workspaceVariable = "HEX_WORKSPACE_ROOT"
   private static let serviceVariable = "HEX_GATEWAY_MACH_SERVICE"
   private static let databaseVariable = "HEX_GATEWAY_DATABASE_URL"
+  private static let heartbeatStoreVariable = "HEX_HEARTBEAT_STORE_URL"
+  private static let heartbeatDatabaseVariable = "HEX_HEARTBEAT_DATABASE_URL"
 
   public let machServiceName: String
   public let modelID: String
   public let workspaceRoot: URL
   public let databaseURL: URL
+  public let heartbeatStoreURL: URL
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
   private let apiKey: String
 
@@ -74,6 +77,15 @@ public struct HexGatewayResidentConfiguration: Sendable {
         .appendingPathComponent("Hex", isDirectory: true)
         .appendingPathComponent("agent-events.sqlite", isDirectory: false)
     }
+    let heartbeatStoreURL: URL
+    if let rawHeartbeatStoreURL = Self.value(named: Self.heartbeatStoreVariable, in: environment)
+      ?? Self.value(named: Self.heartbeatDatabaseVariable, in: environment)
+    {
+      heartbeatStoreURL = URL(fileURLWithPath: rawHeartbeatStoreURL, isDirectory: false)
+    } else {
+      heartbeatStoreURL = databaseURL.deletingLastPathComponent()
+        .appendingPathComponent("heartbeats.json", isDirectory: false)
+    }
 
     try self.init(
       machServiceName: machServiceName,
@@ -81,6 +93,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       workspaceRoot: URL(fileURLWithPath: workspace, isDirectory: true),
       databaseURL: databaseURL,
       apiKey: apiKey,
+      heartbeatStoreURL: heartbeatStoreURL,
       connectionAdmissionPolicy: .production()
     )
   }
@@ -91,6 +104,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     workspaceRoot: URL,
     databaseURL: URL,
     apiKey: String,
+    heartbeatStoreURL: URL? = nil,
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
   ) throws {
     guard Self.isPrintableASCII(machServiceName), machServiceName.utf8.count <= 256 else {
@@ -108,11 +122,21 @@ public struct HexGatewayResidentConfiguration: Sendable {
     guard Self.isAbsoluteFileURL(databaseURL), databaseURL.lastPathComponent != "." else {
       throw ConfigurationError.invalidVariable(Self.databaseVariable)
     }
+    let resolvedHeartbeatStoreURL = heartbeatStoreURL
+      ?? databaseURL.deletingLastPathComponent()
+        .appendingPathComponent("heartbeats.json", isDirectory: false)
+    guard
+      Self.isAbsoluteFileURL(resolvedHeartbeatStoreURL),
+      resolvedHeartbeatStoreURL.lastPathComponent != "."
+    else {
+      throw ConfigurationError.invalidVariable(Self.heartbeatStoreVariable)
+    }
 
     self.machServiceName = machServiceName
     self.modelID = modelID
     self.workspaceRoot = workspaceRoot.standardizedFileURL
     self.databaseURL = databaseURL.standardizedFileURL
+    self.heartbeatStoreURL = resolvedHeartbeatStoreURL.standardizedFileURL
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.apiKey = apiKey
   }

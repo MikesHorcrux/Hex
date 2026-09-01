@@ -12,6 +12,7 @@ struct HexGatewayResidentConfigurationTests {
         "HEX_OPENAI_MODEL": "gpt-test",
         "HEX_WORKSPACE_ROOT": "/tmp/hex-workspace",
         "HEX_GATEWAY_DATABASE_URL": "/tmp/hex-gateway/journal.sqlite",
+        "HEX_HEARTBEAT_STORE_URL": "/tmp/hex-gateway/heartbeats.json",
       ]
     )
 
@@ -19,6 +20,7 @@ struct HexGatewayResidentConfigurationTests {
     #expect(configuration.modelID == "gpt-test")
     #expect(configuration.workspaceRoot.path == "/tmp/hex-workspace")
     #expect(configuration.databaseURL.path == "/tmp/hex-gateway/journal.sqlite")
+    #expect(configuration.heartbeatStoreURL.path == "/tmp/hex-gateway/heartbeats.json")
     #expect(try await configuration.makeCredentialProvider().apiKey() == "sk-test-secret")
 
     do {

@@ -26,6 +26,8 @@ public final class HexGatewayResidentHost {
   public let configuration: HexGatewayResidentConfiguration
 
   private let composition: HexGatewayComposition
+  private let heartbeatClient: HexGatewayClient
+  private let heartbeatScheduler: HexHeartbeatScheduler
   private let authorizationBroker: HexGatewayAuthorizationBroker
   private let listener: NSXPCListener
   private let listenerDelegate: HexGatewayXPCListenerDelegate
@@ -71,9 +73,28 @@ public final class HexGatewayResidentHost {
     let composition = try await HexGatewayComposition.open(
       configuration: compositionConfiguration
     )
+    let heartbeatConfiguration = HexHeartbeatSchedulerConfiguration.standard
+    let heartbeatClient = HexGatewayClient(
+      transport: composition.transport,
+      clientID: GatewayClientID(),
+      configuration: composition.gatewayConfiguration
+    )
+    let heartbeatRunner = try HexGatewayHeartbeatRunner(
+      client: heartbeatClient,
+      modelID: ModelID(rawValue: configuration.modelID),
+      workspaceRoot: configuration.workspaceRoot,
+      configuration: heartbeatConfiguration
+    )
+    let heartbeatScheduler = HexHeartbeatScheduler(
+      store: JSONHexHeartbeatStore(fileURL: configuration.heartbeatStoreURL),
+      runner: heartbeatRunner,
+      configuration: heartbeatConfiguration
+    )
     return Self(
       configuration: configuration,
       composition: composition,
+      heartbeatClient: heartbeatClient,
+      heartbeatScheduler: heartbeatScheduler,
       authorizationBroker: authorizationBroker
     )
   }
@@ -81,10 +102,14 @@ public final class HexGatewayResidentHost {
   private init(
     configuration: HexGatewayResidentConfiguration,
     composition: HexGatewayComposition,
+    heartbeatClient: HexGatewayClient,
+    heartbeatScheduler: HexHeartbeatScheduler,
     authorizationBroker: HexGatewayAuthorizationBroker
   ) {
     self.configuration = configuration
     self.composition = composition
+    self.heartbeatClient = heartbeatClient
+    self.heartbeatScheduler = heartbeatScheduler
     self.authorizationBroker = authorizationBroker
     listener = NSXPCListener(machServiceName: configuration.machServiceName)
     let service = composition.service
@@ -110,13 +135,11 @@ public final class HexGatewayResidentHost {
     guard !hasStarted else {
       throw HostError.alreadyRunning
     }
-    try Task.checkCancellation()
     hasStarted = true
     let cancellationGate = HexGatewayResidentCancellationGate()
 
     defer {
       cancellationGate.removeCancellationHandler()
-      invalidateResources()
     }
 
     listener.delegate = listenerDelegate
@@ -124,27 +147,66 @@ public final class HexGatewayResidentHost {
       configuration.connectionAdmissionPolicy.codeSigningRequirement
     )
 
-    try await withTaskCancellationHandler(
-      operation: {
-        try Task.checkCancellation()
-        guard cancellationGate.activate({ listener.activate() }) else {
-          throw CancellationError()
-        }
-        installSignalSources()
-        cancellationGate.installCancellationHandler { [weak self] in
-          Task { @MainActor [weak self] in
-            self?.stopForCancellation()
+    var runError: (any Error)?
+    do {
+      try await withTaskCancellationHandler(
+        operation: {
+          try Task.checkCancellation()
+          guard cancellationGate.activate({ listener.activate() }) else {
+            throw CancellationError()
           }
+          installSignalSources()
+          cancellationGate.installCancellationHandler { [weak self] in
+            Task { @MainActor [weak self] in
+              self?.stopForCancellation()
+            }
+          }
+          try await heartbeatClient.connect()
+          try await heartbeatScheduler.start()
+          try await waitForShutdown()
+          try Task.checkCancellation()
+        },
+        onCancel: {
+          cancellationGate.cancel()
         }
-        try await waitForShutdown()
-        try Task.checkCancellation()
-      },
-      onCancel: {
-        cancellationGate.cancel()
-      }
-    )
+      )
+    } catch {
+      runError = error
+    }
+
+    // Teardown is deliberately ordered around the shared gateway graph. The listener is closed
+    // first, then the scheduler is drained, then the scheduler's client is disconnected before
+    // authorization continuations and the durable journal are released.
+    invalidateResources()
+    await heartbeatScheduler.stop()
+    await disconnectHeartbeatClientWithoutCancellation()
     await authorizationBroker.cancelAll()
-    try await composition.close()
+    do {
+      try await composition.close()
+    } catch {
+      if runError == nil {
+        runError = error
+      }
+    }
+    if let runError {
+      throw runError
+    }
+  }
+
+  /// Returns the durable heartbeat state for status/control surfaces. This does not invoke the
+  /// model or start a run.
+  public func heartbeatSnapshot() async throws -> HexHeartbeatStoreSnapshot {
+    try await heartbeatScheduler.snapshot()
+  }
+
+  /// Returns the deterministic next wake boundary, if an unpaused schedule exists.
+  public func heartbeatNextWakeDate() async -> Date? {
+    await heartbeatScheduler.nextWakeDate()
+  }
+
+  /// Reports whether the resident heartbeat loop is active.
+  public func heartbeatIsRunning() async -> Bool {
+    await heartbeatScheduler.isRunning()
   }
 
   /// Requests an idempotent graceful shutdown. This does not install, unregister, or otherwise
@@ -227,5 +289,16 @@ public final class HexGatewayResidentHost {
     } else {
       continuation?.resume()
     }
+  }
+
+  /// `HexGatewayClient.disconnect()` checks task cancellation before doing work. Cleanup must still
+  /// revoke the transport lease when the resident run was cancelled, so perform this one bounded
+  /// call in an uncancelled detached task.
+  private func disconnectHeartbeatClientWithoutCancellation() async {
+    let client = heartbeatClient
+    let disconnectTask = Task.detached(priority: nil) {
+      try? await client.disconnect()
+    }
+    await disconnectTask.value
   }
 }

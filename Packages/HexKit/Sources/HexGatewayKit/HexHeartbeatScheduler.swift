@@ -179,6 +179,10 @@ public actor HexHeartbeatScheduler {
       .min()
   }
 
+  public func isRunning() -> Bool {
+    isStarted
+  }
+
   public func snapshot() async throws -> HexHeartbeatStoreSnapshot {
     try await ensureLoaded()
     return HexHeartbeatStoreSnapshot(
