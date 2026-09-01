@@ -30,8 +30,9 @@ public final class HexGatewayResidentHost {
   private let listener: NSXPCListener
   private let listenerDelegate: HexGatewayXPCListenerDelegate
   private var signalSources: [DispatchSourceSignal] = []
-  private var shutdownContinuation: CheckedContinuation<Void, Never>?
+  private var shutdownContinuation: CheckedContinuation<Void, any Error>?
   private var shutdownRequested = false
+  private var cancellationRequested = false
   private var hasStarted = false
 
   public static func open(
@@ -89,15 +90,18 @@ public final class HexGatewayResidentHost {
     let service = composition.service
     let gatewayConfiguration = composition.gatewayConfiguration
     let broker = authorizationBroker
-    listenerDelegate = HexGatewayXPCListenerDelegate {
-      HexGatewayXPCService(
-        service: service,
-        configuration: gatewayConfiguration,
-        authorizationDecisionHandler: { request, choice in
-          try await broker.submit(request, choice: choice)
-        }
-      )
-    }
+    listenerDelegate = HexGatewayXPCListenerDelegate(
+      serviceFactory: {
+        HexGatewayXPCService(
+          service: service,
+          configuration: gatewayConfiguration,
+          authorizationDecisionHandler: { request, choice in
+            try await broker.submit(request, choice: choice)
+          }
+        )
+      },
+      admissionPolicy: configuration.connectionAdmissionPolicy
+    )
   }
 
   /// Runs the resident process until SIGTERM, SIGINT, explicit `stop()`, or task cancellation.
@@ -106,23 +110,37 @@ public final class HexGatewayResidentHost {
     guard !hasStarted else {
       throw HostError.alreadyRunning
     }
+    try Task.checkCancellation()
     hasStarted = true
-    listener.delegate = listenerDelegate
-    installSignalSources()
-    listener.resume()
+    let cancellationGate = HexGatewayResidentCancellationGate()
 
     defer {
+      cancellationGate.removeCancellationHandler()
       invalidateResources()
     }
 
-    await withTaskCancellationHandler(
+    listener.delegate = listenerDelegate
+    listener.setConnectionCodeSigningRequirement(
+      configuration.connectionAdmissionPolicy.codeSigningRequirement
+    )
+
+    try await withTaskCancellationHandler(
       operation: {
-        await waitForShutdown()
+        try Task.checkCancellation()
+        guard cancellationGate.activate({ listener.activate() }) else {
+          throw CancellationError()
+        }
+        installSignalSources()
+        cancellationGate.installCancellationHandler { [weak self] in
+          Task { @MainActor [weak self] in
+            self?.stopForCancellation()
+          }
+        }
+        try await waitForShutdown()
+        try Task.checkCancellation()
       },
       onCancel: {
-        Task { @MainActor [weak self] in
-          self?.stop()
-        }
+        cancellationGate.cancel()
       }
     )
     await authorizationBroker.cancelAll()
@@ -132,19 +150,43 @@ public final class HexGatewayResidentHost {
   /// Requests an idempotent graceful shutdown. This does not install, unregister, or otherwise
   /// mutate launchd state; launchd remains responsible for deciding whether to restart the process.
   public func stop() {
-    shutdownRequested = true
-    listener.invalidate()
-    shutdownContinuation?.resume()
-    shutdownContinuation = nil
+    requestShutdown(isCancellation: false)
   }
 
-  private func waitForShutdown() async {
+  private func stopForCancellation() {
+    requestShutdown(isCancellation: true)
+  }
+
+  private func requestShutdown(isCancellation: Bool) {
+    if isCancellation {
+      cancellationRequested = true
+    }
+    shutdownRequested = true
+    listener.invalidate()
+    let continuation = shutdownContinuation
+    shutdownContinuation = nil
+    if cancellationRequested {
+      continuation?.resume(throwing: CancellationError())
+    } else {
+      continuation?.resume()
+    }
+  }
+
+  private func waitForShutdown() async throws {
+    try Task.checkCancellation()
     guard !shutdownRequested else {
+      if cancellationRequested {
+        throw CancellationError()
+      }
       return
     }
-    await withCheckedContinuation { continuation in
+    try await withCheckedThrowingContinuation { continuation in
       if shutdownRequested {
-        continuation.resume()
+        if cancellationRequested || Task.isCancelled {
+          continuation.resume(throwing: CancellationError())
+        } else {
+          continuation.resume()
+        }
       } else {
         shutdownContinuation = continuation
       }
@@ -178,7 +220,12 @@ public final class HexGatewayResidentHost {
       source.cancel()
     }
     signalSources.removeAll()
-    shutdownContinuation?.resume()
+    let continuation = shutdownContinuation
     shutdownContinuation = nil
+    if cancellationRequested {
+      continuation?.resume(throwing: CancellationError())
+    } else {
+      continuation?.resume()
+    }
   }
 }

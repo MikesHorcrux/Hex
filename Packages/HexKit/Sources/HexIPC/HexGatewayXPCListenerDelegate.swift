@@ -5,9 +5,14 @@
 /// keeping the gateway process alive remain composition-root responsibilities.
 public final class HexGatewayXPCListenerDelegate: NSObject, NSXPCListenerDelegate {
   private let serviceFactory: () -> HexGatewayXPCService
+  private let admissionPolicy: HexGatewayConnectionAdmissionPolicy
 
-  public init(serviceFactory: @escaping () -> HexGatewayXPCService) {
+  public init(
+    serviceFactory: @escaping () -> HexGatewayXPCService,
+    admissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
+  ) {
     self.serviceFactory = serviceFactory
+    self.admissionPolicy = admissionPolicy
     super.init()
   }
 
@@ -15,6 +20,12 @@ public final class HexGatewayXPCListenerDelegate: NSObject, NSXPCListenerDelegat
     _ listener: NSXPCListener,
     shouldAcceptNewConnection newConnection: NSXPCConnection
   ) -> Bool {
+    guard admissionPolicy.accepts(
+      effectiveUserIdentifier: UInt32(newConnection.effectiveUserIdentifier)
+    ) else {
+      newConnection.invalidate()
+      return false
+    }
     let service = serviceFactory()
     newConnection.exportedInterface = HexGatewayXPCService.interface()
     newConnection.exportedObject = service

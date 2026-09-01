@@ -1,4 +1,5 @@
 import Foundation
+import HexIPC
 
 /// Explicit environment configuration for the headless resident gateway. Secrets are retained only
 /// in this process-scoped value and are intentionally absent from equality, descriptions, and
@@ -32,6 +33,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let modelID: String
   public let workspaceRoot: URL
   public let databaseURL: URL
+  public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
   private let apiKey: String
 
   public init(environment: [String: String]) throws {
@@ -78,7 +80,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
       modelID: modelID,
       workspaceRoot: URL(fileURLWithPath: workspace, isDirectory: true),
       databaseURL: databaseURL,
-      apiKey: apiKey
+      apiKey: apiKey,
+      connectionAdmissionPolicy: .production()
     )
   }
 
@@ -87,7 +90,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
     modelID: String,
     workspaceRoot: URL,
     databaseURL: URL,
-    apiKey: String
+    apiKey: String,
+    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
   ) throws {
     guard Self.isPrintableASCII(machServiceName), machServiceName.utf8.count <= 256 else {
       throw ConfigurationError.invalidVariable(Self.serviceVariable)
@@ -109,6 +113,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.modelID = modelID
     self.workspaceRoot = workspaceRoot.standardizedFileURL
     self.databaseURL = databaseURL.standardizedFileURL
+    self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.apiKey = apiKey
   }
 
