@@ -31,6 +31,7 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling {
     @Sendable (HexGatewayClient) -> any HexAuthorizationDecisionSubmitting
   private var composition: HexGatewayComposition?
   private var adapter: HexGatewayClientAdapter?
+  private var connectionResult: GatewayConnectionResult?
 
   init(
     configuration: HexDeveloperConfiguration,
@@ -38,100 +39,188 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling {
     route: HexGatewayRoute? = nil,
     residentAuthorizationTransportBuilder:
       @escaping @Sendable (HexGatewayClient) -> any HexAuthorizationDecisionSubmitting =
-      { client in HexGatewayAuthorizationDecisionAdapter(client: client) }
+      { client in HexGatewayAuthorizationDecisionAdapter(client: client) },
+    initialGatewayAdapter: HexGatewayClientAdapter? = nil
   ) {
     self.configuration = configuration
     self.authorizationBroker = authorizationBroker
     self.route = route ?? configuration.gatewayRoute
     self.residentAuthorizationTransportBuilder = residentAuthorizationTransportBuilder
+    adapter = initialGatewayAdapter
   }
 
   func connect() async throws -> GatewayConnectionResult {
-    try await gatewayAdapter().connect()
+    try await ensureConnected()
   }
 
   func disconnect() async throws {
     guard let adapter else {
+      connectionResult = nil
       return
     }
+    connectionResult = nil
     try await adapter.disconnect()
   }
 
   func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {
-    if route.kind == .developerInProcess {
-      let values = try configuration.liveValues()
-      guard request.modelID.rawValue == values.modelID else {
-        throw ClientError.modelMismatch(expected: values.modelID)
+    do {
+      if route.kind == .developerInProcess {
+        let values = try configuration.liveValues()
+        guard request.modelID.rawValue == values.modelID else {
+          throw ClientError.modelMismatch(expected: values.modelID)
+        }
+        let scopedRequest = GatewayStartRunRequest(
+          runID: request.runID,
+          modelID: request.modelID,
+          initialMessages: request.initialMessages,
+          options: request.options,
+          toolChoice: request.toolChoice,
+          workingDirectory: values.workspaceRoot
+        )
+        return try await gatewayAdapter().startRun(scopedRequest)
       }
-      let scopedRequest = GatewayStartRunRequest(
-        runID: request.runID,
-        modelID: request.modelID,
-        initialMessages: request.initialMessages,
-        options: request.options,
-        toolChoice: request.toolChoice,
-        workingDirectory: values.workspaceRoot
-      )
-      return try await gatewayAdapter().startRun(scopedRequest)
+      return try await gatewayAdapter().startRun(request)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
     }
-    return try await gatewayAdapter().startRun(request)
   }
 
   func eventRecords(
     for runID: AgentRunID,
     invocationID: GatewayRunInvocationID
   ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
-    try await gatewayAdapter().eventRecords(for: runID, invocationID: invocationID)
+    do {
+      return try await gatewayAdapter().eventRecords(for: runID, invocationID: invocationID)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
   }
 
   func cancelRun(_ request: GatewayCancelRunRequest) async throws -> GatewayCancelRunResponse {
-    try await gatewayAdapter().cancelRun(request)
+    do {
+      return try await gatewayAdapter().cancelRun(request)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
   }
 
   func shouldApply(_ envelope: GatewayEventEnvelope) async throws -> Bool {
-    try await gatewayAdapter().shouldApply(envelope)
+    do {
+      return try await gatewayAdapter().shouldApply(envelope)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
   }
 
   func acknowledge(_ envelope: GatewayEventEnvelope) async throws {
-    try await gatewayAdapter().acknowledge(envelope)
+    do {
+      try await gatewayAdapter().acknowledge(envelope)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
   }
 
   func decideAuthorization(
     _ request: AuthorizationRequest,
     choice: AuthorizationDecisionChoice
   ) async throws {
-    try await gatewayAdapter().decideAuthorization(request, choice: choice)
+    do {
+      try await gatewayAdapter().decideAuthorization(request, choice: choice)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
   }
 
-  /// Reads resident state only from the adapter already used by interactive runs. Before the
-  /// workspace has connected, this returns unavailable instead of opening a second XPC session.
+  /// Reads resident state through the same adapter used by interactive runs. A menu-bar-only launch
+  /// lazily establishes that adapter's XPC connection; the resident route never falls back to an
+  /// in-process composition.
   func status() async throws -> HexResidentGatewayStatus {
-    guard let adapter else {
-      return .unavailable
-    }
     do {
+      let adapter = try await connectedGatewayAdapter()
       let status = try await adapter.status()
       return appStatus(from: status)
     } catch let failure as GatewayFailure
-      where failure.code == .notConnected || failure.code == .transportUnavailable
+      where failure.code == .notConnected
+      || failure.code == .transportUnavailable
+      || failure.code == .disconnected
     {
+      connectionResult = nil
       return .unavailable
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
     }
   }
 
   func pauseHeartbeats() async throws -> HexResidentGatewayStatus {
-    guard let adapter else {
-      return .unavailable
+    do {
+      let adapter = try await connectedGatewayAdapter()
+      let status = try await adapter.pauseHeartbeats()
+      return appStatus(from: status)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
     }
-    let status = try await adapter.pauseHeartbeats()
-    return appStatus(from: status)
   }
 
   func resumeHeartbeats() async throws -> HexResidentGatewayStatus {
-    guard let adapter else {
-      return .unavailable
+    do {
+      let adapter = try await connectedGatewayAdapter()
+      let status = try await adapter.resumeHeartbeats()
+      return appStatus(from: status)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
     }
-    let status = try await adapter.resumeHeartbeats()
-    return appStatus(from: status)
+  }
+
+  private func connectedGatewayAdapter() async throws -> HexGatewayClientAdapter {
+    let adapter = try await gatewayAdapter()
+    guard route.kind == .residentXPC else {
+      return adapter
+    }
+    _ = try await ensureConnected(using: adapter)
+    return adapter
+  }
+
+  private func ensureConnected() async throws -> GatewayConnectionResult {
+    let adapter = try await gatewayAdapter()
+    return try await ensureConnected(using: adapter)
+  }
+
+  private func ensureConnected(
+    using adapter: HexGatewayClientAdapter
+  ) async throws -> GatewayConnectionResult {
+    if let connectionResult {
+      return connectionResult
+    }
+
+    do {
+      let result = try await adapter.connect()
+      connectionResult = result
+      return result
+    } catch {
+      connectionResult = nil
+      throw error
+    }
+  }
+
+  private func clearConnectionIfUnavailable(_ error: any Error) {
+    guard let failure = error as? GatewayFailure else {
+      return
+    }
+    switch failure.code {
+    case .notConnected, .transportUnavailable, .disconnected:
+      connectionResult = nil
+    default:
+      break
+    }
   }
 
   private func appStatus(

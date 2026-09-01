@@ -3,6 +3,12 @@ import SwiftUI
 
 struct AgentWorkspaceView: View {
   @Bindable var model: AgentWorkspaceModel
+  let connectOnAppear: Bool
+
+  init(model: AgentWorkspaceModel, connectOnAppear: Bool = true) {
+    _model = Bindable(model)
+    self.connectOnAppear = connectOnAppear
+  }
 
   var body: some View {
     NavigationSplitView {
@@ -49,6 +55,7 @@ struct AgentWorkspaceView: View {
       .background(Color(nsColor: .windowBackgroundColor))
     }
     .task {
+      guard connectOnAppear else { return }
       await model.connect()
     }
   }

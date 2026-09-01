@@ -9,23 +9,37 @@ final class HexStartAtLoginModel {
   private(set) var message: String?
 
   private let controller: any HexGatewayLifecycleControlling
-  private let readiness: HexGatewayActivationReadiness
+  private let readinessChecker: any HexGatewayActivationReadinessChecking
+  private let loginItemsSettingsOpener: any HexLoginItemsSettingsOpening
+  private(set) var readiness = HexGatewayActivationReadiness.blocked
 
   init(
     controller: any HexGatewayLifecycleControlling = HexSMAppServiceLifecycleController(),
-    readiness: HexGatewayActivationReadiness = .blocked
+    readinessChecker: any HexGatewayActivationReadinessChecking =
+      HexBlockedGatewayActivationChecker(),
+    loginItemsSettingsOpener: any HexLoginItemsSettingsOpening =
+      HexSMAppServiceLifecycleController()
   ) {
     self.controller = controller
-    self.readiness = readiness
-    status = readiness.isReady ? .unknown : .unavailable
+    self.readinessChecker = readinessChecker
+    self.loginItemsSettingsOpener = loginItemsSettingsOpener
+    status = .unavailable
   }
 
   var isEnabled: Bool {
-    readiness.isReady && status.isEnabled
+    status.isEnabled
   }
 
   var canChange: Bool {
-    readiness.isReady && status.canChange && !isUpdating
+    guard !isUpdating else { return false }
+    switch status {
+    case .enabled:
+      true
+    case .notRegistered:
+      readiness.isReady
+    case .requiresApproval, .unknown, .notFound, .unavailable:
+      false
+    }
   }
 
   var buttonTitle: String {
@@ -33,45 +47,60 @@ final class HexStartAtLoginModel {
   }
 
   var isAvailable: Bool {
-    readiness.isReady
+    readiness.isReady || status.isEnabled || status == .requiresApproval
   }
 
   var readinessMessage: String? {
-    readiness.isReady ? nil : readiness.message
+    readiness.isReady || status.isEnabled || status == .requiresApproval ? nil : readiness.message
   }
 
   func refresh() async {
-    guard readiness.isReady else {
-      status = .unavailable
-      message = readiness.message
-      return
+    let lifecycleStatus = await controller.status()
+    status = lifecycleStatus
+    readiness = await readinessChecker.check()
+    switch lifecycleStatus {
+    case .enabled:
+      message = nil
+    case .requiresApproval:
+      message = "Approve Hex in System Settings before changing start at login."
+    case .unknown, .notRegistered, .notFound, .unavailable:
+      message = readiness.isReady ? nil : readiness.message
     }
-    status = await controller.status()
-    message = nil
   }
 
   func toggle() {
-    guard readiness.isReady else {
-      message = readiness.message
-      return
-    }
-    guard canChange else {
-      if status == .notFound {
-        message = "Start at login is pending the bundled gateway helper."
-      }
-      return
-    }
-
+    guard !isUpdating else { return }
     isUpdating = true
     message = nil
-    let shouldEnable = !isEnabled
     Task { [weak self] in
       guard let self else { return }
       do {
-        if shouldEnable {
-          try await controller.register()
-        } else {
+        status = await controller.status()
+        readiness = await readinessChecker.check()
+        switch status {
+        case .enabled:
           try await controller.unregister()
+        case .notRegistered:
+          guard readiness.isReady else {
+            message = readiness.message
+            isUpdating = false
+            return
+          }
+          try await controller.register()
+        case .requiresApproval:
+          message = "Approve Hex in System Settings before changing start at login."
+          isUpdating = false
+          return
+        case .unknown:
+          isUpdating = false
+          return
+        case .notFound:
+          message = "Start at login is pending the bundled gateway helper."
+          isUpdating = false
+          return
+        case .unavailable:
+          isUpdating = false
+          return
         }
         status = await controller.status()
         isUpdating = false
@@ -87,5 +116,10 @@ final class HexStartAtLoginModel {
 
   func dismissMessage() {
     message = nil
+  }
+
+  func openLoginItemsSettings() async {
+    guard status == .requiresApproval else { return }
+    await loginItemsSettingsOpener.openLoginItemsSettings()
   }
 }
