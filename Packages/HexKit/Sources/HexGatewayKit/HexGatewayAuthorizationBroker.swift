@@ -1,3 +1,4 @@
+import Foundation
 import HexCapabilities
 import HexCore
 import HexIPC
