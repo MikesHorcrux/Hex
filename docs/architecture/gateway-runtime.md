@@ -40,9 +40,12 @@ signing and builds the SwiftPM `HexGateway` product one at a time, then stages t
 ignored `dist/Hex.app`. The staging step signs the helper first with the app's exact development
 identity and hardened runtime, then re-signs the outer app with its extracted entitlements after the
 helper and plist have been copied. Its `--verify` mode checks the helper's executable bit, validates
-the plist and `BundleProgram` path, verifies the nested and outer signatures, and launches only the
-staged UI. The script never calls `SMAppService`, `launchctl`, or any installation command, and never
-starts the gateway helper.
+the plist identity, `MachServices`, and `BundleProgram` path, verifies the nested and outer signatures,
+and checks the outer app against the resident app's exact Apple code-signing requirement before
+launching only the staged UI. The UI must consume the dedicated `--hex-verify-no-connect` argument
+passed by this mode and suppress its normal startup gateway connection; otherwise a registered
+resident service could be awakened during verification. The script never calls `SMAppService`,
+`launchctl`, or any installation command, and never starts the gateway helper itself.
 
 ## Registration and distribution boundary
 

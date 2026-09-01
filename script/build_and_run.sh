@@ -7,6 +7,8 @@ readonly BUNDLE_ID="com.lunarmothstudios.Hex"
 readonly EXPECTED_TEAM_ID="5V5PZUN2HG"
 readonly HELPER_BUNDLE_ID="com.lunarmothstudios.hex.gateway"
 readonly RESIDENT_KEYCHAIN_GROUP="5V5PZUN2HG.com.lunarmothstudios.Hex.resident"
+readonly APP_CODE_SIGNING_REQUIREMENT='anchor apple generic and identifier "com.lunarmothstudios.Hex" and certificate leaf[subject.OU] = "5V5PZUN2HG"'
+readonly VERIFY_NO_CONNECT_ARGUMENT="--hex-verify-no-connect"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PROJECT_PATH="$ROOT_DIR/Hex.xcodeproj"
 readonly DERIVED_DATA_PATH="$ROOT_DIR/.build/DerivedData"
@@ -117,11 +119,16 @@ verify_signed_artifact() {
     local identifier
     local team_identifier
     local authority
+    local test_requirement="${6:-}"
 
     details="$(codesign_details_for "$artifact")" \
         || fail "could not inspect the $label code signature"
     if ! /usr/bin/codesign --verify --strict "$artifact" >/dev/null; then
         fail "the $label code signature did not pass strict verification"
+    fi
+    if [[ -n "$test_requirement" ]] \
+        && ! /usr/bin/codesign --verify --strict -R="$test_requirement" "$artifact" >/dev/null; then
+        fail "the $label code signature did not satisfy the required Apple signing policy"
     fi
     identifier="$(codesign_field Identifier "$details")"
     if [[ "$identifier" != "$expected_identifier" ]]; then
@@ -355,10 +362,22 @@ verify_gateway_bundle() {
         return 1
     fi
     /usr/bin/plutil -lint "$BUNDLED_LAUNCH_AGENT" >/dev/null
+    local label
     local bundle_program
+    local mach_services
+    label="$(/usr/bin/plutil -extract Label raw -o - "$BUNDLED_LAUNCH_AGENT")"
+    if [[ "$label" != "$HELPER_BUNDLE_ID" ]]; then
+        echo "LaunchAgent Label must be $HELPER_BUNDLE_ID" >&2
+        return 1
+    fi
     bundle_program="$(/usr/bin/plutil -extract BundleProgram raw -o - "$BUNDLED_LAUNCH_AGENT")"
     if [[ "$bundle_program" != "Contents/Resources/HexGateway" ]]; then
         echo "LaunchAgent BundleProgram must be Contents/Resources/HexGateway" >&2
+        return 1
+    fi
+    mach_services="$(/usr/bin/plutil -extract MachServices json -o - "$BUNDLED_LAUNCH_AGENT")"
+    if [[ "$mach_services" != "{\"$HELPER_BUNDLE_ID\":true}" ]]; then
+        echo "LaunchAgent MachServices must contain only $HELPER_BUNDLE_ID=true" >&2
         return 1
     fi
 }
@@ -408,7 +427,8 @@ verify_signed_artifact \
     "$BUNDLE_ID" \
     "$EXPECTED_TEAM_ID" \
     "$signing_identity" \
-    "staged Hex app"
+    "staged Hex app" \
+    "$APP_CODE_SIGNING_REQUIREMENT"
 
 open_app() {
     /usr/bin/open -n "$APP_BUNDLE"
@@ -423,18 +443,18 @@ case "$MODE" in
         ;;
     --logs | logs)
         open_app
-        exec /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
+        /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
         ;;
     --telemetry | telemetry)
         open_app
-        exec /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
+        /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
         ;;
     --verify | verify)
         test -x "$APP_BINARY"
         /usr/bin/plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null
         verify_gateway_bundle
         verification_token="hex-verification-$$-$RANDOM"
-        /usr/bin/open -n "$APP_BUNDLE" --args "$verification_token"
+        /usr/bin/open -n "$APP_BUNDLE" --args "$VERIFY_NO_CONNECT_ARGUMENT" "$verification_token"
 
         if ! verified_app_pid="$(wait_for_verified_app "$verification_token")"; then
             echo "staged $APP_NAME did not launch within five seconds" >&2
