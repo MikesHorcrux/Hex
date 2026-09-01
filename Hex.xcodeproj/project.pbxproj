@@ -15,6 +15,7 @@
 		484558424C44000000000006 /* HexPersonality in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000006 /* HexPersonality */; };
 		484558424C44000000000007 /* HexIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000007 /* HexIPC */; };
 		484558424C44000000000008 /* HexMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000008 /* HexMCP */; };
+		484558424C44000000000009 /* HexGatewayKit in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000009 /* HexGatewayKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 				484558424C44000000000006 /* HexPersonality in Frameworks */,
 				484558424C44000000000007 /* HexIPC in Frameworks */,
 				484558424C44000000000008 /* HexMCP in Frameworks */,
+				484558424C44000000000009 /* HexGatewayKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -139,6 +141,7 @@
 				484558505244000000000006 /* HexPersonality */,
 				484558505244000000000007 /* HexIPC */,
 				484558505244000000000008 /* HexMCP */,
+				484558505244000000000009 /* HexGatewayKit */,
 			);
 			productName = Hex;
 			productReference = 7FCF29493044FB760069F58B /* Hex.app */;
@@ -432,7 +435,8 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 5V5PZUN2HG;
-				ENABLE_APP_SANDBOX = YES;
+				// Debug-only developer mode needs direct access to HEX_WORKSPACE_ROOT and local tools.
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -661,6 +665,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
 			productName = HexMCP;
+		};
+		484558505244000000000009 /* HexGatewayKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "HexKit" */;
+			productName = HexGatewayKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

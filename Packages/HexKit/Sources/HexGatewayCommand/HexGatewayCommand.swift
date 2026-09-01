@@ -1,3 +1,5 @@
+import HexGatewayKit
+
 @main
 enum HexGatewayCommand {
   static func main() {
