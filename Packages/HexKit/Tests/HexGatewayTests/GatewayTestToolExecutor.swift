@@ -1,5 +1,5 @@
 import HexCore
-import HexGateway
+import HexGatewayKit
 
 struct GatewayTestToolExecutor: ToolExecutor, Sendable {
   func availableTools() async throws -> [ToolDefinition] {

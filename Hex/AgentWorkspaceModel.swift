@@ -66,7 +66,7 @@ final class AgentWorkspaceModel {
 
   var transcript: [ConversationItem] = []
   var draft = ""
-  var modelID = "gpt-5.5"
+  var modelID: String
   private(set) var connectionState: ConnectionState = .disconnected
   private(set) var runState: RunState = .idle
   private(set) var pendingAuthorization: AuthorizationRequest?
@@ -81,8 +81,9 @@ final class AgentWorkspaceModel {
   @ObservationIgnored private var currentInvocationID: GatewayRunInvocationID?
   @ObservationIgnored private var streamingAssistantItemID: UUID?
 
-  init(client: any HexAgentClient) {
+  init(client: any HexAgentClient, modelID: String = "preview") {
     self.client = client
+    self.modelID = modelID
   }
 
   var isRunActive: Bool {

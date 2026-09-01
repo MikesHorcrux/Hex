@@ -1,7 +1,7 @@
 import Foundation
 import HexCapabilities
 import HexCore
-import HexGateway
+import HexGatewayKit
 import HexIPC
 import HexPersistence
 import HexRuntime

@@ -17,6 +17,7 @@ let package = Package(
     .library(name: "HexMCP", targets: ["HexMCP"]),
     .library(name: "HexPersonality", targets: ["HexPersonality"]),
     .library(name: "HexIPC", targets: ["HexIPC"]),
+    .library(name: "HexGatewayKit", targets: ["HexGatewayKit"]),
     .executable(name: "HexGateway", targets: ["HexGateway"]),
   ],
   dependencies: [
@@ -69,8 +70,8 @@ let package = Package(
       name: "HexIPC",
       dependencies: ["HexCore"]
     ),
-    .executableTarget(
-      name: "HexGateway",
+    .target(
+      name: "HexGatewayKit",
       dependencies: [
         "HexCore",
         "HexRuntime",
@@ -80,7 +81,13 @@ let package = Package(
         "HexMCP",
         "HexPersonality",
         "HexIPC",
-      ]
+      ],
+      path: "Sources/HexGatewayKit"
+    ),
+    .executableTarget(
+      name: "HexGateway",
+      dependencies: ["HexGatewayKit"],
+      path: "Sources/HexGatewayCommand"
     ),
     .testTarget(
       name: "HexCoreTests",
@@ -124,7 +131,7 @@ let package = Package(
     ),
     .testTarget(
       name: "HexGatewayTests",
-      dependencies: ["HexGateway"]
+      dependencies: ["HexGatewayKit"]
     ),
   ],
   swiftLanguageModes: [.v6]
