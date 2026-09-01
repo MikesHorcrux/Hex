@@ -97,8 +97,8 @@ struct HexGatewayResidentPersistenceTests {
         modelID: "gpt-test",
         workspaceRoot: workspaceRoot,
         databaseURL: validDatabaseURL,
-        heartbeatStoreURL: URL(fileURLWithPath: "/tmp/."),
-        apiKey: "sk-test"
+        apiKey: "sk-test",
+        heartbeatStoreURL: URL(fileURLWithPath: "/tmp/.")
       )
       Issue.record("Expected a heartbeat path containing '.' to be rejected.")
     } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
@@ -111,8 +111,8 @@ struct HexGatewayResidentPersistenceTests {
         modelID: "gpt-test",
         workspaceRoot: workspaceRoot,
         databaseURL: validDatabaseURL,
-        heartbeatStoreURL: URL(fileURLWithPath: "/"),
-        apiKey: "sk-test"
+        apiKey: "sk-test",
+        heartbeatStoreURL: URL(fileURLWithPath: "/")
       )
       Issue.record("Expected a standardized heartbeat directory to be rejected.")
     } catch let error as HexGatewayResidentConfiguration.ConfigurationError {

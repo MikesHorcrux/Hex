@@ -147,7 +147,22 @@ struct HexResidentPersistenceTests {
   }
 
   private func makeTemporaryDirectory() throws -> URL {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    let temporaryPath = FileManager.default.temporaryDirectory.path
+    var resolvedPath = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let didResolve = resolvedPath.withUnsafeMutableBufferPointer { buffer in
+      temporaryPath.withCString { source in
+        Darwin.realpath(source, buffer.baseAddress) != nil
+      }
+    }
+    guard didResolve else {
+      throw JSONHexResidentRuntimeSettingsStoreError.ioFailure
+    }
+
+    let resolvedPathBytes = resolvedPath.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    let directory = URL(
+      fileURLWithPath: String(decoding: resolvedPathBytes, as: UTF8.self),
+      isDirectory: true
+    ).appendingPathComponent(
       "hex-resident-\(UUID().uuidString)",
       isDirectory: true
     )

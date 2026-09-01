@@ -32,7 +32,7 @@ final class HexStartAtLoginModel {
 
   var canChange: Bool {
     guard !isUpdating else { return false }
-    switch status {
+    return switch status {
     case .enabled:
       true
     case .notRegistered:

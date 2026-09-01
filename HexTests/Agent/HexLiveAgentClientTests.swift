@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 import HexIPC
 import Testing

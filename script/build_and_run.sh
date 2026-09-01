@@ -274,7 +274,6 @@ DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcodebuild \
     -configuration Debug \
     -destination "platform=macOS" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
-    -parallelizeTargets NO \
     -jobs 1
 
 if [[ ! -d "$BUILD_APP" ]]; then
