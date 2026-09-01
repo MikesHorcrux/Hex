@@ -18,6 +18,9 @@ public enum GatewayFailureCode: String, Codable, Equatable, Sendable {
   case consumerTooSlow
   case malformedPayload
   case payloadTooLarge
+  case authorizationRequestNotPending
+  case authorizationRequestMismatch
+  case authorizationRequestAlreadyPending
   case disconnected
   case transportUnavailable
   case supersededOperation

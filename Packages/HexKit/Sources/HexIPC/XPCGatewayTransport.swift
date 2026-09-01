@@ -4,7 +4,9 @@ import HexCore
 /// App-facing HexGatewayTransport backed by a fresh local XPC connection per handshake. The
 /// transport owns no gateway state: the connection factory and the Data-only XPC endpoint are
 /// injected, which keeps lifecycle tests independent of launchd and Mach-service registration.
-public actor XPCGatewayTransport: HexGatewayTransport {
+public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDecisionTransport,
+  HexGatewayResidentControlTransport
+{
   private struct ConnectionState: Sendable {
     let generation: UUID
     let lease: GatewayTransportConnectionLease
@@ -156,6 +158,53 @@ public actor XPCGatewayTransport: HexGatewayTransport {
     } catch {
       throw codec.canonicalFailure(from: error)
     }
+  }
+
+  public func submitAuthorizationDecision(
+    _ request: AuthorizationRequest,
+    choice: GatewayAuthorizationDecisionChoice,
+    lease: GatewayTransportConnectionLease
+  ) async throws {
+    let state = try requireConnected(lease: lease)
+    do {
+      let body = try codec.encode(
+        GatewayAuthorizationDecisionRequest(request: request, choice: choice)
+      )
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: .submitAuthorizationDecision,
+          lease: lease,
+          sessionID: state.sessionID,
+          body: body
+        )
+      )
+      let rawResponse = try await state.connection.request(envelope)
+      try requireCurrentConnection(state)
+      try validateEmptyResponse(
+        rawResponse,
+        operation: .submitAuthorizationDecision
+      )
+    } catch {
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  public func status(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayResidentStatus {
+    try await residentControlResponse(operation: .status, lease: lease)
+  }
+
+  public func pauseHeartbeats(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayResidentStatus {
+    try await residentControlResponse(operation: .pauseHeartbeats, lease: lease)
+  }
+
+  public func resumeHeartbeats(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayResidentStatus {
+    try await residentControlResponse(operation: .resumeHeartbeats, lease: lease)
   }
 
   public func eventRecords(
@@ -317,6 +366,56 @@ public actor XPCGatewayTransport: HexGatewayTransport {
       )
     }
     return try codec.decode(type, from: body)
+  }
+
+  private func validateEmptyResponse(
+    _ data: Data,
+    operation: GatewayXPCOperation
+  ) throws {
+    let response = try codec.decode(GatewayXPCResponseEnvelope.self, from: data).validated()
+    guard response.operation == operation else {
+      throw GatewayFailure(
+        code: .malformedPayload,
+        message: "The gateway XPC reply operation did not match the request."
+      )
+    }
+    if let failure = response.failure {
+      throw codec.canonicalFailure(from: failure)
+    }
+    guard response.body == nil else {
+      throw GatewayFailure(
+        code: .malformedPayload,
+        message: "The gateway XPC reply unexpectedly contained a result."
+      )
+    }
+  }
+
+  private func residentControlResponse(
+    operation: GatewayXPCOperation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayResidentStatus {
+    let state = try requireConnected(lease: lease)
+    do {
+      try Task.checkCancellation()
+      let body = try codec.encode(Data())
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: operation,
+          lease: lease,
+          sessionID: state.sessionID,
+          body: body
+        )
+      )
+      let rawResponse = try await state.connection.request(envelope)
+      try requireCurrentConnection(state)
+      return try decodeResponse(
+        rawResponse,
+        operation: operation,
+        as: GatewayResidentStatus.self
+      )
+    } catch {
+      throw codec.canonicalFailure(from: error)
+    }
   }
 
   private func requireConnected(

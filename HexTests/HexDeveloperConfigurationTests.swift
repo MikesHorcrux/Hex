@@ -38,4 +38,43 @@ struct HexDeveloperConfigurationTests {
     #expect(values.modelID == "gpt-developer-test")
     #expect(values.workspaceRoot == workspaceRoot.resolvingSymlinksInPath())
   }
+
+  @Test
+  func residentXPCIsTheDefaultRoute() {
+    let configuration = HexDeveloperConfiguration(environment: [:])
+
+    #expect(configuration.gatewayRoute.kind == .residentXPC)
+    #expect(
+      configuration.gatewayRoute.machServiceName
+        == HexGatewayRoute.defaultMachServiceName
+    )
+  }
+
+  @Test
+  func inProcessRouteRequiresExplicitOptInAndCompleteSettings() {
+    let workspaceRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+    let configuration = HexDeveloperConfiguration(
+      environment: [
+        "HEX_OPENAI_API_KEY": "developer-test-key",
+        "HEX_OPENAI_MODEL": "gpt-developer-test",
+        "HEX_WORKSPACE_ROOT": workspaceRoot.path,
+        "HEX_GATEWAY_MODE": "in-process",
+        "HEX_ALLOW_IN_PROCESS_FALLBACK": "true",
+      ]
+    )
+
+    #expect(configuration.gatewayRoute.kind == .developerInProcess)
+  }
+
+  @Test
+  func incompleteFallbackFallsBackToResidentXPC() {
+    let configuration = HexDeveloperConfiguration(
+      environment: [
+        "HEX_GATEWAY_MODE": "in-process",
+        "HEX_ALLOW_IN_PROCESS_FALLBACK": "true",
+      ]
+    )
+
+    #expect(configuration.gatewayRoute.kind == .residentXPC)
+  }
 }

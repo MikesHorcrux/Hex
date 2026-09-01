@@ -6,6 +6,10 @@ public enum GatewayXPCOperation: String, Codable, Hashable, Sendable {
   case handshake
   case startRun
   case cancelRun
+  case submitAuthorizationDecision
+  case status
+  case pauseHeartbeats
+  case resumeHeartbeats
   case subscribeEvents
   case cancelSubscription
   case disconnect

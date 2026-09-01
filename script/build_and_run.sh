@@ -7,11 +7,16 @@ readonly BUNDLE_ID="com.lunarmothstudios.Hex"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PROJECT_PATH="$ROOT_DIR/Hex.xcodeproj"
 readonly DERIVED_DATA_PATH="$ROOT_DIR/.build/DerivedData"
+readonly GATEWAY_BUILD_PATH="$ROOT_DIR/.build/HexGateway"
 readonly BUILD_APP="$DERIVED_DATA_PATH/Build/Products/Debug/$APP_NAME.app"
 readonly DIST_DIR="$ROOT_DIR/dist"
 readonly APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 readonly APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+readonly GATEWAY_BUNDLE_BINARY="$APP_BUNDLE/Contents/Resources/HexGateway"
+readonly BUNDLED_LAUNCH_AGENT="$APP_BUNDLE/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist"
+readonly LAUNCH_AGENT_SOURCE="$ROOT_DIR/Resources/LaunchAgent/com.lunarmothstudios.hex.gateway.plist"
 readonly XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+gateway_bin_path=""
 verified_app_pid=""
 
 usage() {
@@ -138,6 +143,8 @@ DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcodebuild \
     -configuration Debug \
     -destination "platform=macOS" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
+    -parallelizeTargets NO \
+    -jobs 1 \
     CODE_SIGNING_ALLOWED=NO
 
 if [[ ! -d "$BUILD_APP" ]]; then
@@ -145,9 +152,60 @@ if [[ ! -d "$BUILD_APP" ]]; then
     exit 1
 fi
 
+gateway_bin_path="$({
+    DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcrun swift build \
+        --package-path "$ROOT_DIR/Packages/HexKit" \
+        --scratch-path "$GATEWAY_BUILD_PATH" \
+        --product HexGateway \
+        --configuration debug \
+        --show-bin-path
+})"
+
+DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcrun swift build \
+    --package-path "$ROOT_DIR/Packages/HexKit" \
+    --scratch-path "$GATEWAY_BUILD_PATH" \
+    --product HexGateway \
+    --configuration debug \
+    -j 1
+
+if [[ ! -x "$gateway_bin_path/HexGateway" ]]; then
+    echo "built HexGateway executable was not found at $gateway_bin_path/HexGateway" >&2
+    exit 1
+fi
+
 mkdir -p "$DIST_DIR"
 rm -rf "$APP_BUNDLE"
 /usr/bin/ditto "$BUILD_APP" "$APP_BUNDLE"
+
+if [[ ! -f "$LAUNCH_AGENT_SOURCE" ]]; then
+    echo "bundle-ready LaunchAgent plist is missing at $LAUNCH_AGENT_SOURCE" >&2
+    echo "This developer packaging path does not synthesize or install a LaunchAgent." >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "$GATEWAY_BUNDLE_BINARY")" "$(dirname "$BUNDLED_LAUNCH_AGENT")"
+/usr/bin/install -m 0755 "$gateway_bin_path/HexGateway" "$GATEWAY_BUNDLE_BINARY"
+/usr/bin/install -m 0644 "$LAUNCH_AGENT_SOURCE" "$BUNDLED_LAUNCH_AGENT"
+
+verify_gateway_bundle() {
+    if [[ ! -x "$GATEWAY_BUNDLE_BINARY" ]]; then
+        echo "packaged HexGateway helper is not executable at $GATEWAY_BUNDLE_BINARY" >&2
+        return 1
+    fi
+    if [[ ! -f "$BUNDLED_LAUNCH_AGENT" ]]; then
+        echo "packaged LaunchAgent plist is missing at $BUNDLED_LAUNCH_AGENT" >&2
+        return 1
+    fi
+    /usr/bin/plutil -lint "$BUNDLED_LAUNCH_AGENT" >/dev/null
+    local bundle_program
+    bundle_program="$(/usr/bin/plutil -extract BundleProgram raw -o - "$BUNDLED_LAUNCH_AGENT")"
+    if [[ "$bundle_program" != "Contents/Resources/HexGateway" ]]; then
+        echo "LaunchAgent BundleProgram must be Contents/Resources/HexGateway" >&2
+        return 1
+    fi
+}
+
+verify_gateway_bundle
 
 open_app() {
     /usr/bin/open -n "$APP_BUNDLE"
@@ -171,6 +229,7 @@ case "$MODE" in
     --verify | verify)
         test -x "$APP_BINARY"
         /usr/bin/plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null
+        verify_gateway_bundle
         verification_token="hex-verification-$$-$RANDOM"
         /usr/bin/open -n "$APP_BUNDLE" --args "$verification_token"
 
@@ -192,6 +251,6 @@ case "$MODE" in
         verified_app_pid=""
         trap - EXIT
 
-        echo "verified staged Debug app launch and cleanup at $APP_BUNDLE"
+        echo "verified staged Debug app launch and packaged gateway layout at $APP_BUNDLE"
         ;;
 esac

@@ -1,21 +1,19 @@
 import HexCore
 import HexIPC
 
-/// Adapts the package's replay-aware client to the app protocol. Authorization routing remains an
-/// injected closure because the transport milestone does not prescribe how a UI decision crosses
-/// into the gateway's authorization provider.
+/// Adapts the package's replay-aware client to the app protocol. Authorization routing is an
+/// injected process boundary so a resident gateway can receive decisions over IPC without placing
+/// a second broker in the app.
 nonisolated struct HexGatewayClientAdapter: HexAgentClient, Sendable {
   let client: HexGatewayClient
-  private let authorizationHandler:
-    (@Sendable (AuthorizationRequest, AuthorizationDecisionChoice) async throws -> Void)?
+  private let authorizationTransport: any HexAuthorizationDecisionSubmitting
 
   init(
     client: HexGatewayClient,
-    authorizationHandler:
-      (@Sendable (AuthorizationRequest, AuthorizationDecisionChoice) async throws -> Void)? = nil
+    authorizationTransport: any HexAuthorizationDecisionSubmitting
   ) {
     self.client = client
-    self.authorizationHandler = authorizationHandler
+    self.authorizationTransport = authorizationTransport
   }
 
   func connect() async throws -> GatewayConnectionResult {
@@ -53,12 +51,6 @@ nonisolated struct HexGatewayClientAdapter: HexAgentClient, Sendable {
     _ request: AuthorizationRequest,
     choice: AuthorizationDecisionChoice
   ) async throws {
-    guard let authorizationHandler else {
-      throw GatewayFailure(
-        code: .transportUnavailable,
-        message: "Authorization routing is not connected to this gateway yet."
-      )
-    }
-    try await authorizationHandler(request, choice)
+    try await authorizationTransport.submit(request, choice: choice)
   }
 }

@@ -1,9 +1,17 @@
-# LaunchAgent template
+# Resident gateway resources
 
-`com.lunarmothstudios.hex.gateway.plist.template` is inert source material for a future, explicitly
-approved always-on gateway installation flow. It is not a valid installed agent while its placeholder
-paths remain, defaults to disabled, and no repository script loads or copies it into `~/Library`.
+`com.lunarmothstudios.hex.gateway.plist` is the bundle-ready LaunchAgent definition used by the
+`SMAppService` integration. Packaging must place it at
+`Hex.app/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist` and place the matching
+gateway executable at `Hex.app/Contents/Resources/HexGateway`.
 
-Before any future activation work, Hex must define an uninstall path, log retention, crash backoff,
-upgrade behavior, and a visible user control. Registering a LaunchAgent is outside the current approval
-boundary.
+The job advertises the `com.lunarmothstudios.hex.gateway` Mach service, starts for the signed-in user,
+and restarts after an unsuccessful exit with launchd throttling. A clean exit is not restarted, which
+lets an explicit unregister or uninstall complete without a respawn loop.
+
+These files do not install or register anything by themselves. Registration and removal go through
+the app's visible `SMAppService` control so macOS can surface its approval state. Repository scripts
+must not copy a plist into `~/Library/LaunchAgents` or call `launchctl` behind the user's back.
+
+`com.lunarmothstudios.hex.gateway.plist.template` remains an inert legacy-development reference. It
+is not packaged or registered.

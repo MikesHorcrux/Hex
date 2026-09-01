@@ -9,13 +9,38 @@ public final class HexGatewayXPCService: NSObject {
   private actor State {
     private let service: HexGatewayService
     private let codec: GatewayWireCodec
+    private let authorizationDecisionHandler:
+      (
+        @Sendable (
+          AuthorizationRequest,
+          GatewayAuthorizationDecisionChoice,
+          HexGatewayAuthorizationCommitGate
+        ) async throws -> Void
+      )?
+    private let residentControlHandlers: HexGatewayResidentControlHandlers
     private var activeLease: GatewayTransportConnectionLease?
     private var sessionID: GatewaySessionID?
     private var subscriptions: [GatewayXPCSubscriptionID: Task<Void, Never>] = [:]
+    private var authorizationCommitGate: HexGatewayAuthorizationCommitGate
 
-    init(service: HexGatewayService, configuration: GatewayConfiguration) {
+    init(
+      service: HexGatewayService,
+      configuration: GatewayConfiguration,
+      authorizationDecisionHandler:
+        (
+          @Sendable (
+            AuthorizationRequest,
+            GatewayAuthorizationDecisionChoice,
+            HexGatewayAuthorizationCommitGate
+          ) async throws -> Void
+        )?,
+      residentControlHandlers: HexGatewayResidentControlHandlers
+    ) {
       self.service = service
       codec = GatewayWireCodec(configuration: configuration)
+      self.authorizationDecisionHandler = authorizationDecisionHandler
+      self.residentControlHandlers = residentControlHandlers
+      authorizationCommitGate = HexGatewayAuthorizationCommitGate()
     }
 
     func request(_ rawEnvelope: Data) async -> Data {
@@ -111,6 +136,7 @@ public final class HexGatewayXPCService: NSObject {
     }
 
     func invalidate() async {
+      authorizationCommitGate.invalidate()
       let tasks = subscriptions.values
       subscriptions.removeAll()
       for task in tasks {
@@ -146,6 +172,66 @@ public final class HexGatewayXPCService: NSObject {
         let response = try await service.cancelRun(request, sessionID: sessionID)
         return try successResponse(operation: .cancelRun, value: response)
 
+      case .submitAuthorizationDecision:
+        _ = try currentSession(for: envelope)
+        guard let authorizationDecisionHandler else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway has no authorization decision handler."
+          )
+        }
+        let decision = try codec.decode(
+          GatewayAuthorizationDecisionRequest.self,
+          from: envelope.body
+        )
+        try await authorizationDecisionHandler(
+          decision.request,
+          decision.choice,
+          authorizationCommitGate
+        )
+        return try successResponse(
+          operation: .submitAuthorizationDecision,
+          body: nil
+        )
+
+      case .status:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        let status: GatewayResidentStatus
+        if let handler = residentControlHandlers.status {
+          status = try await handler()
+        } else {
+          status = .unavailable
+        }
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .status, value: status)
+
+      case .pauseHeartbeats:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = residentControlHandlers.pauseHeartbeats else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat controls."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .pauseHeartbeats, value: status)
+
+      case .resumeHeartbeats:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = residentControlHandlers.resumeHeartbeats else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat controls."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .resumeHeartbeats, value: status)
+
       case .cancelSubscription:
         _ = try currentSession(for: envelope)
         guard let subscriptionID = envelope.subscriptionID else {
@@ -180,7 +266,8 @@ public final class HexGatewayXPCService: NSObject {
             message: "The XPC handshake envelope contains connection-only fields."
           )
         }
-      case .startRun, .cancelRun, .disconnect:
+      case .startRun, .cancelRun, .submitAuthorizationDecision, .status, .pauseHeartbeats,
+        .resumeHeartbeats, .disconnect:
         guard envelope.sessionID != nil, envelope.subscriptionID == nil else {
           throw GatewayFailure(
             code: .malformedPayload,
@@ -232,6 +319,8 @@ public final class HexGatewayXPCService: NSObject {
     }
 
     private func disconnectActiveSession() async {
+      authorizationCommitGate.invalidate()
+      authorizationCommitGate = HexGatewayAuthorizationCommitGate()
       if let sessionID {
         await service.disconnect(sessionID: sessionID)
       }
@@ -273,6 +362,15 @@ public final class HexGatewayXPCService: NSObject {
       )
     }
 
+    private func requireEmptyBody(for envelope: GatewayXPCRequestEnvelope) throws {
+      guard envelope.body.isEmpty else {
+        throw GatewayFailure(
+          code: .malformedPayload,
+          message: "The resident gateway control request must not contain a body."
+        )
+      }
+    }
+
     private func failureResponse(
       operation: GatewayXPCOperation,
       error: any Error
@@ -293,9 +391,38 @@ public final class HexGatewayXPCService: NSObject {
 
   public init(
     service: HexGatewayService,
-    configuration: GatewayConfiguration = .standard
+    configuration: GatewayConfiguration = .standard,
+    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable
   ) {
-    state = State(service: service, configuration: configuration)
+    state = State(
+      service: service,
+      configuration: configuration,
+      authorizationDecisionHandler: nil,
+      residentControlHandlers: residentControlHandlers
+    )
+    super.init()
+  }
+
+  /// Creates an exported service with a handler owned by the resident composition root. The
+  /// handler receives the complete request echoed by the app and the active connection's commit
+  /// gate; it must pass that gate to the broker so invalidation cannot race the final commit.
+  public init(
+    service: HexGatewayService,
+    configuration: GatewayConfiguration = .standard,
+    authorizationDecisionHandler:
+      @escaping @Sendable (
+        AuthorizationRequest,
+        GatewayAuthorizationDecisionChoice,
+        HexGatewayAuthorizationCommitGate
+      ) async throws -> Void,
+    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable
+  ) {
+    state = State(
+      service: service,
+      configuration: configuration,
+      authorizationDecisionHandler: authorizationDecisionHandler,
+      residentControlHandlers: residentControlHandlers
+    )
     super.init()
   }
 
