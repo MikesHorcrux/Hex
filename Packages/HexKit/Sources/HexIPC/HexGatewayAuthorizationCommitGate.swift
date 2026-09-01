@@ -1,3 +1,4 @@
+import Foundation
 import Synchronization
 
 /// Excludes authorization invalidation from the final broker commit for one XPC connection.
