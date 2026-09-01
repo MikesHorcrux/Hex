@@ -20,7 +20,7 @@ final class HexResidentGatewayModel {
   }
 
   var pauseButtonTitle: String {
-    status.isPaused ? "Resume agent" : "Pause agent"
+    status.isPaused ? "Resume heartbeats" : "Pause heartbeats"
   }
 
   func refresh() async {
@@ -38,7 +38,7 @@ final class HexResidentGatewayModel {
   func togglePause() {
     guard !isUpdating else { return }
     guard status.isAvailable else {
-      message = "Pause/resume is pending resident gateway control IPC."
+      message = "Heartbeat controls are unavailable until the resident gateway is connected."
       return
     }
 
@@ -48,7 +48,11 @@ final class HexResidentGatewayModel {
     Task { [weak self] in
       guard let self else { return }
       do {
-        status = try await controller.setPaused(target)
+        if target {
+          status = try await controller.pauseHeartbeats()
+        } else {
+          status = try await controller.resumeHeartbeats()
+        }
         isUpdating = false
       } catch is CancellationError {
         isUpdating = false

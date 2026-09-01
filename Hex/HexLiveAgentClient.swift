@@ -9,7 +9,7 @@ import HexProviders
 /// Lazily selects the resident XPC gateway first. The in-process composition is retained only as an
 /// explicit developer fallback, so a missing or unavailable resident service never becomes a
 /// silently privileged app-local agent.
-actor HexLiveAgentClient: HexAgentClient {
+actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling {
   enum ClientError: Error, Equatable, LocalizedError, Sendable {
     case applicationSupportUnavailable
     case modelMismatch(expected: String)
@@ -100,6 +100,53 @@ actor HexLiveAgentClient: HexAgentClient {
     choice: AuthorizationDecisionChoice
   ) async throws {
     try await gatewayAdapter().decideAuthorization(request, choice: choice)
+  }
+
+  /// Reads resident state only from the adapter already used by interactive runs. Before the
+  /// workspace has connected, this returns unavailable instead of opening a second XPC session.
+  func status() async throws -> HexResidentGatewayStatus {
+    guard let adapter else {
+      return .unavailable
+    }
+    do {
+      let status = try await adapter.status()
+      return appStatus(from: status)
+    } catch let failure as GatewayFailure
+      where failure.code == .notConnected || failure.code == .transportUnavailable
+    {
+      return .unavailable
+    }
+  }
+
+  func pauseHeartbeats() async throws -> HexResidentGatewayStatus {
+    guard let adapter else {
+      return .unavailable
+    }
+    let status = try await adapter.pauseHeartbeats()
+    return appStatus(from: status)
+  }
+
+  func resumeHeartbeats() async throws -> HexResidentGatewayStatus {
+    guard let adapter else {
+      return .unavailable
+    }
+    let status = try await adapter.resumeHeartbeats()
+    return appStatus(from: status)
+  }
+
+  private func appStatus(
+    from status: GatewayResidentStatus
+  ) -> HexResidentGatewayStatus {
+    switch status {
+    case .unavailable:
+      .unavailable
+    case .idle:
+      .idle
+    case .active:
+      .active
+    case .paused:
+      .paused
+    }
   }
 
   private func gatewayAdapter() async throws -> HexGatewayClientAdapter {

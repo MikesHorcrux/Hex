@@ -1,12 +1,11 @@
-/// Default control route while the resident gateway's status/pause IPC is not yet bundled. It
-/// reports unavailable state and rejects mutations instead of making a local UI toggle look like a
-/// remote gateway change.
+/// Default control route when no resident gateway client has been connected. It reports unavailable
+/// state and rejects mutations instead of making a local UI toggle look like a remote change.
 struct HexUnavailableResidentGatewayController: HexResidentGatewayControlling {
   enum ControlError: Error, Equatable, LocalizedError, Sendable {
     case unavailable
 
     var errorDescription: String? {
-      "Resident gateway controls are not available until the control IPC is installed."
+      "Resident gateway controls are unavailable until the gateway session is connected."
     }
   }
 
@@ -14,8 +13,11 @@ struct HexUnavailableResidentGatewayController: HexResidentGatewayControlling {
     .unavailable
   }
 
-  func setPaused(_ paused: Bool) async throws -> HexResidentGatewayStatus {
-    _ = paused
+  func pauseHeartbeats() async throws -> HexResidentGatewayStatus {
+    throw ControlError.unavailable
+  }
+
+  func resumeHeartbeats() async throws -> HexResidentGatewayStatus {
     throw ControlError.unavailable
   }
 }

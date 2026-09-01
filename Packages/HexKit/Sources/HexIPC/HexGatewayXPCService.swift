@@ -15,6 +15,7 @@ public final class HexGatewayXPCService: NSObject {
         GatewayAuthorizationDecisionChoice,
         HexGatewayAuthorizationCommitGate
       ) async throws -> Void)?
+    private let residentControlHandlers: HexGatewayResidentControlHandlers
     private var activeLease: GatewayTransportConnectionLease?
     private var sessionID: GatewaySessionID?
     private var subscriptions: [GatewayXPCSubscriptionID: Task<Void, Never>] = [:]
@@ -28,11 +29,13 @@ public final class HexGatewayXPCService: NSObject {
           AuthorizationRequest,
           GatewayAuthorizationDecisionChoice,
           HexGatewayAuthorizationCommitGate
-        ) async throws -> Void)?
+        ) async throws -> Void)?,
+      residentControlHandlers: HexGatewayResidentControlHandlers
     ) {
       self.service = service
       codec = GatewayWireCodec(configuration: configuration)
       self.authorizationDecisionHandler = authorizationDecisionHandler
+      self.residentControlHandlers = residentControlHandlers
       authorizationCommitGate = HexGatewayAuthorizationCommitGate()
     }
 
@@ -187,6 +190,44 @@ public final class HexGatewayXPCService: NSObject {
           body: nil
         )
 
+      case .status:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        let status: GatewayResidentStatus
+        if let handler = residentControlHandlers.status {
+          status = try await handler()
+        } else {
+          status = .unavailable
+        }
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .status, value: status)
+
+      case .pauseHeartbeats:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = residentControlHandlers.pauseHeartbeats else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat controls."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .pauseHeartbeats, value: status)
+
+      case .resumeHeartbeats:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = residentControlHandlers.resumeHeartbeats else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat controls."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .resumeHeartbeats, value: status)
+
       case .cancelSubscription:
         _ = try currentSession(for: envelope)
         guard let subscriptionID = envelope.subscriptionID else {
@@ -221,7 +262,8 @@ public final class HexGatewayXPCService: NSObject {
             message: "The XPC handshake envelope contains connection-only fields."
           )
         }
-      case .startRun, .cancelRun, .submitAuthorizationDecision, .disconnect:
+      case .startRun, .cancelRun, .submitAuthorizationDecision, .status, .pauseHeartbeats,
+        .resumeHeartbeats, .disconnect:
         guard envelope.sessionID != nil, envelope.subscriptionID == nil else {
           throw GatewayFailure(
             code: .malformedPayload,
@@ -316,6 +358,15 @@ public final class HexGatewayXPCService: NSObject {
       )
     }
 
+    private func requireEmptyBody(for envelope: GatewayXPCRequestEnvelope) throws {
+      guard envelope.body.isEmpty else {
+        throw GatewayFailure(
+          code: .malformedPayload,
+          message: "The resident gateway control request must not contain a body."
+        )
+      }
+    }
+
     private func failureResponse(
       operation: GatewayXPCOperation,
       error: any Error
@@ -336,12 +387,14 @@ public final class HexGatewayXPCService: NSObject {
 
   public init(
     service: HexGatewayService,
-    configuration: GatewayConfiguration = .standard
+    configuration: GatewayConfiguration = .standard,
+    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable
   ) {
     state = State(
       service: service,
       configuration: configuration,
-      authorizationDecisionHandler: nil
+      authorizationDecisionHandler: nil,
+      residentControlHandlers: residentControlHandlers
     )
     super.init()
   }
@@ -357,12 +410,14 @@ public final class HexGatewayXPCService: NSObject {
         AuthorizationRequest,
         GatewayAuthorizationDecisionChoice,
         HexGatewayAuthorizationCommitGate
-      ) async throws -> Void
+      ) async throws -> Void,
+    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable
   ) {
     state = State(
       service: service,
       configuration: configuration,
-      authorizationDecisionHandler: authorizationDecisionHandler
+      authorizationDecisionHandler: authorizationDecisionHandler,
+      residentControlHandlers: residentControlHandlers
     )
     super.init()
   }

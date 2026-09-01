@@ -12,10 +12,12 @@ struct HexApp: App {
     let configuration = HexDeveloperConfiguration(
       environment: ProcessInfo.processInfo.environment
     )
+    let client = HexLiveAgentClient(configuration: configuration)
     self.init(
-      client: HexLiveAgentClient(configuration: configuration),
+      client: client,
       modelID: configuration.modelIDForInterface,
       route: configuration.gatewayRoute,
+      residentGatewayController: client,
       startAtLoginReadiness: .blocked
     )
   }
@@ -76,10 +78,7 @@ struct HexApp: App {
     case .idle:
       "checkmark.circle.fill"
     case .unavailable:
-      guard workspace.connectionState == .connected else {
-        return "exclamationmark.circle"
-      }
-      return workspace.isRunActive ? "bolt.circle.fill" : "checkmark.circle.fill"
+      "exclamationmark.circle"
     }
   }
 }

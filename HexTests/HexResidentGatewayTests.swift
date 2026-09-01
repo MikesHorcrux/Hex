@@ -15,7 +15,7 @@ struct HexResidentGatewayTests {
     model.togglePause()
 
     #expect(model.status == .unavailable)
-    #expect(model.message == "Pause/resume is pending resident gateway control IPC.")
+    #expect(model.message == "Heartbeat controls are unavailable until the resident gateway is connected.")
   }
 
   @Test @MainActor
@@ -26,6 +26,7 @@ struct HexResidentGatewayTests {
 
     #expect(model.status == .idle)
     #expect(model.canTogglePause)
+    #expect(model.pauseButtonTitle == "Pause heartbeats")
 
     model.togglePause()
     for _ in 0..<20 where model.status != .paused {
@@ -33,7 +34,18 @@ struct HexResidentGatewayTests {
     }
 
     #expect(model.status == .paused)
+    #expect(model.pauseButtonTitle == "Resume heartbeats")
     #expect(await controller.lastRequestedPause == true)
+  }
+
+  @Test
+  func liveClientReportsUnavailableBeforeWorkspaceConnection() async throws {
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test")
+    )
+
+    #expect(try await client.status() == .unavailable)
   }
 
   private actor FakeController: HexResidentGatewayControlling {
@@ -48,9 +60,15 @@ struct HexResidentGatewayTests {
       currentStatus
     }
 
-    func setPaused(_ paused: Bool) async throws -> HexResidentGatewayStatus {
-      lastRequestedPause = paused
-      currentStatus = paused ? .paused : .idle
+    func pauseHeartbeats() async throws -> HexResidentGatewayStatus {
+      lastRequestedPause = true
+      currentStatus = .paused
+      return currentStatus
+    }
+
+    func resumeHeartbeats() async throws -> HexResidentGatewayStatus {
+      lastRequestedPause = false
+      currentStatus = .idle
       return currentStatus
     }
   }

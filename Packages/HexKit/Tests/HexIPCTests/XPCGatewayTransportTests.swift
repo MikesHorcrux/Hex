@@ -172,6 +172,38 @@ struct XPCGatewayTransportTests {
   }
 
   @Test
+  func residentControlOperationsUseTheActiveLeaseAndGeneration() async throws {
+    let handshake = GatewayHandshakeResponse(
+      sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(187)),
+      gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(188)),
+      selectedVersion: .current,
+      activeRun: nil
+    )
+    let connection = ScriptedConnection(handshake: handshake, start: nil)
+    let transport = XPCGatewayTransport(
+      connectionFactory: FixedConnectionFactory(connection: connection)
+    )
+    let lease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(189))
+    _ = try await transport.handshake(GatewayTestValues.handshakeRequest(190), lease: lease)
+
+    #expect(try await transport.status(lease: lease) == .unavailable)
+    #expect(try await transport.pauseHeartbeats(lease: lease) == .unavailable)
+    #expect(try await transport.resumeHeartbeats(lease: lease) == .unavailable)
+    #expect(
+      await connection.operations
+        == [.handshake, .status, .pauseHeartbeats, .resumeHeartbeats]
+    )
+
+    let staleLease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(191))
+    do {
+      _ = try await transport.status(lease: staleLease)
+      Issue.record("Expected a resident status request on a stale lease to be rejected.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .notConnected)
+    }
+  }
+
+  @Test
   func exportedServiceAdaptsHandshakeRunAndEventSubscription() async throws {
     let driver = ImmediateGatewayRunDriver()
     let gateway = HexGatewayService(driver: driver)
@@ -467,6 +499,11 @@ struct XPCGatewayTransportTests {
             operation: .submitAuthorizationDecision,
             body: nil
           )
+        )
+      case .status, .pauseHeartbeats, .resumeHeartbeats:
+        return try response(
+          operation: envelope.operation,
+          value: GatewayResidentStatus.unavailable
         )
       case .disconnect, .cancelSubscription:
         return try codec.encode(

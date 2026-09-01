@@ -42,9 +42,17 @@ struct HexMenuBarView: View {
       Button {
         gateway.togglePause()
       } label: {
-        Label(gateway.pauseButtonTitle, systemImage: gateway.status.isPaused ? "play.fill" : "pause.fill")
+        Label(
+          gateway.pauseButtonTitle,
+          systemImage: gateway.status.isPaused ? "play.fill" : "pause.fill"
+        )
       }
       .disabled(!gateway.canTogglePause)
+
+      Text(HexResidentGatewayStatus.heartbeatControlDetail)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
 
       if let message = gateway.message {
         Text(message)
@@ -133,7 +141,7 @@ struct HexMenuBarView: View {
     switch renderedStatus {
     case .unavailable:
       route.isResident
-        ? "Hex cannot reach the resident Mach service. The agent is not running in this app process."
+        ? "Resident heartbeat status is unavailable. The agent may still be running outside this app process."
         : "The explicitly selected developer gateway is not connected."
     case .idle, .active, .paused:
       route.detail
@@ -141,19 +149,7 @@ struct HexMenuBarView: View {
   }
 
   private var renderedStatus: HexResidentGatewayStatus {
-    switch gateway.status {
-    case .paused:
-      .paused
-    case .active:
-      .active
-    case .idle:
-      .idle
-    case .unavailable:
-      guard workspace.connectionState == .connected else {
-        return .unavailable
-      }
-      return workspace.isRunActive ? .active : .idle
-    }
+    gateway.status
   }
 
   private var statusColor: Color {

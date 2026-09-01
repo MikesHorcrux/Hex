@@ -27,4 +27,7 @@ nonisolated enum HexResidentGatewayStatus: String, Equatable, Sendable {
   var isPaused: Bool {
     self == .paused
   }
+
+  static let heartbeatControlDetail =
+    "Pausing affects scheduled heartbeats only; an interactive task already running will continue."
 }
