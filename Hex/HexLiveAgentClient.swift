@@ -6,9 +6,9 @@ import HexIPC
 import HexPersistence
 import HexProviders
 
-/// Lazily composes the real developer-mode agent in the app process. This intentionally uses the
-/// in-process transport until a registered XPC/launchd boundary exists; the prepared XPC transport
-/// is not presented as active here.
+/// Lazily selects the resident XPC gateway first. The in-process composition is retained only as an
+/// explicit developer fallback, so a missing or unavailable resident service never becomes a
+/// silently privileged app-local agent.
 actor HexLiveAgentClient: HexAgentClient {
   enum ClientError: Error, Equatable, LocalizedError, Sendable {
     case applicationSupportUnavailable
@@ -26,15 +26,22 @@ actor HexLiveAgentClient: HexAgentClient {
 
   private let configuration: HexDeveloperConfiguration
   private let authorizationBroker: HexAuthorizationBroker
+  private let route: HexGatewayRoute
+  private let residentAuthorizationTransport: any HexAuthorizationDecisionSubmitting
   private var composition: HexGatewayComposition?
   private var adapter: HexGatewayClientAdapter?
 
   init(
     configuration: HexDeveloperConfiguration,
-    authorizationBroker: HexAuthorizationBroker = HexAuthorizationBroker()
+    authorizationBroker: HexAuthorizationBroker = HexAuthorizationBroker(),
+    route: HexGatewayRoute? = nil,
+    residentAuthorizationTransport: any HexAuthorizationDecisionSubmitting =
+      HexUnavailableAuthorizationDecisionTransport()
   ) {
     self.configuration = configuration
     self.authorizationBroker = authorizationBroker
+    self.route = route ?? configuration.gatewayRoute
+    self.residentAuthorizationTransport = residentAuthorizationTransport
   }
 
   func connect() async throws -> GatewayConnectionResult {
@@ -49,19 +56,22 @@ actor HexLiveAgentClient: HexAgentClient {
   }
 
   func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {
-    let values = try configuration.liveValues()
-    guard request.modelID.rawValue == values.modelID else {
-      throw ClientError.modelMismatch(expected: values.modelID)
+    if route.kind == .developerInProcess {
+      let values = try configuration.liveValues()
+      guard request.modelID.rawValue == values.modelID else {
+        throw ClientError.modelMismatch(expected: values.modelID)
+      }
+      let scopedRequest = GatewayStartRunRequest(
+        runID: request.runID,
+        modelID: request.modelID,
+        initialMessages: request.initialMessages,
+        options: request.options,
+        toolChoice: request.toolChoice,
+        workingDirectory: values.workspaceRoot
+      )
+      return try await gatewayAdapter().startRun(scopedRequest)
     }
-    let scopedRequest = GatewayStartRunRequest(
-      runID: request.runID,
-      modelID: request.modelID,
-      initialMessages: request.initialMessages,
-      options: request.options,
-      toolChoice: request.toolChoice,
-      workingDirectory: values.workspaceRoot
-    )
-    return try await gatewayAdapter().startRun(scopedRequest)
+    return try await gatewayAdapter().startRun(request)
   }
 
   func eventRecords(
@@ -92,6 +102,18 @@ actor HexLiveAgentClient: HexAgentClient {
 
   private func gatewayAdapter() async throws -> HexGatewayClientAdapter {
     if let adapter {
+      return adapter
+    }
+
+    if route.kind == .residentXPC {
+      let gatewayClient = HexGatewayClient(
+        transport: XPCGatewayTransport(machServiceName: route.machServiceName)
+      )
+      let adapter = HexGatewayClientAdapter(
+        client: gatewayClient,
+        authorizationTransport: residentAuthorizationTransport
+      )
+      self.adapter = adapter
       return adapter
     }
 
@@ -128,10 +150,13 @@ actor HexLiveAgentClient: HexAgentClient {
       configuration: compositionConfiguration
     )
     let gatewayClient = HexGatewayClient(transport: composition.transport)
-    let authorizationBroker = self.authorizationBroker
-    let adapter = HexGatewayClientAdapter(client: gatewayClient) { request, choice in
-      try await authorizationBroker.submit(request, choice: choice)
-    }
+    let authorizationTransport = HexInProcessAuthorizationDecisionTransport(
+      broker: authorizationBroker
+    )
+    let adapter = HexGatewayClientAdapter(
+      client: gatewayClient,
+      authorizationTransport: authorizationTransport
+    )
     self.composition = composition
     self.adapter = adapter
     return adapter
