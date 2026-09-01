@@ -27,7 +27,8 @@ actor HexLiveAgentClient: HexAgentClient {
   private let configuration: HexDeveloperConfiguration
   private let authorizationBroker: HexAuthorizationBroker
   private let route: HexGatewayRoute
-  private let residentAuthorizationTransport: any HexAuthorizationDecisionSubmitting
+  private let residentAuthorizationTransportBuilder:
+    @Sendable (HexGatewayClient) -> any HexAuthorizationDecisionSubmitting
   private var composition: HexGatewayComposition?
   private var adapter: HexGatewayClientAdapter?
 
@@ -35,13 +36,14 @@ actor HexLiveAgentClient: HexAgentClient {
     configuration: HexDeveloperConfiguration,
     authorizationBroker: HexAuthorizationBroker = HexAuthorizationBroker(),
     route: HexGatewayRoute? = nil,
-    residentAuthorizationTransport: any HexAuthorizationDecisionSubmitting =
-      HexUnavailableAuthorizationDecisionTransport()
+    residentAuthorizationTransportBuilder:
+      @escaping @Sendable (HexGatewayClient) -> any HexAuthorizationDecisionSubmitting =
+      { client in HexGatewayAuthorizationDecisionAdapter(client: client) }
   ) {
     self.configuration = configuration
     self.authorizationBroker = authorizationBroker
     self.route = route ?? configuration.gatewayRoute
-    self.residentAuthorizationTransport = residentAuthorizationTransport
+    self.residentAuthorizationTransportBuilder = residentAuthorizationTransportBuilder
   }
 
   func connect() async throws -> GatewayConnectionResult {
@@ -111,7 +113,7 @@ actor HexLiveAgentClient: HexAgentClient {
       )
       let adapter = HexGatewayClientAdapter(
         client: gatewayClient,
-        authorizationTransport: residentAuthorizationTransport
+        authorizationTransport: residentAuthorizationTransportBuilder(gatewayClient)
       )
       self.adapter = adapter
       return adapter

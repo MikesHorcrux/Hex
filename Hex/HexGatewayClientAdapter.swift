@@ -10,8 +10,7 @@ nonisolated struct HexGatewayClientAdapter: HexAgentClient, Sendable {
 
   init(
     client: HexGatewayClient,
-    authorizationTransport: any HexAuthorizationDecisionSubmitting =
-      HexUnavailableAuthorizationDecisionTransport()
+    authorizationTransport: any HexAuthorizationDecisionSubmitting
   ) {
     self.client = client
     self.authorizationTransport = authorizationTransport
