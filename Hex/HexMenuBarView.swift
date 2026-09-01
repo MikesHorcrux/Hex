@@ -63,19 +63,31 @@ struct HexMenuBarView: View {
           .foregroundStyle(.secondary)
       }
 
-      Button(startAtLogin.buttonTitle) {
-        startAtLogin.toggle()
-      }
-      .disabled(!startAtLogin.canChange)
+      if route.kind == .developerInProcess {
+        Text("Start at login is unavailable for the in-process developer route.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      } else if startAtLogin.isAvailable {
+        Button(startAtLogin.buttonTitle) {
+          startAtLogin.toggle()
+        }
+        .disabled(!startAtLogin.canChange)
 
-      if startAtLogin.status == .notFound {
-        Text("Pending the bundled gateway helper; no launch service has been registered.")
+        if startAtLogin.status == .notFound {
+          Text("Pending the bundled gateway helper; no launch service has been registered.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      } else if let readinessMessage = startAtLogin.readinessMessage {
+        Text(readinessMessage)
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
 
-      if let message = startAtLogin.message {
+      if startAtLogin.isAvailable, let message = startAtLogin.message {
         Text(message)
           .font(.caption)
           .foregroundStyle(.orange)

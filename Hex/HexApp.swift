@@ -15,7 +15,8 @@ struct HexApp: App {
     self.init(
       client: HexLiveAgentClient(configuration: configuration),
       modelID: configuration.modelIDForInterface,
-      route: configuration.gatewayRoute
+      route: configuration.gatewayRoute,
+      startAtLoginReadiness: .blocked
     )
   }
 
@@ -25,6 +26,7 @@ struct HexApp: App {
     route: HexGatewayRoute = .residentXPC(),
     residentGatewayController: any HexResidentGatewayControlling =
       HexUnavailableResidentGatewayController(),
+    startAtLoginReadiness: HexGatewayActivationReadiness = .blocked,
     lifecycleController: any HexGatewayLifecycleControlling =
       HexSMAppServiceLifecycleController()
   ) {
@@ -33,7 +35,12 @@ struct HexApp: App {
     _residentGateway = State(
       initialValue: HexResidentGatewayModel(controller: residentGatewayController)
     )
-    _startAtLogin = State(initialValue: HexStartAtLoginModel(controller: lifecycleController))
+    _startAtLogin = State(
+      initialValue: HexStartAtLoginModel(
+        controller: lifecycleController,
+        readiness: startAtLoginReadiness
+      )
+    )
   }
 
   var body: some Scene {

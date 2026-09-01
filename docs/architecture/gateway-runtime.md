@@ -42,9 +42,16 @@ app. The script never calls `launchctl`, registers a service, or starts the gate
 
 ## Registration and distribution boundary
 
-The visible app control is responsible for calling `SMAppService` only after the user explicitly
-chooses start-at-login. Until the helper plist is present in the built app, the UI must report a
-pending helper bundle rather than claiming that registration is enabled.
+Start-at-login registration is currently blocked. The app does not invoke `SMAppService` until signed
+resident packaging and secure credential/configuration handoff are complete; the UI reports that
+`Start at login is blocked because signed resident packaging and secure credential configuration are
+not complete.` The source-level `SMAppService` adapter remains available for that future signed path,
+but the current default readiness is false.
+
+Unsigned Debug development must explicitly use `HEX_GATEWAY_MODE=in-process` together with
+`HEX_ALLOW_IN_PROCESS_FALLBACK=true` (and the required live developer variables). That route keeps
+the gateway inside the app and cannot register the resident LaunchAgent. Resident registration is
+not actionable until a signed bundle and secure resident configuration channel are delivered.
 
 The developer staging path disables code signing only for its local Debug build. A distributable
 Release app still requires normal signing of the app and the nested helper, plus the separate
