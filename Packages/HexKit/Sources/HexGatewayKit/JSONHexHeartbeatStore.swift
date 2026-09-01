@@ -237,12 +237,12 @@ public actor JSONHexHeartbeatStore: HexHeartbeatStore {
     var lockHeld = false
     defer {
       if lockHeld {
-        _ = Darwin.flock(descriptor, LOCK_UN)
+        _ = flock(descriptor, LOCK_UN)
       }
       _ = Darwin.close(descriptor)
     }
 
-    while Darwin.flock(descriptor, LOCK_EX) != 0 {
+    while flock(descriptor, LOCK_EX) != 0 {
       guard errno == EINTR else {
         throw HexHeartbeatStoreError.ioFailure
       }
