@@ -2,7 +2,8 @@ import Foundation
 
 /// Explicit, process-environment configuration for the temporary developer-only live path.
 /// Secrets are retained only in memory and are intentionally absent from all descriptions and
-/// diagnostics.
+/// diagnostics. The Debug app target is unsandboxed so this explicit workspace path can be opened
+/// directly; Release keeps its App Sandbox configuration.
 nonisolated struct HexDeveloperConfiguration: Equatable, Sendable {
   struct LiveValues: Equatable, Sendable {
     let apiKey: String

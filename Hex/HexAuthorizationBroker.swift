@@ -7,12 +7,19 @@ import HexCore
 actor HexAuthorizationBroker: AuthorizationPrompting {
   enum BrokerError: Error, Equatable, LocalizedError, Sendable {
     case requestNotPending
+    case requestAlreadyPending
 
     var errorDescription: String? {
-      "That authorization request is no longer pending. Reconnect and try again."
+      switch self {
+      case .requestNotPending:
+        "That authorization request is no longer pending. Reconnect and try again."
+      case .requestAlreadyPending:
+        "That authorization request is already pending. Answer the existing request first."
+      }
     }
   }
 
+  private var registeringRequestIDs: Set<AuthorizationRequestID> = []
   private var waiters:
     [AuthorizationRequestID: CheckedContinuation<AuthorizationPromptResponse, any Error>] = [:]
 
@@ -20,9 +27,25 @@ actor HexAuthorizationBroker: AuthorizationPrompting {
     for request: AuthorizationRequest
   ) async throws -> AuthorizationPromptResponse {
     try Task.checkCancellation()
+    guard
+      waiters[request.id] == nil,
+      registeringRequestIDs.insert(request.id).inserted
+    else {
+      throw BrokerError.requestAlreadyPending
+    }
+
     return try await withTaskCancellationHandler(
       operation: {
         try await withCheckedThrowingContinuation { continuation in
+          registeringRequestIDs.remove(request.id)
+          guard !Task.isCancelled else {
+            continuation.resume(throwing: CancellationError())
+            return
+          }
+          guard waiters[request.id] == nil else {
+            continuation.resume(throwing: BrokerError.requestAlreadyPending)
+            return
+          }
           waiters[request.id] = continuation
         }
       },
@@ -44,6 +67,7 @@ actor HexAuthorizationBroker: AuthorizationPrompting {
   }
 
   private func cancel(requestID: AuthorizationRequestID) {
+    registeringRequestIDs.remove(requestID)
     guard let waiter = waiters.removeValue(forKey: requestID) else {
       return
     }
