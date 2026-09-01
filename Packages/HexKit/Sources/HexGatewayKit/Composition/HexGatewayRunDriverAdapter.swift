@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 import HexIPC
 import HexPersonality
@@ -10,6 +11,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
 
   private let journal: HexGatewayEventJournal
   private let personalityMessages: [Message]
+  private let enforcedWorkingDirectory: URL?
 
   public init(
     inferenceProvider: any InferenceProvider,
@@ -17,7 +19,8 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
     authorizationProvider: any AuthorizationProvider,
     journal: any AgentEventJournal,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
-    personalityContext: PersonalityContext? = nil
+    personalityContext: PersonalityContext? = nil,
+    enforcedWorkingDirectory: URL? = nil
   ) {
     let eventJournal = HexGatewayEventJournal(base: journal)
     self.journal = eventJournal
@@ -29,6 +32,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       configuration: runtimeConfiguration
     )
     personalityMessages = personalityContext?.messages ?? []
+    self.enforcedWorkingDirectory = enforcedWorkingDirectory
   }
 
   public func run(
@@ -42,7 +46,8 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       initialMessages: personalityMessages + request.initialMessages,
       options: request.options,
       toolChoice: request.toolChoice,
-      workingDirectory: request.workingDirectory
+      // A resident host grants its configured workspace identity; an XPC client cannot replace it.
+      workingDirectory: enforcedWorkingDirectory ?? request.workingDirectory
     )
 
     do {
