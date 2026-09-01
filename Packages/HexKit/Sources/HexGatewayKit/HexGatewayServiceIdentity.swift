@@ -7,6 +7,4 @@ public enum HexGatewayServiceIdentity {
   public static let machServiceName = "com.lunarmothstudios.hex.gateway"
   public static let launchAgentLabel = "com.lunarmothstudios.hex.gateway"
   public static let bundledExecutablePath = "Contents/Resources/HexGateway"
-
-  private init() {}
 }
