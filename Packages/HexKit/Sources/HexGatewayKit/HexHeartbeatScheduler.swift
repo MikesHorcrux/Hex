@@ -66,9 +66,8 @@ public actor HexHeartbeatScheduler {
   /// create a timer or resident task.
   @discardableResult
   public func runDue(at now: Date) async throws -> [HexHeartbeatExecutionReport] {
-    guard !executionInProgress, !mutationInProgress else {
-      throw HexHeartbeatSchedulerError.executionInProgress
-    }
+    try beginExecution()
+    defer { endExecution() }
     return try await performDue(at: now)
   }
 
@@ -191,7 +190,7 @@ public actor HexHeartbeatScheduler {
   private func performDue(at now: Date) async throws -> [HexHeartbeatExecutionReport] {
     try Self.validate(date: now)
     _ = try configuration.validated()
-    guard !executionInProgress, !mutationInProgress else {
+    guard !mutationInProgress else {
       throw HexHeartbeatSchedulerError.executionInProgress
     }
     try await ensureLoaded()
@@ -206,8 +205,6 @@ public actor HexHeartbeatScheduler {
     guard !mutationInProgress else {
       throw HexHeartbeatSchedulerError.executionInProgress
     }
-    executionInProgress = true
-    defer { executionInProgress = false }
     return try await executeDue(at: now)
   }
 
@@ -450,6 +447,8 @@ public actor HexHeartbeatScheduler {
     defer { finishLoop(generation: generation) }
     while !Task.isCancelled {
       do {
+        try beginExecution()
+        defer { endExecution() }
         _ = try await performDue(at: clock.now)
       } catch is CancellationError {
         return
@@ -483,6 +482,17 @@ public actor HexHeartbeatScheduler {
       throw HexHeartbeatSchedulerError.executionInProgress
     }
     mutationInProgress = true
+  }
+
+  private func beginExecution() throws {
+    guard !executionInProgress, !mutationInProgress else {
+      throw HexHeartbeatSchedulerError.executionInProgress
+    }
+    executionInProgress = true
+  }
+
+  private func endExecution() {
+    executionInProgress = false
   }
 
   private func endMutation() {

@@ -356,6 +356,40 @@ struct HexHeartbeatSchedulerTests {
   }
 
   @Test
+  func concurrentRunDueCallsAreRejectedBeforeASecondRunnerStarts() async throws {
+    let fileURL = Self.temporaryStoreURL()
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let dueAt = Self.date(1_000)
+    let schedule = try Self.schedule(dueAt: dueAt)
+    let runner = BlockingRunner()
+    let scheduler = Self.scheduler(
+      store: JSONHexHeartbeatStore(fileURL: fileURL),
+      runner: runner,
+      now: dueAt
+    )
+    try await scheduler.add(schedule)
+    let firstRun = Task { try await scheduler.runDue(at: dueAt) }
+    while await runner.callCount() == 0 {
+      await Task.yield()
+    }
+
+    let secondRun = Task { () -> Bool in
+      do {
+        _ = try await scheduler.runDue(at: dueAt)
+        return false
+      } catch let error as HexHeartbeatSchedulerError {
+        return error == .executionInProgress
+      } catch {
+        return false
+      }
+    }
+
+    #expect(await secondRun.value)
+    await runner.release()
+    _ = try await firstRun.value
+  }
+
+  @Test
   func nextWakeUsesActiveLeaseExpiryInsteadOfDueDate() async throws {
     let fileURL = Self.temporaryStoreURL()
     defer { try? FileManager.default.removeItem(at: fileURL) }
