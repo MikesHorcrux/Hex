@@ -3,8 +3,9 @@
 ## Runtime shape
 
 The macOS app is the user-facing control surface. `HexGateway` is a separate headless executable so
-the runtime can eventually outlive a window without putting agent policy inside lifecycle glue. The
-gateway is not installed as a background service in this milestone.
+the runtime can outlive a window without putting agent policy inside lifecycle glue. The developer
+packaging path stages the gateway and its LaunchAgent definition inside the app bundle, but this
+repository does not install or register that service automatically.
 
 The Swift package dependency graph is intentionally one-way:
 
@@ -52,7 +53,12 @@ concrete provider products are linked when their composition is enabled.
 `HexGateway` remains a SwiftPM executable instead of duplicating it as an Xcode native target. Xcode
 automatically exposes its `HexGateway` package scheme from the local package reference, while
 command-line and service builds use the Xcode-selected Swift toolchain to build the `HexGateway`
-product. This keeps one source and build definition for the headless binary.
+product. The project-local `script/build_and_run.sh` builds that product serially and stages it at
+`Hex.app/Contents/Resources/HexGateway` alongside
+`Hex.app/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist`. This keeps one source
+and build definition for the headless binary while giving `SMAppService.agent(plistName:)` the bundle
+layout it expects. The script's Debug staging is unsigned developer output; it does not alter Release
+signing, entitlements, or distribution packaging.
 
 ## Conflict-file ownership
 
@@ -75,11 +81,13 @@ do not merge into `dev`, modify `main`, or mix unrelated repairs into their feat
 
 ## Approval boundaries
 
-Source changes, local unsigned builds, deterministic tests, and inert resource templates are in scope.
-The following require separate user approval: pushing or creating remotes, merging to `main`, accessing
-live credentials, starting an OAuth login, downloading models, installing or registering a LaunchAgent,
-requesting macOS privacy/TCC permissions, changing distribution entitlements, signing, notarizing, or
-contacting external services.
+Source changes, local unsigned builds, deterministic tests, and bundle-layout validation are in scope.
+The developer run script may build `HexGateway` and copy it, together with its plist, into the local
+ignored `dist/Hex.app` staging directory. That copy is not an installation and does not contact
+launchd. The following require separate user approval: pushing or creating remotes, merging to `main`,
+accessing live credentials, starting an OAuth login, downloading models, installing or registering a
+LaunchAgent, requesting macOS privacy/TCC permissions, changing distribution entitlements, signing,
+notarizing, or contacting external services.
 
 ## MLX snapshot boundary
 
