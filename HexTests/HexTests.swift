@@ -1,20 +1,30 @@
-//
-//  HexTests.swift
-//  HexTests
-//
-//  Created by Mike Van Amburg on 8/30/26.
-//
-
 import Testing
 
 @testable import Hex
 
 struct HexTests {
+  @Test @MainActor
+  func disconnectedWorkspaceExplainsWhyPromptCannotSend() {
+    let model = AgentWorkspaceModel(client: PreviewHexAgentClient())
 
-  @Test func example() async throws {
-    // Write your test here and use APIs like `#expect(...)` to check expected conditions.
-    // Swift Testing Documentation
-    // https://developer.apple.com/documentation/testing
+    model.send()
+
+    #expect(model.connectionState == .disconnected)
+    #expect(model.errorMessage == "Connect to the gateway before sending a prompt.")
   }
 
+  @Test @MainActor
+  func previewRunPausesOnExactAuthorizationRequest() async throws {
+    let model = AgentWorkspaceModel(client: PreviewHexAgentClient())
+    await model.connect()
+    model.draft = "Inspect this project"
+    model.send()
+
+    for _ in 0..<20 where model.pendingAuthorization == nil {
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    #expect(model.pendingAuthorization != nil)
+    #expect(model.runState == .waitingForAuthorization)
+  }
 }

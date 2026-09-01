@@ -1,32 +1,20 @@
-//
-//  HexApp.swift
-//  Hex
-//
-//  Created by Mike Van Amburg on 8/30/26.
-//
-
-import SwiftData
 import SwiftUI
 
 @main
 struct HexApp: App {
-  var sharedModelContainer: ModelContainer = {
-    let schema = Schema([
-      Item.self
-    ])
-    let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+  @State private var workspace: AgentWorkspaceModel
 
-    do {
-      return try ModelContainer(for: schema, configurations: [modelConfiguration])
-    } catch {
-      fatalError("Could not create ModelContainer: \(error)")
-    }
-  }()
+  init() {
+    self.init(client: PreviewHexAgentClient())
+  }
+
+  init(client: any HexAgentClient = PreviewHexAgentClient()) {
+    _workspace = State(initialValue: AgentWorkspaceModel(client: client))
+  }
 
   var body: some Scene {
     WindowGroup {
-      ContentView()
+      ContentView(model: workspace)
     }
-    .modelContainer(sharedModelContainer)
   }
 }
