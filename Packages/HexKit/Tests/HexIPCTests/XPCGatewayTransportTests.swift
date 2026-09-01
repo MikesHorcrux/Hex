@@ -368,18 +368,20 @@ struct XPCGatewayTransportTests {
   func replacementHandshakeInvalidatesThePreviousAuthorizationCommitGate() async throws {
     let coordinator = AuthorizationCommitCoordinator()
     let gateway = HexGatewayService(driver: ImmediateGatewayRunDriver())
-    let exportedService = HexGatewayXPCService(
-      service: gateway,
-      authorizationDecisionHandler: { _, _, gate in
-        await coordinator.enter()
-        await coordinator.waitForRelease()
-        do {
-          try gate.withValidCommit {}
-          await coordinator.recordCommit()
-        } catch HexGatewayAuthorizationCommitGate.GateError.closed {
-          await coordinator.recordRejection()
+    let requestHarness = XPCServiceRequestHarness(
+      service: HexGatewayXPCService(
+        service: gateway,
+        authorizationDecisionHandler: { _, _, gate in
+          await coordinator.enter()
+          await coordinator.waitForRelease()
+          do {
+            try gate.withValidCommit {}
+            await coordinator.recordCommit()
+          } catch HexGatewayAuthorizationCommitGate.GateError.closed {
+            await coordinator.recordRejection()
+          }
         }
-      }
+      )
     )
     let codec = GatewayWireCodec(configuration: .standard)
     let firstLease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(201))
@@ -390,7 +392,7 @@ struct XPCGatewayTransportTests {
         body: try codec.encode(GatewayTestValues.handshakeRequest(202))
       )
     )
-    let firstHandshakeData = try await Self.sendRequest(firstHandshake, to: exportedService)
+    let firstHandshakeData = await requestHarness.send(firstHandshake)
     let firstHandshakeResponse = try responseValue(
       firstHandshakeData,
       operation: .handshake,
@@ -415,7 +417,7 @@ struct XPCGatewayTransportTests {
       )
     )
     let decisionTask = Task {
-      try await Self.sendRequest(decision, to: exportedService)
+      await requestHarness.send(decision)
     }
     await coordinator.waitUntilEntered()
 
@@ -427,10 +429,7 @@ struct XPCGatewayTransportTests {
         body: try codec.encode(GatewayTestValues.handshakeRequest(205))
       )
     )
-    let replacementHandshakeData = try await Self.sendRequest(
-      replacementHandshake,
-      to: exportedService
-    )
+    let replacementHandshakeData = await requestHarness.send(replacementHandshake)
     _ = try responseValue(
       replacementHandshakeData,
       operation: .handshake,
@@ -438,7 +437,7 @@ struct XPCGatewayTransportTests {
       codec: codec
     )
     await coordinator.release()
-    _ = try await decisionTask.value
+    _ = await decisionTask.value
 
     #expect(await coordinator.didCommit == false)
     #expect(await coordinator.wasRejected)
@@ -596,6 +595,24 @@ struct XPCGatewayTransportTests {
         await Task.yield()
       }
       return value ?? Data()
+    }
+  }
+
+  private actor XPCServiceRequestHarness {
+    private let service: HexGatewayXPCService
+
+    init(service: HexGatewayXPCService) {
+      self.service = service
+    }
+
+    func send(_ envelope: Data) async -> Data {
+      let store = ResponseStore()
+      service.request(envelope) { response in
+        Task {
+          await store.set(response)
+        }
+      }
+      return await store.wait()
     }
   }
 
