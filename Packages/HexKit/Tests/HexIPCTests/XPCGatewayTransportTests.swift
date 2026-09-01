@@ -120,6 +120,58 @@ struct XPCGatewayTransportTests {
   }
 
   @Test
+  func authorizationDecisionUsesTheActiveLeaseAndEchoesTheExactRequest() async throws {
+    let handshake = GatewayHandshakeResponse(
+      sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(181)),
+      gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(182)),
+      selectedVersion: .current,
+      activeRun: nil
+    )
+    let connection = ScriptedConnection(
+      handshake: handshake,
+      start: nil
+    )
+    let transport = XPCGatewayTransport(
+      connectionFactory: FixedConnectionFactory(connection: connection)
+    )
+    let lease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(183))
+    _ = try await transport.handshake(GatewayTestValues.handshakeRequest(184), lease: lease)
+    let request = AuthorizationRequest(
+      runID: GatewayTestValues.runID(185),
+      toolCallID: ToolCallID(rawValue: "call-185"),
+      capability: CapabilityID(rawValue: "process.execute"),
+      operation: "run",
+      resource: "/usr/bin/true",
+      details: ["argv_count": .integer(1)],
+      explanation: "Allow this exact process invocation."
+    )
+
+    try await transport.submitAuthorizationDecision(
+      request,
+      choice: .allowForSession,
+      lease: lease
+    )
+
+    #expect(await connection.operations == [.handshake, .submitAuthorizationDecision])
+    #expect(
+      await connection.authorizationDecision
+        == GatewayAuthorizationDecisionRequest(request: request, choice: .allowForSession)
+    )
+
+    let staleLease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(186))
+    do {
+      try await transport.submitAuthorizationDecision(
+        request,
+        choice: .deny,
+        lease: staleLease
+      )
+      Issue.record("Expected an authorization response on a stale lease to be rejected.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .notConnected)
+    }
+  }
+
+  @Test
   func exportedServiceAdaptsHandshakeRunAndEventSubscription() async throws {
     let driver = ImmediateGatewayRunDriver()
     let gateway = HexGatewayService(driver: driver)
@@ -194,11 +246,98 @@ struct XPCGatewayTransportTests {
     #expect(await sinkStore.completionFailure == nil)
   }
 
+  @Test
+  func exportedServiceRejectsMalformedAndStaleAuthorizationDecisions() async throws {
+    let store = DecisionStore()
+    let gateway = HexGatewayService(driver: ImmediateGatewayRunDriver())
+    let exportedService = HexGatewayXPCService(
+      service: gateway,
+      authorizationDecisionHandler: { request, choice in
+        await store.record(request: request, choice: choice)
+      }
+    )
+    let codec = GatewayWireCodec(configuration: .standard)
+    let lease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(191))
+    let handshakeData = try codec.encode(
+      GatewayXPCRequestEnvelope(
+        operation: .handshake,
+        lease: lease,
+        body: try codec.encode(GatewayTestValues.handshakeRequest(192))
+      )
+    )
+    let handshakeRawResponse = try await sendRequest(handshakeData, to: exportedService)
+    let handshakeResponse = try responseValue(
+      handshakeRawResponse,
+      operation: .handshake,
+      as: GatewayHandshakeResponse.self,
+      codec: codec
+    )
+    let request = AuthorizationRequest(
+      runID: GatewayTestValues.runID(193),
+      capability: CapabilityID(rawValue: "process.execute"),
+      operation: "run",
+      details: ["argv_count": .integer(1)],
+      explanation: "Allow this exact process invocation."
+    )
+    let validData = try codec.encode(
+      GatewayXPCRequestEnvelope(
+        operation: .submitAuthorizationDecision,
+        lease: lease,
+        sessionID: handshakeResponse.sessionID,
+        body: try codec.encode(
+          GatewayAuthorizationDecisionRequest(request: request, choice: .allowOnce)
+        )
+      )
+    )
+    let validResponseData = try await sendRequest(validData, to: exportedService)
+    let validResponse = try codec.decode(
+      GatewayXPCResponseEnvelope.self,
+      from: validResponseData
+    ).validated()
+    #expect(validResponse.failure == nil)
+    #expect(validResponse.body == nil)
+    #expect(await store.request == request)
+    #expect(await store.choice == .allowOnce)
+
+    let staleSessionData = try codec.encode(
+      GatewayXPCRequestEnvelope(
+        operation: .submitAuthorizationDecision,
+        lease: lease,
+        sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(194)),
+        body: try codec.encode(
+          GatewayAuthorizationDecisionRequest(request: request, choice: .deny)
+        )
+      )
+    )
+    let staleResponseData = try await sendRequest(staleSessionData, to: exportedService)
+    let staleResponse = try codec.decode(
+      GatewayXPCResponseEnvelope.self,
+      from: staleResponseData
+    ).validated()
+    #expect(staleResponse.failure?.code == .staleSession)
+
+    let malformedData = try codec.encode(
+      GatewayXPCRequestEnvelope(
+        operation: .submitAuthorizationDecision,
+        lease: lease,
+        sessionID: handshakeResponse.sessionID,
+        body: Data([0xFF])
+      )
+    )
+    let malformedResponseData = try await sendRequest(malformedData, to: exportedService)
+    let malformedResponse = try codec.decode(
+      GatewayXPCResponseEnvelope.self,
+      from: malformedResponseData
+    ).validated()
+    #expect(malformedResponse.failure?.code == .malformedPayload)
+  }
+
   private actor ScriptedConnection: HexGatewayXPCConnection {
     private let codec = GatewayWireCodec(configuration: .standard)
     private let handshakeResponse: GatewayHandshakeResponse
     private let startResponse: GatewayStartRunResponse?
     private let startFailure: GatewayFailure?
+    private(set) var authorizationDecision: GatewayAuthorizationDecisionRequest?
     private var eventContinuations:
       [GatewayXPCSubscriptionID: AsyncThrowingStream<Data, any Error>.Continuation] = [:]
     private(set) var operations: [GatewayXPCOperation] = []
@@ -212,6 +351,7 @@ struct XPCGatewayTransportTests {
       handshakeResponse = handshake
       startResponse = start
       self.startFailure = startFailure
+      authorizationDecision = nil
     }
 
     func request(_ rawEnvelope: Data) async throws -> Data {
@@ -235,6 +375,17 @@ struct XPCGatewayTransportTests {
           GatewayXPCResponseEnvelope(
             operation: .cancelRun,
             failure: GatewayFailure(code: .runNotFound, message: "not scripted")
+          )
+        )
+      case .submitAuthorizationDecision:
+        authorizationDecision = try codec.decode(
+          GatewayAuthorizationDecisionRequest.self,
+          from: envelope.body
+        )
+        return try codec.encode(
+          GatewayXPCResponseEnvelope(
+            operation: .submitAuthorizationDecision,
+            body: nil
           )
         )
       case .disconnect, .cancelSubscription:
@@ -354,6 +505,19 @@ struct XPCGatewayTransportTests {
       while !isFinished {
         await Task.yield()
       }
+    }
+  }
+
+  private actor DecisionStore {
+    private(set) var request: AuthorizationRequest?
+    private(set) var choice: GatewayAuthorizationDecisionChoice?
+
+    func record(
+      request: AuthorizationRequest,
+      choice: GatewayAuthorizationDecisionChoice
+    ) {
+      self.request = request
+      self.choice = choice
     }
   }
 

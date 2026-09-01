@@ -25,6 +25,7 @@ public struct HexGatewayComposition: Sendable {
   public let runDriver: HexGatewayRunDriverAdapter
   public let service: HexGatewayService
   public let transport: InProcessHexGatewayTransport
+  public let gatewayConfiguration: GatewayConfiguration
 
   private let closeAction: @Sendable () async throws -> Void
 
@@ -34,6 +35,7 @@ public struct HexGatewayComposition: Sendable {
     runDriver: HexGatewayRunDriverAdapter,
     service: HexGatewayService,
     transport: InProcessHexGatewayTransport,
+    gatewayConfiguration: GatewayConfiguration,
     closeAction: @escaping @Sendable () async throws -> Void
   ) {
     self.journal = journal
@@ -41,11 +43,13 @@ public struct HexGatewayComposition: Sendable {
     self.runDriver = runDriver
     self.service = service
     self.transport = transport
+    self.gatewayConfiguration = gatewayConfiguration
     self.closeAction = closeAction
   }
 
   /// Opens the durable journal and assembles one gateway service, runtime adapter, and loopback
-  /// transport. This is intentionally same-process until the separate XPC transport is integrated.
+  /// transport. The resident host may publish the same service through its separate XPC adapter;
+  /// this loopback transport remains useful for local composition and deterministic tests.
   public static func open(
     configuration: HexGatewayCompositionConfiguration
   ) async throws -> Self {
@@ -85,6 +89,7 @@ public struct HexGatewayComposition: Sendable {
       runDriver: runDriver,
       service: service,
       transport: transport,
+      gatewayConfiguration: configuration.gatewayConfiguration,
       closeAction: closeAction
     )
   }

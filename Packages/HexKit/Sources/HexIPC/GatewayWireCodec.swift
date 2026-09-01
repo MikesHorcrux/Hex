@@ -56,6 +56,9 @@ public struct GatewayWireCodec: Sendable {
   }
 
   public func canonicalFailure(from error: any Error) -> GatewayFailure {
+    if let decisionFailure = error as? any HexGatewayAuthorizationDecisionFailure {
+      return canonicalFailure(from: decisionFailure.gatewayFailure)
+    }
     let failure =
       error as? GatewayFailure
       ?? GatewayFailure(

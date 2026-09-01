@@ -9,13 +9,21 @@ public final class HexGatewayXPCService: NSObject {
   private actor State {
     private let service: HexGatewayService
     private let codec: GatewayWireCodec
+    private let authorizationDecisionHandler:
+      (@Sendable (AuthorizationRequest, GatewayAuthorizationDecisionChoice) async throws -> Void)?
     private var activeLease: GatewayTransportConnectionLease?
     private var sessionID: GatewaySessionID?
     private var subscriptions: [GatewayXPCSubscriptionID: Task<Void, Never>] = [:]
 
-    init(service: HexGatewayService, configuration: GatewayConfiguration) {
+    init(
+      service: HexGatewayService,
+      configuration: GatewayConfiguration,
+      authorizationDecisionHandler:
+        (@Sendable (AuthorizationRequest, GatewayAuthorizationDecisionChoice) async throws -> Void)?
+    ) {
       self.service = service
       codec = GatewayWireCodec(configuration: configuration)
+      self.authorizationDecisionHandler = authorizationDecisionHandler
     }
 
     func request(_ rawEnvelope: Data) async -> Data {
@@ -146,6 +154,24 @@ public final class HexGatewayXPCService: NSObject {
         let response = try await service.cancelRun(request, sessionID: sessionID)
         return try successResponse(operation: .cancelRun, value: response)
 
+      case .submitAuthorizationDecision:
+        _ = try currentSession(for: envelope)
+        guard let authorizationDecisionHandler else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway has no authorization decision handler."
+          )
+        }
+        let decision = try codec.decode(
+          GatewayAuthorizationDecisionRequest.self,
+          from: envelope.body
+        )
+        try await authorizationDecisionHandler(decision.request, decision.choice)
+        return try successResponse(
+          operation: .submitAuthorizationDecision,
+          body: nil
+        )
+
       case .cancelSubscription:
         _ = try currentSession(for: envelope)
         guard let subscriptionID = envelope.subscriptionID else {
@@ -180,7 +206,7 @@ public final class HexGatewayXPCService: NSObject {
             message: "The XPC handshake envelope contains connection-only fields."
           )
         }
-      case .startRun, .cancelRun, .disconnect:
+      case .startRun, .cancelRun, .submitAuthorizationDecision, .disconnect:
         guard envelope.sessionID != nil, envelope.subscriptionID == nil else {
           throw GatewayFailure(
             code: .malformedPayload,
@@ -295,7 +321,29 @@ public final class HexGatewayXPCService: NSObject {
     service: HexGatewayService,
     configuration: GatewayConfiguration = .standard
   ) {
-    state = State(service: service, configuration: configuration)
+    state = State(
+      service: service,
+      configuration: configuration,
+      authorizationDecisionHandler: nil
+    )
+    super.init()
+  }
+
+  /// Creates an exported service with a handler owned by the resident composition root. The
+  /// handler receives the complete request echoed by the app and must preserve the broker's
+  /// exact-match and pending-request policy.
+  public init(
+    service: HexGatewayService,
+    configuration: GatewayConfiguration = .standard,
+    authorizationDecisionHandler:
+      @escaping @Sendable (AuthorizationRequest, GatewayAuthorizationDecisionChoice) async throws
+        -> Void
+  ) {
+    state = State(
+      service: service,
+      configuration: configuration,
+      authorizationDecisionHandler: authorizationDecisionHandler
+    )
     super.init()
   }
 
