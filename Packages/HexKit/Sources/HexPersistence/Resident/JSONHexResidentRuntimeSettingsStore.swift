@@ -1,4 +1,5 @@
 import Darwin
+import Dispatch
 import Foundation
 import HexCore
 
@@ -11,6 +12,10 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
 
   private let lockURL: URL
   private let maximumBytes: Int
+  private let ioQueue: DispatchQueue
+
+  private static let lockRetryLimit = 40
+  private static let lockRetryDelayNanoseconds: UInt64 = 25 * 1_000_000
 
   public init(fileURL: URL, maximumBytes: Int = 64 * 1_024) throws {
     let standardizedURL = fileURL.standardizedFileURL
@@ -24,11 +29,17 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     self.fileURL = standardizedURL
     self.lockURL = standardizedURL.appendingPathExtension("lock")
     self.maximumBytes = maximumBytes
+    self.ioQueue = DispatchQueue(
+      label: "com.lunarmothstudios.Hex.resident-settings-\(UUID().uuidString)",
+      qos: .utility
+    )
   }
 
   public func load() async throws -> HexResidentRuntimeSettings? {
-    try withFileLock {
-      try readSettings()
+    let fileURL = self.fileURL
+    let maximumBytes = self.maximumBytes
+    return try await withFileLock {
+      try Self.readSettings(fileURL: fileURL, maximumBytes: maximumBytes)
     }
   }
 
@@ -45,12 +56,17 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
       throw JSONHexResidentRuntimeSettingsStoreError.settingsTooLarge
     }
 
-    try withFileLock {
-      try writeDurably(data)
+    let fileURL = self.fileURL
+    let maximumBytes = self.maximumBytes
+    try await withFileLock {
+      try Self.writeDurably(data, fileURL: fileURL, maximumBytes: maximumBytes)
     }
   }
 
-  private func readSettings() throws -> HexResidentRuntimeSettings? {
+  private nonisolated static func readSettings(
+    fileURL: URL,
+    maximumBytes: Int
+  ) throws -> HexResidentRuntimeSettings? {
     let descriptor = fileURL.path.withCString { path in
       Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     }
@@ -68,7 +84,7 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
       _ = Darwin.close(descriptor)
     }
 
-    let data = try readBoundedData(from: descriptor)
+    let data = try readBoundedData(from: descriptor, maximumBytes: maximumBytes)
     do {
       return try JSONDecoder().decode(HexResidentRuntimeSettings.self, from: data)
     } catch is HexResidentRuntimeSettingsError {
@@ -80,7 +96,10 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     }
   }
 
-  private func readBoundedData(from descriptor: Int32) throws -> Data {
+  private nonisolated static func readBoundedData(
+    from descriptor: Int32,
+    maximumBytes: Int
+  ) throws -> Data {
     var initialStatus = stat()
     guard fstat(descriptor, &initialStatus) == 0 else {
       throw JSONHexResidentRuntimeSettingsStoreError.ioFailure
@@ -127,8 +146,55 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     return data
   }
 
-  private func withFileLock<Result>(_ operation: () throws -> Result) throws -> Result {
-    try ensurePrivateDirectory()
+  private func withFileLock<Result: Sendable>(
+    _ operation: @escaping @Sendable () throws -> Result
+  ) async throws -> Result {
+    let fileURL = self.fileURL
+    let lockURL = self.lockURL
+    let ioQueue = self.ioQueue
+    for attempt in 0..<Self.lockRetryLimit {
+      try Task.checkCancellation()
+      let lockAttempt = try await Self.perform(on: ioQueue) {
+        try Self.withFileLockAttempt(
+          fileURL: fileURL,
+          lockURL: lockURL,
+          operation: operation
+        )
+      }
+      switch lockAttempt {
+      case .acquired(let result):
+        return result
+      case .busy:
+        guard attempt + 1 < Self.lockRetryLimit else {
+          throw JSONHexResidentRuntimeSettingsStoreError.lockFailure
+        }
+        try await Task.sleep(nanoseconds: Self.lockRetryDelayNanoseconds)
+      }
+    }
+    throw JSONHexResidentRuntimeSettingsStoreError.lockFailure
+  }
+
+  private nonisolated static func perform<Result: Sendable>(
+    on queue: DispatchQueue,
+    operation: @escaping @Sendable () throws -> Result
+  ) async throws -> Result {
+    try await withCheckedThrowingContinuation { continuation in
+      queue.async {
+        do {
+          continuation.resume(returning: try operation())
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  private nonisolated static func withFileLockAttempt<Result: Sendable>(
+    fileURL: URL,
+    lockURL: URL,
+    operation: () throws -> Result
+  ) throws -> JSONHexResidentRuntimeSettingsLockAttempt<Result> {
+    try ensurePrivateDirectory(for: fileURL)
     let descriptor = lockURL.path.withCString { path in
       Darwin.open(
         path,
@@ -147,29 +213,27 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
       _ = Darwin.close(descriptor)
     }
 
-    do {
-      var status = stat()
-      guard fstat(descriptor, &status) == 0 else {
-        throw JSONHexResidentRuntimeSettingsStoreError.lockFailure
-      }
-      try Self.validateRegularFile(status, permissions: 0o600)
-      while flock(descriptor, LOCK_EX) != 0 {
-        guard errno == EINTR else {
-          throw JSONHexResidentRuntimeSettingsStoreError.lockFailure
-        }
-      }
+    var status = stat()
+    guard fstat(descriptor, &status) == 0 else {
+      throw JSONHexResidentRuntimeSettingsStoreError.lockFailure
+    }
+    try Self.validateRegularFile(status, permissions: 0o600)
+
+    guard flock(descriptor, LOCK_EX | LOCK_NB) != 0 else {
       defer {
         _ = flock(descriptor, LOCK_UN)
       }
-      return try operation()
-    } catch let error as JSONHexResidentRuntimeSettingsStoreError {
-      throw error
-    } catch {
-      throw JSONHexResidentRuntimeSettingsStoreError.lockFailure
+      return .acquired(try operation())
     }
+    let lockError = errno
+    if lockError == EWOULDBLOCK || lockError == EAGAIN || lockError == EINTR {
+      return .busy
+    }
+    throw JSONHexResidentRuntimeSettingsStoreError.lockFailure
   }
 
-  private func ensurePrivateDirectory() throws {
+  private nonisolated static func ensurePrivateDirectory(for fileURL: URL) throws {
+    try rejectSymlinkAncestors(for: fileURL)
     let directoryURL = fileURL.deletingLastPathComponent()
     var pathStatus = stat()
     if lstat(directoryURL.path, &pathStatus) != 0 {
@@ -219,8 +283,37 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     }
   }
 
-  private func writeDurably(_ data: Data) throws {
-    try validateExistingDestination()
+  private nonisolated static func rejectSymlinkAncestors(for fileURL: URL) throws {
+    let components = fileURL.path.split(separator: "/", omittingEmptySubsequences: true)
+    guard !components.isEmpty else {
+      throw JSONHexResidentRuntimeSettingsStoreError.invalidFileURL
+    }
+
+    var currentURL = URL(fileURLWithPath: "/", isDirectory: true)
+    for component in components.dropLast() {
+      currentURL.appendPathComponent(String(component), isDirectory: true)
+      var status = stat()
+      guard lstat(currentURL.path, &status) == 0 else {
+        guard errno == ENOENT else {
+          throw JSONHexResidentRuntimeSettingsStoreError.unsafeFile
+        }
+        break
+      }
+      guard status.st_mode & S_IFMT != S_IFLNK else {
+        throw JSONHexResidentRuntimeSettingsStoreError.unsafeFile
+      }
+    }
+  }
+
+  private nonisolated static func writeDurably(
+    _ data: Data,
+    fileURL: URL,
+    maximumBytes: Int
+  ) throws {
+    guard data.count <= maximumBytes else {
+      throw JSONHexResidentRuntimeSettingsStoreError.settingsTooLarge
+    }
+    try validateExistingDestination(fileURL: fileURL)
     let directoryURL = fileURL.deletingLastPathComponent()
     let temporaryURL = directoryURL.appendingPathComponent(
       ".\(fileURL.lastPathComponent).\(UUID().uuidString).tmp",
@@ -303,7 +396,7 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     }
   }
 
-  private func validateExistingDestination() throws {
+  private nonisolated static func validateExistingDestination(fileURL: URL) throws {
     var status = stat()
     guard lstat(fileURL.path, &status) == 0 else {
       guard errno == ENOENT else {
@@ -314,7 +407,7 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     try Self.validateRegularFile(status, permissions: 0o600)
   }
 
-  private func write(_ data: Data, to descriptor: Int32) throws {
+  private nonisolated static func write(_ data: Data, to descriptor: Int32) throws {
     do {
       try data.withUnsafeBytes { rawBuffer in
         guard data.isEmpty || rawBuffer.baseAddress != nil else {
@@ -346,7 +439,7 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     }
   }
 
-  private static func validateRegularFile(_ status: stat, permissions: mode_t) throws {
+  private nonisolated static func validateRegularFile(_ status: stat, permissions: mode_t) throws {
     guard
       status.st_mode & S_IFMT == S_IFREG,
       status.st_uid == geteuid(),
@@ -357,15 +450,16 @@ public actor JSONHexResidentRuntimeSettingsStore: HexResidentRuntimeSettingsStor
     }
   }
 
-  private static func sameIdentity(_ lhs: stat, _ rhs: stat) -> Bool {
+  private nonisolated static func sameIdentity(_ lhs: stat, _ rhs: stat) -> Bool {
     lhs.st_dev == rhs.st_dev && lhs.st_ino == rhs.st_ino
   }
 
-  private static func isValidFileURL(_ url: URL) -> Bool {
+  private nonisolated static func isValidFileURL(_ url: URL) -> Bool {
     let path = url.path
     let lastPathComponent = url.lastPathComponent
     return url.isFileURL
       && !path.isEmpty
+      && path != "/"
       && path.hasPrefix("/")
       && !path.contains("\0")
       && !lastPathComponent.isEmpty

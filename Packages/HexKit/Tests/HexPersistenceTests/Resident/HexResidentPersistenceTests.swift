@@ -89,6 +89,35 @@ struct HexResidentPersistenceTests {
   }
 
   @Test
+  func rejectsSymlinkAncestors() async throws {
+    let root = try makeTemporaryDirectory()
+    defer {
+      try? FileManager.default.removeItem(at: root)
+    }
+    let target = root.appendingPathComponent("target", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: target,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let redirect = root.appendingPathComponent("redirect", isDirectory: true)
+    try FileManager.default.createSymbolicLink(at: redirect, withDestinationURL: target)
+
+    let fileURL =
+      redirect
+      .appendingPathComponent("nested", isDirectory: true)
+      .appendingPathComponent("resident.json", isDirectory: false)
+    let store = try JSONHexResidentRuntimeSettingsStore(fileURL: fileURL)
+
+    do {
+      _ = try await store.load()
+      Issue.record("Expected a symbolic-link ancestor to be rejected.")
+    } catch let error as JSONHexResidentRuntimeSettingsStoreError {
+      #expect(error == .unsafeFile)
+    }
+  }
+
+  @Test
   func rejectsUnsupportedPersistedSchemaAndUsesExplicitKeychainIdentity() async throws {
     let root = try makeTemporaryDirectory()
     defer {

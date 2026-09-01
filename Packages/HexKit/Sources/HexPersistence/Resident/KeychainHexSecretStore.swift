@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import HexCore
 import Security
@@ -15,6 +16,7 @@ public actor KeychainHexSecretStore: HexSecretStore {
   private let service: String
   private let account: String
   private let accessGroup: String
+  private let keychainQueue: DispatchQueue
 
   public init(
     service: String = KeychainHexSecretStore.defaultService,
@@ -24,45 +26,71 @@ public actor KeychainHexSecretStore: HexSecretStore {
     self.service = service
     self.account = account
     self.accessGroup = accessGroup
+    self.keychainQueue = DispatchQueue(
+      label: "com.lunarmothstudios.Hex.resident-keychain-\(UUID().uuidString)",
+      qos: .utility
+    )
   }
 
   public func secret(for key: HexSecretKey) async throws -> String {
     try Task.checkCancellation()
-    var query = baseQuery(for: key)
-    query[kSecMatchLimit] = kSecMatchLimitOne
-    query[kSecReturnData] = true
+    let keychainQueue = self.keychainQueue
+    let service = self.service
+    let account = self.account
+    let accessGroup = self.accessGroup
+    return try await Self.perform(on: keychainQueue) {
+      var query = Self.baseQuery(
+        key: key,
+        service: service,
+        account: account,
+        accessGroup: accessGroup
+      )
+      query[kSecMatchLimit] = kSecMatchLimitOne
+      query[kSecReturnData] = true
 
-    var result: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-    guard status != errSecItemNotFound else {
-      throw KeychainHexSecretStoreError.missingSecret
+      var result: CFTypeRef?
+      let status = SecItemCopyMatching(query as CFDictionary, &result)
+      guard status != errSecItemNotFound else {
+        throw KeychainHexSecretStoreError.missingSecret
+      }
+      guard status == errSecSuccess else {
+        throw KeychainHexSecretStoreError.keychainFailure(Int32(status))
+      }
+      guard
+        let data = result as? Data,
+        let value = String(data: data, encoding: .utf8),
+        Self.isPrintableASCII(value)
+      else {
+        throw KeychainHexSecretStoreError.invalidStoredSecret
+      }
+      return value
     }
-    guard status == errSecSuccess else {
-      throw KeychainHexSecretStoreError.keychainFailure(Int32(status))
-    }
-    guard
-      let data = result as? Data,
-      let value = String(data: data, encoding: .utf8),
-      Self.isPrintableASCII(value)
-    else {
-      throw KeychainHexSecretStoreError.invalidStoredSecret
-    }
-    return value
   }
 
   public func exists(_ key: HexSecretKey) async throws -> Bool {
     try Task.checkCancellation()
-    var query = baseQuery(for: key)
-    query[kSecMatchLimit] = kSecMatchLimitOne
-    query[kSecReturnData] = false
-    let status = SecItemCopyMatching(query as CFDictionary, nil)
-    if status == errSecSuccess {
-      return true
+    let keychainQueue = self.keychainQueue
+    let service = self.service
+    let account = self.account
+    let accessGroup = self.accessGroup
+    return try await Self.perform(on: keychainQueue) {
+      var query = Self.baseQuery(
+        key: key,
+        service: service,
+        account: account,
+        accessGroup: accessGroup
+      )
+      query[kSecMatchLimit] = kSecMatchLimitOne
+      query[kSecReturnData] = false
+      let status = SecItemCopyMatching(query as CFDictionary, nil)
+      if status == errSecSuccess {
+        return true
+      }
+      if status == errSecItemNotFound {
+        return false
+      }
+      throw KeychainHexSecretStoreError.keychainFailure(Int32(status))
     }
-    if status == errSecItemNotFound {
-      return false
-    }
-    throw KeychainHexSecretStoreError.keychainFailure(Int32(status))
   }
 
   public func save(_ secret: String, for key: HexSecretKey) async throws {
@@ -71,43 +99,66 @@ public actor KeychainHexSecretStore: HexSecretStore {
       throw KeychainHexSecretStoreError.invalidSecret
     }
 
-    let query = baseQuery(for: key)
-    // The resident helper may need this value after login while the device is locked, but it must
-    // not migrate through backups or another device.
-    let attributes: [CFString: Any] = [
-      kSecValueData: Data(secret.utf8),
-      kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-    ]
-    let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-    if updateStatus == errSecSuccess {
-      return
-    }
-    guard updateStatus == errSecItemNotFound else {
-      throw KeychainHexSecretStoreError.keychainFailure(Int32(updateStatus))
-    }
-
-    var addQuery = query
-    addQuery[kSecValueData] = Data(secret.utf8)
-    addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
-    if addStatus == errSecSuccess {
-      return
-    }
-    if addStatus == errSecDuplicateItem {
-      let retryStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-      guard retryStatus == errSecSuccess else {
-        throw KeychainHexSecretStoreError.keychainFailure(Int32(retryStatus))
+    let keychainQueue = self.keychainQueue
+    let service = self.service
+    let account = self.account
+    let accessGroup = self.accessGroup
+    try await Self.perform(on: keychainQueue) {
+      let query = Self.baseQuery(
+        key: key,
+        service: service,
+        account: account,
+        accessGroup: accessGroup
+      )
+      // The resident helper may need this value after login while the device is locked, but it must
+      // not migrate through backups or another device.
+      let attributes: [CFString: Any] = [
+        kSecValueData: Data(secret.utf8),
+        kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+      ]
+      let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+      if updateStatus == errSecSuccess {
+        return
       }
-      return
+      guard updateStatus == errSecItemNotFound else {
+        throw KeychainHexSecretStoreError.keychainFailure(Int32(updateStatus))
+      }
+
+      var addQuery = query
+      addQuery[kSecValueData] = Data(secret.utf8)
+      addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+      let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+      if addStatus == errSecSuccess {
+        return
+      }
+      if addStatus == errSecDuplicateItem {
+        let retryStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        guard retryStatus == errSecSuccess else {
+          throw KeychainHexSecretStoreError.keychainFailure(Int32(retryStatus))
+        }
+        return
+      }
+      throw KeychainHexSecretStoreError.keychainFailure(Int32(addStatus))
     }
-    throw KeychainHexSecretStoreError.keychainFailure(Int32(addStatus))
   }
 
   public func delete(_ key: HexSecretKey) async throws {
     try Task.checkCancellation()
-    let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
-    guard status == errSecSuccess || status == errSecItemNotFound else {
-      throw KeychainHexSecretStoreError.keychainFailure(Int32(status))
+    let keychainQueue = self.keychainQueue
+    let service = self.service
+    let account = self.account
+    let accessGroup = self.accessGroup
+    try await Self.perform(on: keychainQueue) {
+      let query = Self.baseQuery(
+        key: key,
+        service: service,
+        account: account,
+        accessGroup: accessGroup
+      )
+      let status = SecItemDelete(query as CFDictionary)
+      guard status == errSecSuccess || status == errSecItemNotFound else {
+        throw KeychainHexSecretStoreError.keychainFailure(Int32(status))
+      }
     }
   }
 
@@ -128,24 +179,47 @@ public actor KeychainHexSecretStore: HexSecretStore {
     try await delete(.openAIAPIKey)
   }
 
-  private func baseQuery(for key: HexSecretKey) -> [CFString: Any] {
+  private nonisolated static func perform<Result: Sendable>(
+    on queue: DispatchQueue,
+    operation: @escaping @Sendable () throws -> Result
+  ) async throws -> Result {
+    try await withCheckedThrowingContinuation { continuation in
+      queue.async {
+        do {
+          continuation.resume(returning: try operation())
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  private nonisolated static func baseQuery(
+    key: HexSecretKey,
+    service: String,
+    account: String,
+    accessGroup: String
+  ) -> [CFString: Any] {
     [
       kSecClass: kSecClassGenericPassword,
       kSecAttrService: service,
-      kSecAttrAccount: account(for: key),
+      kSecAttrAccount: accountIdentifier(for: key, configuredAccount: account),
       kSecAttrAccessGroup: accessGroup,
       kSecUseDataProtectionKeychain: true,
     ]
   }
 
-  private func account(for key: HexSecretKey) -> String {
+  private nonisolated static func accountIdentifier(
+    for key: HexSecretKey,
+    configuredAccount: String
+  ) -> String {
     switch key {
     case .openAIAPIKey:
-      account
+      configuredAccount
     }
   }
 
-  private static func isPrintableASCII(_ value: String) -> Bool {
+  private nonisolated static func isPrintableASCII(_ value: String) -> Bool {
     let bytes = value.utf8
     guard !bytes.isEmpty, bytes.count <= 4_096 else {
       return false

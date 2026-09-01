@@ -73,6 +73,53 @@ struct HexGatewayResidentPersistenceTests {
     #expect(!HexGatewayResidentConfiguration.hasEnvironmentOverride(in: [:]))
   }
 
+  @Test
+  func rejectsDotPathComponentsAndStandardizedDataDirectories() throws {
+    let workspaceRoot = URL(fileURLWithPath: "/tmp/hex-workspace", isDirectory: true)
+    let validDatabaseURL = URL(fileURLWithPath: "/tmp/hex-resident/journal.sqlite")
+
+    do {
+      _ = try HexGatewayResidentConfiguration(
+        machServiceName: "com.test.hex.gateway",
+        modelID: "gpt-test",
+        workspaceRoot: workspaceRoot,
+        databaseURL: URL(fileURLWithPath: "/tmp/.."),
+        apiKey: "sk-test"
+      )
+      Issue.record("Expected a database path containing '..' to be rejected.")
+    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+      #expect(error == .invalidVariable("HEX_GATEWAY_DATABASE_URL"))
+    }
+
+    do {
+      _ = try HexGatewayResidentConfiguration(
+        machServiceName: "com.test.hex.gateway",
+        modelID: "gpt-test",
+        workspaceRoot: workspaceRoot,
+        databaseURL: validDatabaseURL,
+        heartbeatStoreURL: URL(fileURLWithPath: "/tmp/."),
+        apiKey: "sk-test"
+      )
+      Issue.record("Expected a heartbeat path containing '.' to be rejected.")
+    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+      #expect(error == .invalidVariable("HEX_HEARTBEAT_STORE_URL"))
+    }
+
+    do {
+      _ = try HexGatewayResidentConfiguration(
+        machServiceName: "com.test.hex.gateway",
+        modelID: "gpt-test",
+        workspaceRoot: workspaceRoot,
+        databaseURL: validDatabaseURL,
+        heartbeatStoreURL: URL(fileURLWithPath: "/"),
+        apiKey: "sk-test"
+      )
+      Issue.record("Expected a standardized heartbeat directory to be rejected.")
+    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+      #expect(error == .invalidVariable("HEX_HEARTBEAT_STORE_URL"))
+    }
+  }
+
   private func makeTemporaryDirectory() throws -> URL {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "hex-resident-config-\(UUID().uuidString)",

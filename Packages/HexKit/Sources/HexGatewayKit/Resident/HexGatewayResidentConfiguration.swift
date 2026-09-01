@@ -130,28 +130,37 @@ public struct HexGatewayResidentConfiguration: Sendable {
     guard Self.isPrintableASCII(modelID), modelID.utf8.count <= 512 else {
       throw ConfigurationError.invalidVariable(Self.modelVariable)
     }
-    guard Self.isAbsoluteFileURL(workspaceRoot) else {
+    let standardizedWorkspaceRoot = workspaceRoot.standardizedFileURL
+    guard
+      Self.isAbsoluteFileURL(workspaceRoot),
+      Self.isAbsoluteFileURL(standardizedWorkspaceRoot)
+    else {
       throw ConfigurationError.invalidVariable(Self.workspaceVariable)
     }
-    guard Self.isAbsoluteFileURL(databaseURL), databaseURL.lastPathComponent != "." else {
+    let standardizedDatabaseURL = databaseURL.standardizedFileURL
+    guard
+      Self.isValidDataFileURL(databaseURL),
+      Self.isValidDataFileURL(standardizedDatabaseURL)
+    else {
       throw ConfigurationError.invalidVariable(Self.databaseVariable)
     }
     let resolvedHeartbeatStoreURL =
       heartbeatStoreURL
       ?? databaseURL.deletingLastPathComponent()
       .appendingPathComponent("heartbeats.json", isDirectory: false)
+    let standardizedHeartbeatStoreURL = resolvedHeartbeatStoreURL.standardizedFileURL
     guard
-      Self.isAbsoluteFileURL(resolvedHeartbeatStoreURL),
-      resolvedHeartbeatStoreURL.lastPathComponent != "."
+      Self.isValidDataFileURL(resolvedHeartbeatStoreURL),
+      Self.isValidDataFileURL(standardizedHeartbeatStoreURL)
     else {
       throw ConfigurationError.invalidVariable(Self.heartbeatStoreVariable)
     }
 
     self.machServiceName = machServiceName
     self.modelID = modelID
-    self.workspaceRoot = workspaceRoot.standardizedFileURL
-    self.databaseURL = databaseURL.standardizedFileURL
-    self.heartbeatStoreURL = resolvedHeartbeatStoreURL.standardizedFileURL
+    self.workspaceRoot = standardizedWorkspaceRoot
+    self.databaseURL = standardizedDatabaseURL
+    self.heartbeatStoreURL = standardizedHeartbeatStoreURL
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.credentialProvider = credentialProvider
   }
@@ -182,8 +191,9 @@ public struct HexGatewayResidentConfiguration: Sendable {
   }
 
   /// Loads non-secret settings from the durable store and injects a generic secret store adapter.
-  /// The API key is not read during startup; existence is checked so a missing credential fails
-  /// deterministically before the resident host begins serving requests.
+  /// The API key is not read during startup; only item existence is checked so a missing credential
+  /// fails deterministically before the resident host begins serving requests. Actual credential
+  /// decoding and format validation remain deferred to provider use.
   public static func loadPersisted(
     paths: HexResidentDataPaths? = nil,
     settingsStore: (any HexResidentRuntimeSettingsStore)? = nil,
@@ -287,6 +297,35 @@ public struct HexGatewayResidentConfiguration: Sendable {
   }
 
   private static func isAbsoluteFileURL(_ url: URL) -> Bool {
-    url.isFileURL && url.path.hasPrefix("/") && !url.path.contains("\0")
+    url.isFileURL
+      && !url.path.isEmpty
+      && url.path.hasPrefix("/")
+      && url.path.utf8.count <= 4_096
+      && !url.path.contains("\0")
+  }
+
+  private static func isValidDataFileURL(_ url: URL) -> Bool {
+    let pathComponents = url.path.split(separator: "/", omittingEmptySubsequences: true)
+    guard
+      Self.isAbsoluteFileURL(url),
+      !pathComponents.isEmpty,
+      !pathComponents.contains(where: { component in
+        component == "." || component == ".."
+      })
+    else {
+      return false
+    }
+
+    let standardizedURL = url.standardizedFileURL
+    let standardizedComponents = standardizedURL.path.split(
+      separator: "/",
+      omittingEmptySubsequences: true
+    )
+    return
+      Self.isAbsoluteFileURL(standardizedURL)
+      && standardizedURL.path != "/"
+      && !standardizedComponents.contains(where: { component in
+        component == "." || component == ".."
+      })
   }
 }
