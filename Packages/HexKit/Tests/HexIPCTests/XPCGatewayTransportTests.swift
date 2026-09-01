@@ -218,7 +218,7 @@ struct XPCGatewayTransportTests {
         body: try codec.encode(handshakeRequest)
       )
     )
-    let handshakeResponseData = try await sendRequest(
+    let handshakeResponseData = try await Self.sendRequest(
       handshakeEnvelope,
       to: exportedService
     )
@@ -244,7 +244,7 @@ struct XPCGatewayTransportTests {
     let subscriptionID = GatewayXPCSubscriptionID()
     // The gateway needs a run generation before it can accept the cursor. Start first, then use the
     // invocation identity returned by admission to subscribe to the ordered stream.
-    let startResponseData = try await sendRequest(startEnvelope, to: exportedService)
+    let startResponseData = try await Self.sendRequest(startEnvelope, to: exportedService)
     let startResponse = try responseValue(
       startResponseData,
       operation: .startRun,
@@ -297,7 +297,7 @@ struct XPCGatewayTransportTests {
         body: try codec.encode(GatewayTestValues.handshakeRequest(192))
       )
     )
-    let handshakeRawResponse = try await sendRequest(handshakeData, to: exportedService)
+    let handshakeRawResponse = try await Self.sendRequest(handshakeData, to: exportedService)
     let handshakeResponse = try responseValue(
       handshakeRawResponse,
       operation: .handshake,
@@ -321,7 +321,7 @@ struct XPCGatewayTransportTests {
         )
       )
     )
-    let validResponseData = try await sendRequest(validData, to: exportedService)
+    let validResponseData = try await Self.sendRequest(validData, to: exportedService)
     let validResponse = try codec.decode(
       GatewayXPCResponseEnvelope.self,
       from: validResponseData
@@ -341,7 +341,7 @@ struct XPCGatewayTransportTests {
         )
       )
     )
-    let staleResponseData = try await sendRequest(staleSessionData, to: exportedService)
+    let staleResponseData = try await Self.sendRequest(staleSessionData, to: exportedService)
     let staleResponse = try codec.decode(
       GatewayXPCResponseEnvelope.self,
       from: staleResponseData
@@ -356,7 +356,7 @@ struct XPCGatewayTransportTests {
         body: Data([0xFF])
       )
     )
-    let malformedResponseData = try await sendRequest(malformedData, to: exportedService)
+    let malformedResponseData = try await Self.sendRequest(malformedData, to: exportedService)
     let malformedResponse = try codec.decode(
       GatewayXPCResponseEnvelope.self,
       from: malformedResponseData
@@ -390,7 +390,7 @@ struct XPCGatewayTransportTests {
         body: try codec.encode(GatewayTestValues.handshakeRequest(202))
       )
     )
-    let firstHandshakeData = try await sendRequest(firstHandshake, to: exportedService)
+    let firstHandshakeData = try await Self.sendRequest(firstHandshake, to: exportedService)
     let firstHandshakeResponse = try responseValue(
       firstHandshakeData,
       operation: .handshake,
@@ -415,7 +415,7 @@ struct XPCGatewayTransportTests {
       )
     )
     let decisionTask = Task {
-      try await sendRequest(decision, to: exportedService)
+      try await Self.sendRequest(decision, to: exportedService)
     }
     await coordinator.waitUntilEntered()
 
@@ -427,7 +427,7 @@ struct XPCGatewayTransportTests {
         body: try codec.encode(GatewayTestValues.handshakeRequest(205))
       )
     )
-    let replacementHandshakeData = try await sendRequest(
+    let replacementHandshakeData = try await Self.sendRequest(
       replacementHandshake,
       to: exportedService
     )
@@ -706,7 +706,7 @@ struct XPCGatewayTransportTests {
     }
   }
 
-  private func sendRequest(
+  private static func sendRequest(
     _ envelope: Data,
     to service: HexGatewayXPCService
   ) async throws -> Data {
