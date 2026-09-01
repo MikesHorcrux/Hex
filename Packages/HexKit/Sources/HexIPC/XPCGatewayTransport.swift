@@ -5,7 +5,7 @@ import HexCore
 /// transport owns no gateway state: the connection factory and the Data-only XPC endpoint are
 /// injected, which keeps lifecycle tests independent of launchd and Mach-service registration.
 public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDecisionTransport,
-  HexGatewayResidentControlTransport
+  HexGatewayResidentControlTransport {
   private struct ConnectionState: Sendable {
     let generation: UUID
     let lease: GatewayTransportConnectionLease
