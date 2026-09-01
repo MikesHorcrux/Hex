@@ -20,6 +20,10 @@ public struct HexGatewayCompositionConfiguration: Sendable {
   public let authorizationProvider: any AuthorizationProvider
   public let personalityContext: PersonalityContext?
 
+  /// When present, the gateway ignores client-requested working directories and supplies this
+  /// host-owned directory to every runtime tool execution context.
+  public let enforcedWorkingDirectory: URL?
+
   public init(
     journalConfiguration: SQLiteAgentEventJournalConfiguration,
     inferenceProvider: any InferenceProvider,
@@ -27,7 +31,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     authorizationProvider: any AuthorizationProvider,
     gatewayConfiguration: GatewayConfiguration = .standard,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
-    personalityContext: PersonalityContext? = nil
+    personalityContext: PersonalityContext? = nil,
+    enforcedWorkingDirectory: URL? = nil
   ) {
     self.journalConfiguration = journalConfiguration
     journal = nil
@@ -37,6 +42,7 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.toolExecutor = toolExecutor
     self.authorizationProvider = authorizationProvider
     self.personalityContext = personalityContext
+    self.enforcedWorkingDirectory = enforcedWorkingDirectory
   }
 
   /// Creates a composition around a caller-owned durable journal. The composition does not close
@@ -48,7 +54,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     authorizationProvider: any AuthorizationProvider,
     gatewayConfiguration: GatewayConfiguration = .standard,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
-    personalityContext: PersonalityContext? = nil
+    personalityContext: PersonalityContext? = nil,
+    enforcedWorkingDirectory: URL? = nil
   ) {
     journalConfiguration = nil
     self.journal = journal
@@ -58,6 +65,7 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.toolExecutor = toolExecutor
     self.authorizationProvider = authorizationProvider
     self.personalityContext = personalityContext
+    self.enforcedWorkingDirectory = enforcedWorkingDirectory
   }
 
   public static func inert(

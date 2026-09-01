@@ -1,9 +1,19 @@
 import HexCore
 import HexGatewayKit
 
-struct GatewayTestToolExecutor: ToolExecutor, Sendable {
+actor GatewayTestToolExecutor: ToolExecutor {
+  private let tool: ToolDefinition?
+  private var capturedContexts: [ToolExecutionContext] = []
+
+  init(tool: ToolDefinition? = nil) {
+    self.tool = tool
+  }
+
   func availableTools() async throws -> [ToolDefinition] {
     try Task.checkCancellation()
+    if let tool {
+      return [tool]
+    }
     return []
   }
 
@@ -11,9 +21,19 @@ struct GatewayTestToolExecutor: ToolExecutor, Sendable {
     _ call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> ToolResult {
-    _ = call
-    _ = context
     try Task.checkCancellation()
-    throw HexGatewayCompositionError.toolUnavailable
+    guard call.name == tool?.name else {
+      throw HexGatewayCompositionError.toolUnavailable
+    }
+    capturedContexts.append(context)
+    return ToolResult(
+      toolCallID: call.id,
+      status: .success,
+      output: .string("recorded")
+    )
+  }
+
+  func contexts() -> [ToolExecutionContext] {
+    capturedContexts
   }
 }

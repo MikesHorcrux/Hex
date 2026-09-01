@@ -92,6 +92,59 @@ struct HexGatewayCompositionTests {
     #expect(await collector.records().isEmpty)
   }
 
+  @Test
+  func enforcedWorkingDirectoryReplacesMissingAndClientRequestedDirectories() async throws {
+    let tool = ToolDefinition(
+      name: "workspace_probe",
+      description: "Records the gateway-owned working directory.",
+      inputSchema: ["type": .string("object")]
+    )
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "workspace-probe"),
+      name: tool.name,
+      arguments: [:]
+    )
+    let provider = GatewayTestInferenceProvider(toolCall: call)
+    let executor = GatewayTestToolExecutor(tool: tool)
+    let journal = try await SQLiteAgentEventJournal.open(
+      configuration: SQLiteAgentEventJournalConfiguration(
+        databaseURL: Self.temporaryDatabaseURL()
+      )
+    )
+    let enforcedDirectory = URL(
+      fileURLWithPath: "/tmp/hex-resident-workspace",
+      isDirectory: true
+    )
+    let configuration = HexGatewayCompositionConfiguration(
+      journal: journal,
+      inferenceProvider: provider,
+      toolExecutor: executor,
+      authorizationProvider: GatewayTestAuthorizationProvider(),
+      enforcedWorkingDirectory: enforcedDirectory
+    )
+    let composition = try await HexGatewayComposition.open(configuration: configuration)
+
+    for requestedDirectory in [
+      nil,
+      URL(fileURLWithPath: "/tmp/client-requested-workspace", isDirectory: true),
+    ] {
+      let request = GatewayStartRunRequest(
+        runID: AgentRunID(),
+        modelID: provider.modelID,
+        initialMessages: [Message(role: .user, content: [.text("inspect workspace")])],
+        workingDirectory: requestedDirectory
+      )
+      try await composition.runDriver.run(request) { _ in }
+    }
+
+    #expect(
+      await executor.contexts().map(\.workingDirectory)
+        == [enforcedDirectory, enforcedDirectory]
+    )
+    try await composition.close()
+    try await journal.close()
+  }
+
   private static func temporaryDatabaseURL() -> URL {
     URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("hex-gateway-composition-\(UUID().uuidString)")

@@ -73,7 +73,8 @@ public struct HexGatewayComposition: Sendable {
       authorizationProvider: configuration.authorizationProvider,
       journal: journal,
       runtimeConfiguration: configuration.runtimeConfiguration,
-      personalityContext: configuration.personalityContext
+      personalityContext: configuration.personalityContext,
+      enforcedWorkingDirectory: configuration.enforcedWorkingDirectory
     )
     let service = HexGatewayService(
       driver: runDriver,

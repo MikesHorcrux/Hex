@@ -68,7 +68,8 @@ public final class HexGatewayResidentHost {
       ),
       inferenceProvider: inferenceProvider,
       toolExecutor: toolExecutor,
-      authorizationProvider: authorizationProvider
+      authorizationProvider: authorizationProvider,
+      enforcedWorkingDirectory: configuration.workspaceRoot
     )
     let composition = try await HexGatewayComposition.open(
       configuration: compositionConfiguration
