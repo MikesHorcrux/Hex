@@ -10,6 +10,9 @@ public struct HexHeartbeatSchedule: Codable, Equatable, Identifiable, Sendable {
   public var isPaused: Bool
   public var lastOutcome: HexHeartbeatOutcome?
   public var activeLease: HexHeartbeatLease?
+  /// The lease that durably committed `lastOutcome`. Keeping this separate from the outcome lets
+  /// the store distinguish an exact idempotent retry from a completion submitted by a stale lease.
+  public var lastCompletedLeaseID: UUID?
 
   public init(
     id: HexHeartbeatScheduleID = HexHeartbeatScheduleID(),
@@ -20,7 +23,8 @@ public struct HexHeartbeatSchedule: Codable, Equatable, Identifiable, Sendable {
     maxCatchUpOccurrences: Int = 1,
     isPaused: Bool = false,
     lastOutcome: HexHeartbeatOutcome? = nil,
-    activeLease: HexHeartbeatLease? = nil
+    activeLease: HexHeartbeatLease? = nil,
+    lastCompletedLeaseID: UUID? = nil
   ) throws {
     guard !name.isEmpty, name.utf8.count <= Self.maximumNameBytes else {
       throw HexHeartbeatStoreError.invalidSchedule(
@@ -73,6 +77,13 @@ public struct HexHeartbeatSchedule: Codable, Equatable, Identifiable, Sendable {
         )
       }
     }
+    if lastCompletedLeaseID != nil {
+      guard lastOutcome != nil else {
+        throw HexHeartbeatStoreError.invalidSchedule(
+          "A completed heartbeat lease requires a last outcome."
+        )
+      }
+    }
 
     self.id = id
     self.name = name
@@ -83,6 +94,7 @@ public struct HexHeartbeatSchedule: Codable, Equatable, Identifiable, Sendable {
     self.isPaused = isPaused
     self.lastOutcome = lastOutcome
     self.activeLease = activeLease
+    self.lastCompletedLeaseID = lastCompletedLeaseID
   }
 
   public func occurrence(at dueAt: Date? = nil) -> HexHeartbeatOccurrenceID {
@@ -99,7 +111,8 @@ public struct HexHeartbeatSchedule: Codable, Equatable, Identifiable, Sendable {
       maxCatchUpOccurrences: maxCatchUpOccurrences,
       isPaused: isPaused,
       lastOutcome: lastOutcome,
-      activeLease: activeLease
+      activeLease: activeLease,
+      lastCompletedLeaseID: lastCompletedLeaseID
     )
   }
 

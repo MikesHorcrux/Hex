@@ -82,7 +82,8 @@ struct HexHeartbeatSchedulerTests {
       claimedAt: dueAt,
       expiresAt: dueAt.addingTimeInterval(600)
     )
-    #expect(await store.claim(lease, at: dueAt) == .claimed)
+    let initialClaim = try await store.claim(lease, at: dueAt)
+    #expect(initialClaim == .claimed)
 
     let runner = RecordingRunner()
     let scheduler = Self.scheduler(
@@ -112,7 +113,8 @@ struct HexHeartbeatSchedulerTests {
       claimedAt: dueAt,
       expiresAt: dueAt.addingTimeInterval(5)
     )
-    #expect(await store.claim(lease, at: dueAt) == .claimed)
+    let initialClaim = try await store.claim(lease, at: dueAt)
+    #expect(initialClaim == .claimed)
 
     let runner = RecordingRunner()
     let scheduler = Self.scheduler(
@@ -170,25 +172,250 @@ struct HexHeartbeatSchedulerTests {
       expiresAt: dueAt.addingTimeInterval(600)
     )
 
-    #expect(await store.claim(lease, at: dueAt) == .claimed)
-    #expect(await store.claim(duplicate, at: dueAt) == .alreadyClaimed)
+    let initialClaim = try await store.claim(lease, at: dueAt)
+    #expect(initialClaim == .claimed)
+    let duplicateClaim = try await store.claim(duplicate, at: dueAt)
+    #expect(duplicateClaim == .alreadyClaimed)
     let outcome = HexHeartbeatOutcome(
       occurrence: occurrence,
       kind: .succeeded,
       completedAt: dueAt
     )
+    let initialCompletion = try await store.complete(
+      HexHeartbeatCompletion(
+        lease: lease,
+        outcome: outcome,
+        nextDueAt: dueAt.addingTimeInterval(60)
+      ),
+      at: dueAt
+    )
+    #expect(initialCompletion == .completed)
+    let repeatedCompletion = try await store.complete(
+      HexHeartbeatCompletion(
+        lease: lease,
+        outcome: outcome,
+        nextDueAt: dueAt.addingTimeInterval(60)
+      ),
+      at: dueAt.addingTimeInterval(1)
+    )
+    #expect(repeatedCompletion == .alreadyCompleted)
     do {
       _ = try await store.complete(
         HexHeartbeatCompletion(
           lease: duplicate,
           outcome: outcome,
           nextDueAt: dueAt.addingTimeInterval(60)
-        )
+        ),
+        at: dueAt.addingTimeInterval(1)
       )
       Issue.record("Expected a stale duplicate lease completion to be rejected.")
     } catch let error as HexHeartbeatStoreError {
       #expect(error == .staleLease)
     }
+    let completedSnapshot = try await store.load()
+    #expect(completedSnapshot.schedules.first?.lastCompletedLeaseID == lease.leaseID)
+  }
+
+  @Test
+  func concurrentStoresAtomicallyClaimOneOccurrence() async throws {
+    let fileURL = Self.temporaryStoreURL()
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let dueAt = Self.date(1_000)
+    let schedule = try Self.schedule(dueAt: dueAt)
+    let firstStore = JSONHexHeartbeatStore(fileURL: fileURL)
+    let secondStore = JSONHexHeartbeatStore(fileURL: fileURL)
+    try await firstStore.replace(HexHeartbeatStoreSnapshot(schedules: [schedule]))
+    let occurrence = schedule.occurrence()
+    let firstLease = HexHeartbeatLease(
+      leaseID: UUID(),
+      occurrence: occurrence,
+      claimedAt: dueAt,
+      expiresAt: dueAt.addingTimeInterval(600)
+    )
+    let secondLease = HexHeartbeatLease(
+      leaseID: UUID(),
+      occurrence: occurrence,
+      claimedAt: dueAt,
+      expiresAt: dueAt.addingTimeInterval(600)
+    )
+
+    async let firstDisposition = firstStore.claim(firstLease, at: dueAt)
+    async let secondDisposition = secondStore.claim(secondLease, at: dueAt)
+    let first = try await firstDisposition
+    let second = try await secondDisposition
+
+    #expect((first == .claimed) != (second == .claimed))
+    #expect(first == .alreadyClaimed || second == .alreadyClaimed)
+  }
+
+  @Test
+  func concurrentSchedulersAtomicallyPreserveDifferentMutations() async throws {
+    let fileURL = Self.temporaryStoreURL()
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let dueAt = Self.date(1_000)
+    let firstSchedule = try Self.schedule(dueAt: dueAt)
+    let secondSchedule = try Self.schedule(dueAt: dueAt)
+    let firstScheduler = Self.scheduler(
+      store: JSONHexHeartbeatStore(fileURL: fileURL),
+      runner: RecordingRunner(),
+      now: dueAt
+    )
+    let secondScheduler = Self.scheduler(
+      store: JSONHexHeartbeatStore(fileURL: fileURL),
+      runner: RecordingRunner(),
+      now: dueAt
+    )
+
+    async let firstAdd = firstScheduler.add(firstSchedule)
+    async let secondAdd = secondScheduler.add(secondSchedule)
+    try await firstAdd
+    try await secondAdd
+
+    let snapshot = try await JSONHexHeartbeatStore(fileURL: fileURL).load()
+    #expect(Set(snapshot.schedules.map(\.id)) == Set([firstSchedule.id, secondSchedule.id]))
+  }
+
+  @Test
+  func completionRejectsAnExpiredLeaseUsingAuthoritativeTime() async throws {
+    let fileURL = Self.temporaryStoreURL()
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let dueAt = Self.date(1_000)
+    let schedule = try Self.schedule(dueAt: dueAt)
+    let store = JSONHexHeartbeatStore(fileURL: fileURL)
+    try await store.replace(HexHeartbeatStoreSnapshot(schedules: [schedule]))
+    let lease = HexHeartbeatLease(
+      occurrence: schedule.occurrence(),
+      claimedAt: dueAt,
+      expiresAt: dueAt.addingTimeInterval(5)
+    )
+    let firstClaim = try await store.claim(lease, at: dueAt)
+    #expect(firstClaim == .claimed)
+    let completion = HexHeartbeatCompletion(
+      lease: lease,
+      outcome: HexHeartbeatOutcome(
+        occurrence: lease.occurrence,
+        kind: .succeeded,
+        completedAt: dueAt.addingTimeInterval(1)
+      ),
+      nextDueAt: dueAt.addingTimeInterval(60)
+    )
+
+    do {
+      _ = try await store.complete(completion, at: dueAt.addingTimeInterval(5))
+      Issue.record("Expected completion after lease expiry to be rejected.")
+    } catch let error as HexHeartbeatStoreError {
+      #expect(error == .staleLease)
+    }
+    let expiredSnapshot = try await store.load()
+    #expect(expiredSnapshot.schedules.first?.activeLease == lease)
+  }
+
+  @Test
+  func mutationsAreRejectedWhileExecutionIsInProgress() async throws {
+    let fileURL = Self.temporaryStoreURL()
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let dueAt = Self.date(1_000)
+    let schedule = try Self.schedule(dueAt: dueAt)
+    let futureSchedule = try Self.schedule(dueAt: dueAt.addingTimeInterval(600))
+    let store = JSONHexHeartbeatStore(fileURL: fileURL)
+    let runner = BlockingRunner()
+    let scheduler = Self.scheduler(store: store, runner: runner, now: dueAt)
+    try await scheduler.add(schedule)
+    let runTask = Task { try await scheduler.runDue(at: dueAt) }
+    while await runner.callCount() == 0 {
+      await Task.yield()
+    }
+
+    do {
+      try await scheduler.add(futureSchedule)
+      Issue.record("Expected add to be rejected during execution.")
+    } catch let error as HexHeartbeatSchedulerError {
+      #expect(error == .executionInProgress)
+    }
+    do {
+      try await scheduler.remove(schedule.id)
+      Issue.record("Expected remove to be rejected during execution.")
+    } catch let error as HexHeartbeatSchedulerError {
+      #expect(error == .executionInProgress)
+    }
+    do {
+      try await scheduler.pause(schedule.id)
+      Issue.record("Expected pause to be rejected during execution.")
+    } catch let error as HexHeartbeatSchedulerError {
+      #expect(error == .executionInProgress)
+    }
+    do {
+      try await scheduler.resume(schedule.id)
+      Issue.record("Expected resume to be rejected during execution.")
+    } catch let error as HexHeartbeatSchedulerError {
+      #expect(error == .executionInProgress)
+    }
+
+    await runner.release()
+    _ = try await runTask.value
+  }
+
+  @Test
+  func nextWakeUsesActiveLeaseExpiryInsteadOfDueDate() async throws {
+    let fileURL = Self.temporaryStoreURL()
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let dueAt = Self.date(1_000)
+    let schedule = try Self.schedule(dueAt: dueAt)
+    let store = JSONHexHeartbeatStore(fileURL: fileURL)
+    try await store.replace(HexHeartbeatStoreSnapshot(schedules: [schedule]))
+    let lease = HexHeartbeatLease(
+      occurrence: schedule.occurrence(),
+      claimedAt: dueAt,
+      expiresAt: dueAt.addingTimeInterval(600)
+    )
+    let firstClaim = try await store.claim(lease, at: dueAt)
+    #expect(firstClaim == .claimed)
+    let scheduler = Self.scheduler(
+      store: JSONHexHeartbeatStore(fileURL: fileURL),
+      runner: RecordingRunner(),
+      now: dueAt.addingTimeInterval(1)
+    )
+    _ = try await scheduler.snapshot()
+
+    #expect(await scheduler.nextWakeDate() == lease.expiresAt)
+  }
+
+  @Test
+  func failedResidentLoopResetsStateForRestart() async throws {
+    let fileURL = Self.temporaryStoreURL()
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let dueAt = Self.date(1_000)
+    let schedule = try Self.schedule(dueAt: dueAt.addingTimeInterval(600))
+    let sleeper = FailOnceSleeper()
+    let scheduler = HexHeartbeatScheduler(
+      store: JSONHexHeartbeatStore(fileURL: fileURL),
+      runner: RecordingRunner(),
+      clock: FixedClock(now: dueAt),
+      sleeper: sleeper,
+      configuration: HexHeartbeatSchedulerConfiguration(
+        leaseDurationSeconds: 600,
+        maximumSchedules: 16
+      )
+    )
+    try await scheduler.add(schedule)
+    try await scheduler.start()
+
+    for _ in 0..<200 {
+      if await sleeper.callCount() >= 1 {
+        break
+      }
+      await Task.yield()
+    }
+    for _ in 0..<200 {
+      try await scheduler.start()
+      if await sleeper.callCount() >= 2 {
+        break
+      }
+      await Task.yield()
+    }
+
+    #expect(await sleeper.callCount() >= 2)
+    await scheduler.stop()
   }
 
   @Test
@@ -301,4 +528,46 @@ struct HexHeartbeatSchedulerTests {
       calls
     }
   }
+
+  private actor BlockingRunner: HexHeartbeatRunner {
+    private var calls = 0
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func run(_ request: HexHeartbeatExecutionRequest) async throws -> HexHeartbeatExecutionResult {
+      _ = request
+      calls += 1
+      await withCheckedContinuation { continuation in
+        releaseContinuation = continuation
+      }
+      return .succeeded
+    }
+
+    func callCount() -> Int {
+      calls
+    }
+
+    func release() {
+      releaseContinuation?.resume()
+      releaseContinuation = nil
+    }
+  }
+
+  private actor FailOnceSleeper: HexHeartbeatSleeper {
+    private var calls = 0
+
+    func sleep(until date: Date?) async throws {
+      _ = date
+      calls += 1
+      if calls == 1 {
+        throw SleeperFailure()
+      }
+      try await Task.sleep(for: .hours(24))
+    }
+
+    func callCount() -> Int {
+      calls
+    }
+  }
+
+  private struct SleeperFailure: Error, Sendable {}
 }

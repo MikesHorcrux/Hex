@@ -15,7 +15,9 @@ public actor HexHeartbeatScheduler {
   private var hasLoaded = false
   private var isStarted = false
   private var executionInProgress = false
+  private var mutationInProgress = false
   private var loopTask: Task<Void, Never>?
+  private var loopGeneration: UInt64 = 0
 
   public init(
     store: any HexHeartbeatStore,
@@ -37,6 +39,7 @@ public actor HexHeartbeatScheduler {
     guard !isStarted else {
       return
     }
+    _ = try configuration.validated()
     try await ensureLoaded()
     isStarted = true
     launchLoop()
@@ -46,6 +49,7 @@ public actor HexHeartbeatScheduler {
   /// cancelled outcome before this method returns.
   public func stop() async {
     isStarted = false
+    loopGeneration &+= 1
     let task = loopTask
     loopTask = nil
     task?.cancel()
@@ -62,7 +66,7 @@ public actor HexHeartbeatScheduler {
   /// create a timer or resident task.
   @discardableResult
   public func runDue(at now: Date) async throws -> [HexHeartbeatExecutionReport] {
-    guard !executionInProgress else {
+    guard !executionInProgress, !mutationInProgress else {
       throw HexHeartbeatSchedulerError.executionInProgress
     }
     return try await performDue(at: now)
@@ -70,104 +74,96 @@ public actor HexHeartbeatScheduler {
 
   public func add(_ schedule: HexHeartbeatSchedule) async throws {
     try await ensureLoaded()
-    guard schedules.count < configuration.maximumSchedules else {
-      throw HexHeartbeatSchedulerError.tooManySchedules
-    }
-    guard schedules[schedule.id] == nil else {
-      throw HexHeartbeatSchedulerError.duplicateSchedule(schedule.id)
-    }
+    try beginMutation()
+    defer { endMutation() }
     let validated = try schedule.validated()
-    var snapshot = try await store.load()
-    snapshot = Self.replacing(snapshot, with: validated)
-    try await store.replace(snapshot)
-    schedules[validated.id] = validated
-    wakeLoopIfSleeping()
+    let maximumSchedules = configuration.maximumSchedules
+    let updated = try await store.mutate { snapshot in
+      guard snapshot.schedules.count < maximumSchedules else {
+        throw HexHeartbeatSchedulerError.tooManySchedules
+      }
+      guard snapshot.schedules.first(where: { $0.id == validated.id }) == nil else {
+        throw HexHeartbeatSchedulerError.duplicateSchedule(validated.id)
+      }
+      return Self.replacing(snapshot, with: validated)
+    }
+    try applyValidated(updated)
+    endMutationAndWakeLoop()
   }
 
   public func remove(_ scheduleID: HexHeartbeatScheduleID) async throws {
     try await ensureLoaded()
-    guard schedules.removeValue(forKey: scheduleID) != nil else {
-      throw HexHeartbeatSchedulerError.scheduleNotFound(scheduleID)
-    }
-    let snapshot = HexHeartbeatStoreSnapshot(
-      schedules: schedules.values.sorted { $0.id.description < $1.id.description },
-      isPaused: schedulerPaused
-    )
-    do {
-      try await store.replace(snapshot)
-    } catch {
-      // Keep in-memory state aligned with the durable source if a removal cannot commit.
-      let refreshed = try? await store.load()
-      if let refreshed {
-        apply(refreshed)
+    try beginMutation()
+    defer { endMutation() }
+    let updated = try await store.mutate { snapshot in
+      guard snapshot.schedules.contains(where: { $0.id == scheduleID }) else {
+        throw HexHeartbeatSchedulerError.scheduleNotFound(scheduleID)
       }
-      throw error
+      return HexHeartbeatStoreSnapshot(
+        schedules: snapshot.schedules.filter { $0.id != scheduleID },
+        isPaused: snapshot.isPaused
+      )
     }
-    wakeLoopIfSleeping()
+    try applyValidated(updated)
+    endMutationAndWakeLoop()
   }
 
   public func pause(_ scheduleID: HexHeartbeatScheduleID) async throws {
     try await ensureLoaded()
-    guard var schedule = schedules[scheduleID] else {
-      throw HexHeartbeatSchedulerError.scheduleNotFound(scheduleID)
+    try beginMutation()
+    defer { endMutation() }
+    let updated = try await store.mutate { snapshot in
+      guard var schedule = snapshot.schedules.first(where: { $0.id == scheduleID }) else {
+        throw HexHeartbeatSchedulerError.scheduleNotFound(scheduleID)
+      }
+      guard !schedule.isPaused else {
+        return snapshot
+      }
+      schedule.isPaused = true
+      return Self.replacing(snapshot, with: schedule)
     }
-    guard !schedule.isPaused else {
-      return
-    }
-    schedule.isPaused = true
-    let snapshot = Self.replacing(
-      try await store.load(),
-      with: schedule
-    )
-    try await store.replace(snapshot)
-    schedules[scheduleID] = schedule
-    wakeLoopIfSleeping()
+    try applyValidated(updated)
+    endMutationAndWakeLoop()
   }
 
   public func resume(_ scheduleID: HexHeartbeatScheduleID) async throws {
     try await ensureLoaded()
-    guard var schedule = schedules[scheduleID] else {
-      throw HexHeartbeatSchedulerError.scheduleNotFound(scheduleID)
+    try beginMutation()
+    defer { endMutation() }
+    let updated = try await store.mutate { snapshot in
+      guard var schedule = snapshot.schedules.first(where: { $0.id == scheduleID }) else {
+        throw HexHeartbeatSchedulerError.scheduleNotFound(scheduleID)
+      }
+      guard schedule.isPaused else {
+        return snapshot
+      }
+      schedule.isPaused = false
+      return Self.replacing(snapshot, with: schedule)
     }
-    guard schedule.isPaused else {
-      return
-    }
-    schedule.isPaused = false
-    let snapshot = Self.replacing(
-      try await store.load(),
-      with: schedule
-    )
-    try await store.replace(snapshot)
-    schedules[scheduleID] = schedule
-    wakeLoopIfSleeping()
+    try applyValidated(updated)
+    endMutationAndWakeLoop()
   }
 
   public func pauseAll() async throws {
     try await ensureLoaded()
-    guard !schedulerPaused else {
-      return
+    try beginMutation()
+    defer { endMutation() }
+    let updated = try await store.mutate { snapshot in
+      HexHeartbeatStoreSnapshot(schedules: snapshot.schedules, isPaused: true)
     }
-    let snapshot = HexHeartbeatStoreSnapshot(
-      schedules: schedules.values.sorted { $0.id.description < $1.id.description },
-      isPaused: true
-    )
-    try await store.replace(snapshot)
-    schedulerPaused = true
-    wakeLoopIfSleeping()
+    try applyValidated(updated)
+    endMutationAndWakeLoop()
   }
 
   public func resumeAll() async throws {
     try await ensureLoaded()
-    guard schedulerPaused else {
-      return
+    try beginMutation()
+    defer { endMutation() }
+    let updated = try await store.mutate { snapshot in
+      HexHeartbeatStoreSnapshot(schedules: snapshot.schedules, isPaused: false)
     }
-    let snapshot = HexHeartbeatStoreSnapshot(
-      schedules: schedules.values.sorted { $0.id.description < $1.id.description },
-      isPaused: false
-    )
-    try await store.replace(snapshot)
-    schedulerPaused = false
-    wakeLoopIfSleeping()
+    try applyValidated(updated)
+    endMutationAndWakeLoop()
   }
 
   public func nextWakeDate() -> Date? {
@@ -176,7 +172,11 @@ public actor HexHeartbeatScheduler {
     }
     return schedules.values
       .filter { !$0.isPaused }
-      .map(\.nextDueAt)
+      .map { schedule in
+        // A claimed occurrence cannot be started again before its lease expires. Waking at the
+        // due date while that lease is still active would otherwise create a tight retry loop.
+        schedule.activeLease?.expiresAt ?? schedule.nextDueAt
+      }
       .min()
   }
 
@@ -190,19 +190,25 @@ public actor HexHeartbeatScheduler {
 
   private func performDue(at now: Date) async throws -> [HexHeartbeatExecutionReport] {
     try Self.validate(date: now)
+    _ = try configuration.validated()
+    guard !executionInProgress, !mutationInProgress else {
+      throw HexHeartbeatSchedulerError.executionInProgress
+    }
     try await ensureLoaded()
+    guard !mutationInProgress else {
+      throw HexHeartbeatSchedulerError.executionInProgress
+    }
     guard !schedulerPaused else {
       return []
     }
-    executionInProgress = true
-    do {
-      let reports = try await executeDue(at: now)
-      executionInProgress = false
-      return reports
-    } catch {
-      executionInProgress = false
-      throw error
+    let reconciled = try await store.reconcileExpiredLeases(at: now)
+    try applyValidated(reconciled)
+    guard !mutationInProgress else {
+      throw HexHeartbeatSchedulerError.executionInProgress
     }
+    executionInProgress = true
+    defer { executionInProgress = false }
+    return try await executeDue(at: now)
   }
 
   private func executeDue(at now: Date) async throws -> [HexHeartbeatExecutionReport] {
@@ -260,7 +266,7 @@ public actor HexHeartbeatScheduler {
           outcome: execution.outcome,
           nextDueAt: nextDueAt
         )
-        _ = try await store.complete(completion)
+        _ = try await store.complete(completion, at: clock.now)
         try await refreshFromStore()
         reports.append(
           HexHeartbeatExecutionReport(
@@ -305,7 +311,7 @@ public actor HexHeartbeatScheduler {
         outcome: skippedOutcome,
         nextDueAt: schedule.nextDueAfter(skippedOccurrence.dueAt, now: now)
       )
-      _ = try await store.complete(skippedCompletion)
+      _ = try await store.complete(skippedCompletion, at: clock.now)
       try await refreshFromStore()
       reports.append(
         HexHeartbeatExecutionReport(
@@ -424,8 +430,10 @@ public actor HexHeartbeatScheduler {
     guard isStarted, loopTask == nil else {
       return
     }
+    loopGeneration &+= 1
+    let generation = loopGeneration
     loopTask = Task { [weak self] in
-      await self?.runLoop()
+      await self?.runLoop(generation: generation)
     }
   }
 
@@ -438,7 +446,8 @@ public actor HexHeartbeatScheduler {
     launchLoop()
   }
 
-  private func runLoop() async {
+  private func runLoop(generation: UInt64) async {
+    defer { finishLoop(generation: generation) }
     while !Task.isCancelled {
       do {
         _ = try await performDue(at: clock.now)
@@ -458,6 +467,31 @@ public actor HexHeartbeatScheduler {
         return
       }
     }
+  }
+
+  private func finishLoop(generation: UInt64) {
+    guard generation == loopGeneration else {
+      return
+    }
+    loopTask = nil
+    isStarted = false
+    hasLoaded = false
+  }
+
+  private func beginMutation() throws {
+    guard !executionInProgress, !mutationInProgress else {
+      throw HexHeartbeatSchedulerError.executionInProgress
+    }
+    mutationInProgress = true
+  }
+
+  private func endMutation() {
+    mutationInProgress = false
+  }
+
+  private func endMutationAndWakeLoop() {
+    endMutation()
+    wakeLoopIfSleeping()
   }
 
   private static func replacing(
