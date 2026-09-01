@@ -1,61 +1,59 @@
-//
-//  ContentView.swift
-//  Hex
-//
-//  Created by Mike Van Amburg on 8/30/26.
-//
-
-import SwiftData
+import Observation
 import SwiftUI
 
 struct ContentView: View {
-  @Environment(\.modelContext) private var modelContext
-  @Query private var items: [Item]
+  @Bindable var model: AgentWorkspaceModel
 
   var body: some View {
     NavigationSplitView {
-      List {
-        ForEach(items) { item in
-          NavigationLink {
-            Text(
-              "Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))"
-            )
-          } label: {
-            Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-          }
-        }
-        .onDelete(perform: deleteItems)
-      }
-      .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-      .toolbar {
-        ToolbarItem {
-          Button(action: addItem) {
-            Label("Add Item", systemImage: "plus")
-          }
-        }
-      }
+      SidebarView(model: model)
+        .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
     } detail: {
-      Text("Select an item")
-    }
-  }
+      VStack(spacing: 0) {
+        GatewayStatusView(
+          connectionState: model.connectionState,
+          runState: model.runState,
+          runSummary: model.runSummary,
+          onConnect: model.connectFromControl,
+          onDisconnect: model.disconnectFromControl
+        )
 
-  private func addItem() {
-    withAnimation {
-      let newItem = Item(timestamp: Date())
-      modelContext.insert(newItem)
-    }
-  }
+        if let error = model.errorMessage {
+          ErrorBannerView(
+            message: error,
+            onRetry: model.retryConnection,
+            onDismiss: model.dismissError
+          )
+        }
 
-  private func deleteItems(offsets: IndexSet) {
-    withAnimation {
-      for index in offsets {
-        modelContext.delete(items[index])
+        ConversationView(items: model.transcript)
+
+        if let request = model.pendingAuthorization {
+          ToolAuthorizationView(
+            request: request,
+            isSubmitting: model.isSubmittingAuthorization,
+            onChoice: model.decideAuthorization
+          )
+          .padding(.horizontal, 20)
+          .padding(.bottom, 12)
+        }
+
+        ComposerView(
+          draft: $model.draft,
+          canSend: model.canSend,
+          isRunning: model.isRunActive,
+          onSend: model.send,
+          onCancel: model.cancel
+        )
       }
+      .background(Color(nsColor: .windowBackgroundColor))
+    }
+    .task {
+      await model.connect()
     }
   }
 }
 
 #Preview {
-  ContentView()
-    .modelContainer(for: Item.self, inMemory: true)
+  ContentView(model: AgentWorkspaceModel(client: PreviewHexAgentClient()))
 }
