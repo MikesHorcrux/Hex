@@ -530,7 +530,7 @@ struct HexHeartbeatSchedulerTests {
   private struct NoopSleeper: HexHeartbeatSleeper, Sendable {
     func sleep(until date: Date?) async throws {
       _ = date
-      try await Task.sleep(for: .hours(24))
+      try await Task.sleep(nanoseconds: 86_400_000_000_000)
     }
   }
 
@@ -554,7 +554,7 @@ struct HexHeartbeatSchedulerTests {
     func run(_ request: HexHeartbeatExecutionRequest) async throws -> HexHeartbeatExecutionResult {
       _ = request
       calls += 1
-      try await Task.sleep(for: .hours(24))
+      try await Task.sleep(nanoseconds: 86_400_000_000_000)
       return .succeeded
     }
 
@@ -595,7 +595,7 @@ struct HexHeartbeatSchedulerTests {
       if calls == 1 {
         throw SleeperFailure()
       }
-      try await Task.sleep(for: .hours(24))
+      try await Task.sleep(nanoseconds: 86_400_000_000_000)
     }
 
     func callCount() -> Int {

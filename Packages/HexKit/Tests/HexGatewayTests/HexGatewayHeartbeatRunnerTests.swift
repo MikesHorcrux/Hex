@@ -10,7 +10,7 @@ struct HexGatewayHeartbeatRunnerTests {
   func startsOneAdmittedRunAndAcknowledgesItsTerminalEvent() async throws {
     let transport = ScriptedTransport(mode: .success)
     let client = HexGatewayClient(transport: transport)
-    try await client.connect()
+    _ = try await client.connect()
     let workspaceRoot = URL(fileURLWithPath: "/tmp/hex-heartbeat-workspace")
     let runner = try HexGatewayHeartbeatRunner(
       client: client,
@@ -41,7 +41,7 @@ struct HexGatewayHeartbeatRunnerTests {
   func busyAdmissionReturnsRetryableFailureWithoutOpeningAnEventStream() async throws {
     let transport = ScriptedTransport(mode: .busy)
     let client = HexGatewayClient(transport: transport)
-    try await client.connect()
+    _ = try await client.connect()
     let runner = try HexGatewayHeartbeatRunner(
       client: client,
       modelID: ModelID(rawValue: "test-model"),
@@ -65,7 +65,7 @@ struct HexGatewayHeartbeatRunnerTests {
   func authorizationRequestCancelsRunAndReturnsExplicitFailure() async throws {
     let transport = ScriptedTransport(mode: .authorization)
     let client = HexGatewayClient(transport: transport)
-    try await client.connect()
+    _ = try await client.connect()
     let runner = try HexGatewayHeartbeatRunner(
       client: client,
       modelID: ModelID(rawValue: "test-model"),
@@ -193,7 +193,7 @@ struct HexGatewayHeartbeatRunnerTests {
       case .success, .authorization:
         let invocationID = GatewayRunInvocationID(rawValue: UUID())
         invocation = invocationID
-        events = makeEvents(
+        events = Self.makeEvents(
           runID: request.runID,
           invocationID: invocationID,
           mode: mode
