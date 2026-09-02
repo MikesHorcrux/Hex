@@ -46,6 +46,13 @@ public final class HexGatewayResidentHost {
     let authorizationBroker = HexGatewayAuthorizationBroker()
     let fileSystem = try WorkspaceFileSystem(root: configuration.workspaceRoot)
     let processExecutor = POSIXProcessExecutor()
+    let personalMemoryStore = try JSONPersonalMemoryStore(
+      fileURL: configuration.personalMemoryURL
+    )
+    let personalMemoryToolExecutor = try PersonalMemoryToolExecutor(
+      memoryStore: personalMemoryStore,
+      scope: configuration.personalMemoryScope
+    )
     let personalToolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
       processExecutor: processExecutor
@@ -54,7 +61,7 @@ public final class HexGatewayResidentHost {
       try MCPManagedToolExecutor(session: $0)
     }
     let routedToolExecutor = try CompositeToolExecutor(
-      executors: [personalToolExecutor] + mcpToolExecutors
+      executors: [personalToolExecutor, personalMemoryToolExecutor] + mcpToolExecutors
     )
     let authorizationProvider = CapabilityAuthorizationCenter(
       prompter: authorizationBroker
@@ -73,9 +80,6 @@ public final class HexGatewayResidentHost {
     )
     let personalityProfileStore = try JSONPersonalityProfileStore(
       fileURL: configuration.personalityProfileURL
-    )
-    let personalMemoryStore = try JSONPersonalMemoryStore(
-      fileURL: configuration.personalMemoryURL
     )
     let personalityContextService = try PersonalityContextService(
       profileStore: personalityProfileStore,

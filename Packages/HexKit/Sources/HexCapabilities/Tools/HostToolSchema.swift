@@ -1,7 +1,7 @@
 import HexCore
 
-enum HostToolSchema {
-  static func object(
+public enum HostToolSchema {
+  public static func object(
     properties: [String: JSONValue],
     required: [String]
   ) -> [String: JSONValue] {
@@ -13,7 +13,7 @@ enum HostToolSchema {
     ]
   }
 
-  static func string(_ description: String, maximumLength: Int) -> JSONValue {
+  public static func string(_ description: String, maximumLength: Int) -> JSONValue {
     .object([
       "type": .string("string"),
       "description": .string(description),
@@ -21,7 +21,7 @@ enum HostToolSchema {
     ])
   }
 
-  static func stringEnum(_ description: String, values: [String]) -> JSONValue {
+  public static func stringEnum(_ description: String, values: [String]) -> JSONValue {
     .object([
       "type": .string("string"),
       "description": .string(description),
@@ -29,7 +29,7 @@ enum HostToolSchema {
     ])
   }
 
-  static func integer(
+  public static func integer(
     _ description: String,
     minimum: Int,
     maximum: Int

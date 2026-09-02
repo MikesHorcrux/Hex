@@ -81,6 +81,28 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
     }
   }
 
+  public func memory(
+    id: PersonalMemoryID,
+    scope: PersonalMemoryScope
+  ) async throws -> PersonalMemoryRecord? {
+    try Task.checkCancellation()
+    let fileURL = self.fileURL
+    let maximumRecords = self.maximumRecords
+    let maximumEncodedBytes = self.maximumEncodedBytes
+    return try withStoreErrorMapping {
+      try JSONPersonalityStoreFileSupport.withFileLock(fileURL: fileURL) {
+        let snapshot = try readSnapshot(
+          fileURL: fileURL,
+          maximumEncodedBytes: maximumEncodedBytes,
+          maximumRecords: maximumRecords
+        )
+        return snapshot.records.first { record in
+          record.scope == scope && record.id == id
+        }
+      }
+    }
+  }
+
   @discardableResult
   public func remove(
     id: PersonalMemoryID,
