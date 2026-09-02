@@ -135,6 +135,9 @@ public final class HexGatewayResidentHost {
       }
       return await service.hasActiveRun() ? .active : .idle
     }
+    let listHeartbeats: @Sendable () async throws -> GatewayHeartbeatScheduleList = {
+      try HexGatewayHeartbeatScheduleMapper.list(from: await scheduler.snapshot())
+    }
     let residentControlHandlers = HexGatewayResidentControlHandlers(
       status: statusHandler,
       pauseHeartbeats: {
@@ -144,6 +147,27 @@ public final class HexGatewayResidentHost {
       resumeHeartbeats: {
         try await scheduler.resumeAll()
         return try await statusHandler()
+      },
+      listHeartbeats: listHeartbeats,
+      addHeartbeat: { request in
+        let schedule = try HexGatewayHeartbeatScheduleMapper.schedule(from: request)
+        try await scheduler.add(schedule)
+        return try await listHeartbeats()
+      },
+      removeHeartbeat: { mutation in
+        let mutation = try mutation.validated()
+        try await scheduler.remove(HexHeartbeatScheduleID(rawValue: mutation.scheduleID))
+        return try await listHeartbeats()
+      },
+      pauseHeartbeat: { mutation in
+        let mutation = try mutation.validated()
+        try await scheduler.pause(HexHeartbeatScheduleID(rawValue: mutation.scheduleID))
+        return try await listHeartbeats()
+      },
+      resumeHeartbeat: { mutation in
+        let mutation = try mutation.validated()
+        try await scheduler.resume(HexHeartbeatScheduleID(rawValue: mutation.scheduleID))
+        return try await listHeartbeats()
       }
     )
     listenerDelegate = HexGatewayXPCListenerDelegate(

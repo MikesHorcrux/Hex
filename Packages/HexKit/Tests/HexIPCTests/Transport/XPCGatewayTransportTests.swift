@@ -189,9 +189,44 @@ struct XPCGatewayTransportTests {
     #expect(try await transport.status(lease: lease) == .unavailable)
     #expect(try await transport.pauseHeartbeats(lease: lease) == .unavailable)
     #expect(try await transport.resumeHeartbeats(lease: lease) == .unavailable)
+    #expect(try await transport.listHeartbeats(lease: lease) == GatewayHeartbeatScheduleList())
+    let scheduleRequest = GatewayHeartbeatScheduleRequest(
+      id: GatewayTestValues.uuid(192),
+      name: "Test heartbeat",
+      instruction: "Check the current context.",
+      intervalSeconds: 60,
+      nextDueAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    let scheduleMutation = GatewayHeartbeatScheduleMutation(scheduleID: scheduleRequest.id)
+    #expect(
+      try await transport.addHeartbeat(scheduleRequest, lease: lease)
+        == GatewayHeartbeatScheduleList()
+    )
+    #expect(
+      try await transport.removeHeartbeat(scheduleMutation, lease: lease)
+        == GatewayHeartbeatScheduleList()
+    )
+    #expect(
+      try await transport.pauseHeartbeat(scheduleMutation, lease: lease)
+        == GatewayHeartbeatScheduleList()
+    )
+    #expect(
+      try await transport.resumeHeartbeat(scheduleMutation, lease: lease)
+        == GatewayHeartbeatScheduleList()
+    )
     #expect(
       await connection.operations
-        == [.handshake, .status, .pauseHeartbeats, .resumeHeartbeats]
+        == [
+          .handshake,
+          .status,
+          .pauseHeartbeats,
+          .resumeHeartbeats,
+          .listHeartbeats,
+          .addHeartbeat,
+          .removeHeartbeat,
+          .pauseHeartbeat,
+          .resumeHeartbeat,
+        ]
     )
 
     let staleLease = GatewayTransportConnectionLease(rawValue: GatewayTestValues.uuid(191))
@@ -503,6 +538,11 @@ struct XPCGatewayTransportTests {
         return try response(
           operation: envelope.operation,
           value: GatewayResidentStatus.unavailable
+        )
+      case .listHeartbeats, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat, .resumeHeartbeat:
+        return try response(
+          operation: envelope.operation,
+          value: GatewayHeartbeatScheduleList()
         )
       case .disconnect, .cancelSubscription:
         return try codec.encode(

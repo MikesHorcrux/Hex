@@ -9,7 +9,7 @@ import HexProviders
 /// Lazily selects the resident XPC gateway first. The in-process composition is retained only as an
 /// explicit developer fallback, so a missing or unavailable resident service never becomes a
 /// silently privileged app-local agent.
-actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling {
+actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHeartbeatManaging {
   enum ClientError: Error, Equatable, LocalizedError, Sendable {
     case applicationSupportUnavailable
     case modelMismatch(expected: String)
@@ -174,6 +174,64 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling {
       let adapter = try await connectedGatewayAdapter()
       let status = try await adapter.resumeHeartbeats()
       return appStatus(from: status)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func listHeartbeatSchedules() async throws -> GatewayHeartbeatScheduleList {
+    do {
+      let adapter = try await connectedGatewayAdapter()
+      return try await adapter.listHeartbeatSchedules()
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func addHeartbeatSchedule(
+    _ request: GatewayHeartbeatScheduleRequest
+  ) async throws -> GatewayHeartbeatScheduleList {
+    do {
+      let adapter = try await connectedGatewayAdapter()
+      return try await adapter.addHeartbeatSchedule(request)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func removeHeartbeatSchedule(
+    _ mutation: GatewayHeartbeatScheduleMutation
+  ) async throws -> GatewayHeartbeatScheduleList {
+    do {
+      let adapter = try await connectedGatewayAdapter()
+      return try await adapter.removeHeartbeatSchedule(mutation)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func pauseHeartbeatSchedule(
+    _ mutation: GatewayHeartbeatScheduleMutation
+  ) async throws -> GatewayHeartbeatScheduleList {
+    do {
+      let adapter = try await connectedGatewayAdapter()
+      return try await adapter.pauseHeartbeatSchedule(mutation)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func resumeHeartbeatSchedule(
+    _ mutation: GatewayHeartbeatScheduleMutation
+  ) async throws -> GatewayHeartbeatScheduleList {
+    do {
+      let adapter = try await connectedGatewayAdapter()
+      return try await adapter.resumeHeartbeatSchedule(mutation)
     } catch {
       clearConnectionIfUnavailable(error)
       throw error

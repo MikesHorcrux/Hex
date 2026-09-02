@@ -232,6 +232,76 @@ public final class HexGatewayXPCService: NSObject {
         _ = try currentSession(for: envelope)
         return try successResponse(operation: .resumeHeartbeats, value: status)
 
+      case .listHeartbeats:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = residentControlHandlers.listHeartbeats else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat schedule management."
+          )
+        }
+        let schedules = try await handler()
+        _ = try schedules.validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .listHeartbeats, value: schedules)
+
+      case .addHeartbeat:
+        _ = try currentSession(for: envelope)
+        guard let handler = residentControlHandlers.addHeartbeat else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat schedule management."
+          )
+        }
+        let request = try codec.decode(GatewayHeartbeatScheduleRequest.self, from: envelope.body)
+        let schedules = try await handler(try request.validated())
+        _ = try schedules.validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .addHeartbeat, value: schedules)
+
+      case .removeHeartbeat:
+        _ = try currentSession(for: envelope)
+        guard let handler = residentControlHandlers.removeHeartbeat else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat schedule management."
+          )
+        }
+        let mutation = try codec.decode(GatewayHeartbeatScheduleMutation.self, from: envelope.body)
+        let schedules = try await handler(try mutation.validated())
+        _ = try schedules.validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .removeHeartbeat, value: schedules)
+
+      case .pauseHeartbeat:
+        _ = try currentSession(for: envelope)
+        guard let handler = residentControlHandlers.pauseHeartbeat else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat schedule management."
+          )
+        }
+        let mutation = try codec.decode(GatewayHeartbeatScheduleMutation.self, from: envelope.body)
+        let schedules = try await handler(try mutation.validated())
+        _ = try schedules.validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .pauseHeartbeat, value: schedules)
+
+      case .resumeHeartbeat:
+        _ = try currentSession(for: envelope)
+        guard let handler = residentControlHandlers.resumeHeartbeat else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose heartbeat schedule management."
+          )
+        }
+        let mutation = try codec.decode(GatewayHeartbeatScheduleMutation.self, from: envelope.body)
+        let schedules = try await handler(try mutation.validated())
+        _ = try schedules.validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .resumeHeartbeat, value: schedules)
+
       case .cancelSubscription:
         _ = try currentSession(for: envelope)
         guard let subscriptionID = envelope.subscriptionID else {
@@ -267,7 +337,8 @@ public final class HexGatewayXPCService: NSObject {
           )
         }
       case .startRun, .cancelRun, .submitAuthorizationDecision, .status, .pauseHeartbeats,
-        .resumeHeartbeats, .disconnect:
+        .resumeHeartbeats, .listHeartbeats, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat,
+        .resumeHeartbeat, .disconnect:
         guard envelope.sessionID != nil, envelope.subscriptionID == nil else {
           throw GatewayFailure(
             code: .malformedPayload,

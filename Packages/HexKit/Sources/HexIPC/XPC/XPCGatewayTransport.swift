@@ -207,6 +207,60 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
     try await residentControlResponse(operation: .resumeHeartbeats, lease: lease)
   }
 
+  public func listHeartbeats(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    try await residentHeartbeatResponse(
+      operation: .listHeartbeats,
+      body: Data(),
+      lease: lease
+    )
+  }
+
+  public func addHeartbeat(
+    _ request: GatewayHeartbeatScheduleRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    try await residentHeartbeatResponse(
+      operation: .addHeartbeat,
+      body: try codec.encode(request.validated()),
+      lease: lease
+    )
+  }
+
+  public func removeHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    try await residentHeartbeatResponse(
+      operation: .removeHeartbeat,
+      body: try codec.encode(mutation.validated()),
+      lease: lease
+    )
+  }
+
+  public func pauseHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    try await residentHeartbeatResponse(
+      operation: .pauseHeartbeat,
+      body: try codec.encode(mutation.validated()),
+      lease: lease
+    )
+  }
+
+  public func resumeHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    try await residentHeartbeatResponse(
+      operation: .resumeHeartbeat,
+      body: try codec.encode(mutation.validated()),
+      lease: lease
+    )
+  }
+
   public func eventRecords(
     after cursor: GatewayEventCursor,
     lease: GatewayTransportConnectionLease
@@ -397,7 +451,34 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
     let state = try requireConnected(lease: lease)
     do {
       try Task.checkCancellation()
-      let body = try codec.encode(Data())
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: operation,
+          lease: lease,
+          sessionID: state.sessionID,
+          body: Data()
+        )
+      )
+      let rawResponse = try await state.connection.request(envelope)
+      try requireCurrentConnection(state)
+      return try decodeResponse(
+        rawResponse,
+        operation: operation,
+        as: GatewayResidentStatus.self
+      )
+    } catch {
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  private func residentHeartbeatResponse(
+    operation: GatewayXPCOperation,
+    body: Data,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    let state = try requireConnected(lease: lease)
+    do {
+      try Task.checkCancellation()
       let envelope = try encodeEnvelope(
         GatewayXPCRequestEnvelope(
           operation: operation,
@@ -411,8 +492,8 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
       return try decodeResponse(
         rawResponse,
         operation: operation,
-        as: GatewayResidentStatus.self
-      )
+        as: GatewayHeartbeatScheduleList.self
+      ).validated()
     } catch {
       throw codec.canonicalFailure(from: error)
     }
