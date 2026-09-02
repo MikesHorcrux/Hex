@@ -66,16 +66,8 @@ public final class HexGatewayResidentHost {
     let authorizationProvider = CapabilityAuthorizationCenter(
       prompter: authorizationBroker
     )
-    let providerID = ProviderID(rawValue: "openai")
-    let model = ModelDescriptor(
-      id: ModelID(rawValue: configuration.modelID),
-      providerID: providerID,
-      displayName: configuration.modelID,
-      capabilities: [.textInput, .streaming, .toolCalling]
-    )
-    let providerConfiguration = try OpenAIResponsesConfiguration(models: [model])
-    let inferenceProvider = OpenAIResponsesProvider(
-      configuration: providerConfiguration,
+    let inferenceProvider = try configuration.inferenceProviderFactory.makeInferenceProvider(
+      for: configuration.inferenceBackendSettings,
       credentialProvider: configuration.makeCredentialProvider()
     )
     let personalityProfileStore = try JSONPersonalityProfileStore(
@@ -98,7 +90,8 @@ public final class HexGatewayResidentHost {
       authorizationProvider: authorizationProvider,
       personalityContextService: personalityContextService,
       personalityMemoryQuery: personalityMemoryQuery,
-      enforcedWorkingDirectory: configuration.workspaceRoot
+      enforcedWorkingDirectory: configuration.workspaceRoot,
+      enforcedModelID: ModelID(rawValue: configuration.modelID)
     )
     let composition = try await HexGatewayComposition.open(
       configuration: compositionConfiguration

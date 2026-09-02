@@ -85,6 +85,7 @@ public struct HexGatewayComposition: Sendable {
       personalityContext: configuration.personalityContext,
       personalityContextService: configuration.personalityContextService,
       personalityMemoryQuery: configuration.personalityMemoryQuery,
+      enforcedModelID: configuration.enforcedModelID,
       enforcedWorkingDirectory: configuration.enforcedWorkingDirectory
     )
     let service = HexGatewayService(

@@ -4,6 +4,7 @@
 /// ChatGPT/Codex token field. Codex account credentials remain owned by the Codex app-server.
 public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
   public static let currentSchemaVersion = 1
+  public static let defaultOpenAIModelID = "gpt-5.2"
 
   public let schemaVersion: Int
   public let selectedBackend: HexInferenceBackendKind
@@ -30,7 +31,7 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
 
   public init(
     selectedBackend: HexInferenceBackendKind = .openAIResponses,
-    openAIModelID: String = "gpt-5.2",
+    openAIModelID: String = Self.defaultOpenAIModelID,
     mlx: HexMLXBackendSettings? = nil,
     codex: HexCodexCompatibilitySettings? = nil
   ) throws {
@@ -39,6 +40,16 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
       openAI: HexOpenAIBackendSettings(modelID: openAIModelID),
       mlx: mlx ?? HexMLXBackendSettings(),
       codex: codex ?? HexCodexCompatibilitySettings()
+    )
+  }
+
+  /// Explicitly migrates the legacy resident model setting into the backend-selection document.
+  /// A missing legacy value uses the stable OpenAI default so an absent backend document preserves
+  /// the pre-selection resident behavior without selecting another provider implicitly.
+  public static func migrationDefault(legacyOpenAIModelID: String? = nil) throws -> Self {
+    try Self(
+      selectedBackend: .openAIResponses,
+      openAIModelID: legacyOpenAIModelID ?? Self.defaultOpenAIModelID
     )
   }
 

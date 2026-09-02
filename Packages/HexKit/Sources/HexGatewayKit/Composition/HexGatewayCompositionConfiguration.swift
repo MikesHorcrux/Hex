@@ -26,6 +26,11 @@ public struct HexGatewayCompositionConfiguration: Sendable {
   /// host-owned directory to every runtime tool execution context.
   public let enforcedWorkingDirectory: URL?
 
+  /// When present, the gateway uses this host-selected model for every runtime inference request.
+  /// A resident host supplies the model selected by its persisted backend settings so a stale XPC
+  /// client's model field cannot route inference to a different model.
+  public let enforcedModelID: ModelID?
+
   public init(
     journalConfiguration: SQLiteAgentEventJournalConfiguration,
     inferenceProvider: any InferenceProvider,
@@ -36,7 +41,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     personalityContext: PersonalityContext? = nil,
     personalityContextService: PersonalityContextService? = nil,
     personalityMemoryQuery: PersonalMemoryQuery? = nil,
-    enforcedWorkingDirectory: URL? = nil
+    enforcedWorkingDirectory: URL? = nil,
+    enforcedModelID: ModelID? = nil
   ) {
     self.journalConfiguration = journalConfiguration
     journal = nil
@@ -49,6 +55,7 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.personalityContextService = personalityContextService
     self.personalityMemoryQuery = personalityMemoryQuery
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
+    self.enforcedModelID = enforcedModelID
   }
 
   /// Creates a composition around a caller-owned durable journal. The composition does not close
@@ -63,7 +70,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     personalityContext: PersonalityContext? = nil,
     personalityContextService: PersonalityContextService? = nil,
     personalityMemoryQuery: PersonalMemoryQuery? = nil,
-    enforcedWorkingDirectory: URL? = nil
+    enforcedWorkingDirectory: URL? = nil,
+    enforcedModelID: ModelID? = nil
   ) {
     journalConfiguration = nil
     self.journal = journal
@@ -76,6 +84,7 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.personalityContextService = personalityContextService
     self.personalityMemoryQuery = personalityMemoryQuery
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
+    self.enforcedModelID = enforcedModelID
   }
 
   public static func inert(

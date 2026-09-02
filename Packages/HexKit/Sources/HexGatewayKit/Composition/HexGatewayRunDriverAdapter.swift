@@ -13,6 +13,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
   private let personalityMessages: [Message]
   private let personalityContextService: PersonalityContextService?
   private let personalityMemoryQuery: PersonalMemoryQuery?
+  private let enforcedModelID: ModelID?
   private let enforcedWorkingDirectory: URL?
 
   public init(
@@ -24,6 +25,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
     personalityContext: PersonalityContext? = nil,
     personalityContextService: PersonalityContextService? = nil,
     personalityMemoryQuery: PersonalMemoryQuery? = nil,
+    enforcedModelID: ModelID? = nil,
     enforcedWorkingDirectory: URL? = nil
   ) {
     let eventJournal = HexGatewayEventJournal(base: journal)
@@ -38,6 +40,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
     personalityMessages = personalityContext?.messages ?? []
     self.personalityContextService = personalityContextService
     self.personalityMemoryQuery = personalityMemoryQuery
+    self.enforcedModelID = enforcedModelID
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
   }
 
@@ -63,7 +66,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
 
       let agentRequest = AgentRunRequest(
         runID: request.runID,
-        modelID: request.modelID,
+        modelID: enforcedModelID ?? request.modelID,
         initialMessages: request.initialMessages,
         contextMessages: contextMessages,
         options: request.options,
