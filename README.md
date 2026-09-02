@@ -59,10 +59,10 @@ The Inference tab also exposes two deliberately separate integration seams:
   for redacted account status plus the explicit browser or device-code sign-in, completion,
   cancellation, and sign-out flows. It is account/app-server compatibility, not raw inference from
   a ChatGPT subscription, and Hex does not read Codex credential files.
-- **Local MLX model** settings and the concrete provider builder exist in HexKit, including an
-  existing model directory, context/output limits, and tool-calling flags. The final package
-  manifest and resident-runtime injection are still pending, so selecting MLX is not yet an
-  end-to-end resident inference path. Hex does not download model files.
+- **Local MLX model** settings, the concrete provider builder, the package dependency, and resident
+  `HexGateway` injection are complete in the integrated build, including an existing model
+  directory, context/output limits, and tool-calling flags. Selecting MLX requires the user to
+  supply an existing compatible local model; Hex does not download model files.
 
 ## Resident lifecycle and durable state
 
