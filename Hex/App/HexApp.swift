@@ -11,6 +11,7 @@ struct HexApp: App {
   @State private var residentSetup: HexResidentSetupModel
   @State private var heartbeatManagement: HexHeartbeatManagementModel
   @State private var personalitySettings: HexPersonalitySettingsModel
+  @State private var inferenceBackendSettings: HexInferenceBackendSettingsModel
   private let route: HexGatewayRoute
   private let isVerificationOnlyLaunch: Bool
 
@@ -29,12 +30,18 @@ struct HexApp: App {
     #else
       let setupDependencies = HexResidentSetupDependencies.blocked
     #endif
+    let inferenceBackendDependencies =
+      HexInferenceBackendSettingsDependencies.live(for: configuration.gatewayRoute)
     self.init(
       client: client,
       modelID: initialModelID,
       route: configuration.gatewayRoute,
       residentGatewayController: client,
       setupDependencies: setupDependencies,
+      heartbeatService: nil,
+      personalityService: nil,
+      personalityMemoryScope: .hex,
+      inferenceBackendDependencies: inferenceBackendDependencies,
       isVerificationOnlyLaunch: verificationOnlyLaunch
     )
   }
@@ -49,6 +56,7 @@ struct HexApp: App {
     heartbeatService: (any HexHeartbeatManaging)? = nil,
     personalityService: (any HexPersonalityServicing)? = nil,
     personalityMemoryScope: PersonalMemoryScope = .hex,
+    inferenceBackendDependencies: HexInferenceBackendSettingsDependencies = .blocked,
     lifecycleController: any HexGatewayLifecycleControlling =
       HexSMAppServiceLifecycleController(),
     isVerificationOnlyLaunch: Bool = false
@@ -73,6 +81,7 @@ struct HexApp: App {
         managedToolLayout: setupDependencies.managedToolLayout
       )
     )
+
     let resolvedHeartbeatService: any HexHeartbeatManaging
     if let heartbeatService {
       resolvedHeartbeatService = heartbeatService
@@ -84,11 +93,20 @@ struct HexApp: App {
     _heartbeatManagement = State(
       initialValue: HexHeartbeatManagementModel(service: resolvedHeartbeatService)
     )
+
     let resolvedPersonalityService = personalityService ?? Self.livePersonalityService()
     _personalitySettings = State(
       initialValue: HexPersonalitySettingsModel(
         service: resolvedPersonalityService,
         scope: personalityMemoryScope
+      )
+    )
+
+    _inferenceBackendSettings = State(
+      initialValue: HexInferenceBackendSettingsModel(
+        settingsStore: inferenceBackendDependencies.settingsStore,
+        secretStore: inferenceBackendDependencies.secretStore,
+        makeCodexStatusProvider: inferenceBackendDependencies.makeCodexStatusProvider
       )
     )
   }
@@ -115,13 +133,12 @@ struct HexApp: App {
       TabView {
         HexResidentSetupView(model: residentSetup)
           .tabItem {
-            Label("Resident", systemImage: "gearshape")
+            Label("Resident", systemImage: "server.rack")
           }
-          .onChange(of: residentSetup.saveGeneration) { _, _ in
-            guard !isVerificationOnlyLaunch else { return }
-            Task {
-              await startAtLogin.refresh()
-            }
+
+        HexInferenceBackendSettingsView(model: inferenceBackendSettings)
+          .tabItem {
+            Label("Inference", systemImage: "cpu")
           }
 
         HexHeartbeatManagementView(
@@ -136,6 +153,13 @@ struct HexApp: App {
           .tabItem {
             Label("Personality", systemImage: "person.crop.circle")
           }
+      }
+      .frame(minWidth: 560, minHeight: 500)
+      .onChange(of: residentSetup.saveGeneration) { _, _ in
+        guard !isVerificationOnlyLaunch else { return }
+        Task {
+          await startAtLogin.refresh()
+        }
       }
     }
 
