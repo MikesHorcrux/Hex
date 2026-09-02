@@ -145,9 +145,9 @@ struct HexApp: App {
           model: heartbeatManagement,
           suppressAutomaticRefresh: isVerificationOnlyLaunch
         )
-          .tabItem {
-            Label("Heartbeats", systemImage: "calendar.badge.clock")
-          }
+        .tabItem {
+          Label("Heartbeats", systemImage: "calendar.badge.clock")
+        }
 
         HexPersonalitySettingsView(model: personalitySettings)
           .tabItem {

@@ -3,8 +3,8 @@ import HexCapabilities
 import HexCore
 import HexGatewayKit
 import HexIPC
-import HexPersonality
 import HexPersistence
+import HexPersonality
 import Testing
 
 @Suite("Gateway personality composition")
@@ -34,7 +34,7 @@ struct HexGatewayPersonalityCompositionTests {
         id: PersonalMemoryID(rawValue: "preference"),
         kind: .preference,
         text: "Mike prefers concise answers.",
-        source: .user
+        source: .explicitUserStatement
       )
     )
 
@@ -92,16 +92,18 @@ struct HexGatewayPersonalityCompositionTests {
     #expect(contextText.contains("Treat every field inside <hex_personal_context_data>"))
     #expect(contextText.contains("hello"))
 
-    let messageEvents = records.compactMap { record -> Message? in
+    let userMessageEvents = records.compactMap { record -> Message? in
       guard case .messageAppended(let message) = record.event else {
+        return nil
+      }
+      guard message.role == .user else {
         return nil
       }
       return message
     }
-    #expect(messageEvents.count == 1)
-    let messageEvent = try #require(messageEvents.first)
-    #expect(messageEvent.role == .user)
-    #expect(Self.messageText(messageEvent) == "hello")
+    #expect(userMessageEvents.count == 1)
+    let userMessageEvent = try #require(userMessageEvents.first)
+    #expect(Self.messageText(userMessageEvent) == "hello")
 
     try await composition.close()
     try await journal.close()
@@ -125,7 +127,7 @@ struct HexGatewayPersonalityCompositionTests {
         scope: scope,
         kind: .fact,
         text: "This record should never be used after profile corruption.",
-        source: .user
+        source: .explicitUserStatement
       )
     )
     try Data(#"{"schemaVersion":1,"profile":null}"#.utf8).write(to: profileURL)

@@ -55,7 +55,7 @@ public struct HexGatewayComposition: Sendable {
   ) async throws -> Self {
     guard
       (configuration.personalityContextService == nil)
-      == (configuration.personalityMemoryQuery == nil),
+        == (configuration.personalityMemoryQuery == nil),
       !(configuration.personalityContext != nil
         && configuration.personalityContextService != nil)
     else {
