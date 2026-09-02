@@ -89,6 +89,11 @@ final class HexPersonalityProfileModel {
     canEdit
   }
 
+  var hasDraftContent: Bool {
+    [name, identity, voice, traitsText, valuesText, boundariesText]
+      .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+  }
+
   func load() async {
     guard !hasLoaded, !isLoading else {
       return

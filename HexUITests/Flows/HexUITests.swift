@@ -8,6 +8,7 @@ final class HexUITests: XCTestCase {
   @MainActor
   func testFirstAgentSurfaceLaunches() throws {
     let app = XCUIApplication()
+    app.launchArguments = ["--hex-skip-onboarding"]
     app.launch()
 
     XCTAssertTrue(app.textViews["promptComposer"].waitForExistence(timeout: 3))

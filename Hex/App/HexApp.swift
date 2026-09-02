@@ -14,6 +14,7 @@ struct HexApp: App {
   @State private var inferenceBackendSettings: HexInferenceBackendSettingsModel
   private let route: HexGatewayRoute
   private let isVerificationOnlyLaunch: Bool
+  private let suppressOnboarding: Bool
 
   init() {
     let configuration = HexDeveloperConfiguration(
@@ -25,11 +26,8 @@ struct HexApp: App {
       ? ""
       : configuration.modelIDForInterface
     let verificationOnlyLaunch = Self.isVerificationOnlyLaunch(arguments: CommandLine.arguments)
-    #if DEBUG
-      let setupDependencies = HexResidentSetupDependencies.live(for: configuration.gatewayRoute)
-    #else
-      let setupDependencies = HexResidentSetupDependencies.blocked
-    #endif
+    let suppressOnboarding = Self.isOnboardingSuppressed(arguments: CommandLine.arguments)
+    let setupDependencies = HexResidentSetupDependencies.live(for: configuration.gatewayRoute)
     let inferenceBackendDependencies =
       HexInferenceBackendSettingsDependencies.live(for: configuration.gatewayRoute)
     self.init(
@@ -42,7 +40,8 @@ struct HexApp: App {
       personalityService: nil,
       personalityMemoryScope: .hex,
       inferenceBackendDependencies: inferenceBackendDependencies,
-      isVerificationOnlyLaunch: verificationOnlyLaunch
+      isVerificationOnlyLaunch: verificationOnlyLaunch,
+      suppressOnboarding: suppressOnboarding
     )
   }
 
@@ -59,10 +58,12 @@ struct HexApp: App {
     inferenceBackendDependencies: HexInferenceBackendSettingsDependencies = .blocked,
     lifecycleController: any HexGatewayLifecycleControlling =
       HexSMAppServiceLifecycleController(),
-    isVerificationOnlyLaunch: Bool = false
+    isVerificationOnlyLaunch: Bool = false,
+    suppressOnboarding: Bool = false
   ) {
     self.route = route
     self.isVerificationOnlyLaunch = isVerificationOnlyLaunch
+    self.suppressOnboarding = suppressOnboarding
     _workspace = State(initialValue: AgentWorkspaceModel(client: client, modelID: modelID))
     _residentGateway = State(
       initialValue: HexResidentGatewayModel(controller: residentGatewayController)
@@ -113,48 +114,29 @@ struct HexApp: App {
 
   var body: some Scene {
     WindowGroup(id: "main") {
-      AgentWorkspaceView(model: workspace, connectOnAppear: false)
-        .task {
-          guard !isVerificationOnlyLaunch else { return }
-          await residentSetup.load()
-          workspace.modelID = residentSetup.modelID
-          await workspace.connect()
-        }
-        .onChange(of: residentSetup.saveGeneration) { _, _ in
-          guard !isVerificationOnlyLaunch else { return }
-          workspace.modelID = residentSetup.modelID
-          Task {
-            await startAtLogin.refresh()
-          }
-        }
+      HexRootView(
+        workspace: workspace,
+        residentSetup: residentSetup,
+        inference: inferenceBackendSettings,
+        personality: personalitySettings,
+        startAtLogin: startAtLogin,
+        suppressOnboarding: suppressOnboarding,
+        suppressAutomaticConnection: isVerificationOnlyLaunch
+      )
     }
+    .defaultSize(width: 980, height: 680)
 
     Settings {
-      TabView {
-        HexResidentSetupView(model: residentSetup)
-          .tabItem {
-            Label("Resident", systemImage: "server.rack")
-          }
-
-        HexInferenceBackendSettingsView(model: inferenceBackendSettings)
-          .tabItem {
-            Label("Inference", systemImage: "cpu")
-          }
-
-        HexHeartbeatManagementView(
-          model: heartbeatManagement,
-          suppressAutomaticRefresh: isVerificationOnlyLaunch
-        )
-        .tabItem {
-          Label("Heartbeats", systemImage: "calendar.badge.clock")
-        }
-
-        HexPersonalitySettingsView(model: personalitySettings)
-          .tabItem {
-            Label("Personality", systemImage: "person.crop.circle")
-          }
-      }
-      .frame(minWidth: 560, minHeight: 500)
+      HexSettingsView(
+        workspace: workspace,
+        residentSetup: residentSetup,
+        inference: inferenceBackendSettings,
+        heartbeat: heartbeatManagement,
+        personality: personalitySettings,
+        startAtLogin: startAtLogin,
+        route: route,
+        suppressAutomaticRefresh: isVerificationOnlyLaunch
+      )
       .onChange(of: residentSetup.saveGeneration) { _, _ in
         guard !isVerificationOnlyLaunch else { return }
         Task {
@@ -198,6 +180,10 @@ struct HexApp: App {
 
   nonisolated static func isVerificationOnlyLaunch(arguments: [String]) -> Bool {
     arguments.contains("--hex-verify-no-connect")
+  }
+
+  nonisolated static func isOnboardingSuppressed(arguments: [String]) -> Bool {
+    arguments.contains("--hex-verify-no-connect") || arguments.contains("--hex-skip-onboarding")
   }
 
   private static func livePersonalityService() -> any HexPersonalityServicing {

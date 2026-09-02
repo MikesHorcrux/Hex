@@ -17,38 +17,43 @@ nonisolated struct HexResidentSetupDependencies: Sendable {
     readinessChecker: HexBlockedGatewayActivationChecker()
   )
 
-  #if DEBUG
-    static func live(for route: HexGatewayRoute) -> Self {
-      guard route.kind == .residentXPC,
-        let paths = try? HexResidentDataPaths.live()
-      else {
-        return .blocked
-      }
-
-      guard let settingsStore = try? JSONHexResidentRuntimeSettingsStore(fileURL: paths.settingsURL)
-      else {
-        return .blocked
-      }
-      guard
-        let managedToolLayout = try? MCPManagedToolLayout(
-          rootURL: paths.directoryURL.appendingPathComponent("Tools", isDirectory: true)
-        )
-      else {
-        return .blocked
-      }
-      let secretStore = KeychainHexSecretStore()
-      let readinessChecker = HexResidentGatewayActivationChecker(
-        settingsStore: settingsStore,
-        secretStore: secretStore,
-        appBundleURL: Bundle.main.bundleURL,
-        managedToolLayout: managedToolLayout
-      )
-      return Self(
-        settingsStore: settingsStore,
-        secretStore: secretStore,
-        managedToolLayout: managedToolLayout,
-        readinessChecker: readinessChecker
-      )
+  static func live(for route: HexGatewayRoute) -> Self {
+    guard route.kind == .residentXPC,
+      let paths = try? HexResidentDataPaths.live()
+    else {
+      return .blocked
     }
-  #endif
+
+    guard let settingsStore = try? JSONHexResidentRuntimeSettingsStore(fileURL: paths.settingsURL)
+    else {
+      return .blocked
+    }
+    guard
+      let inferenceSettingsStore = try? JSONHexInferenceBackendSettingsStore(
+        fileURL: paths.directoryURL.appendingPathComponent(
+          "inference-backends.json",
+          isDirectory: false
+        )
+      ),
+      let managedToolLayout = try? MCPManagedToolLayout(
+        rootURL: paths.directoryURL.appendingPathComponent("Tools", isDirectory: true)
+      )
+    else {
+      return .blocked
+    }
+    let secretStore = KeychainHexSecretStore()
+    let readinessChecker = HexResidentGatewayActivationChecker(
+      settingsStore: settingsStore,
+      secretStore: secretStore,
+      appBundleURL: Bundle.main.bundleURL,
+      managedToolLayout: managedToolLayout,
+      inferenceSettingsStore: inferenceSettingsStore
+    )
+    return Self(
+      settingsStore: settingsStore,
+      secretStore: secretStore,
+      managedToolLayout: managedToolLayout,
+      readinessChecker: readinessChecker
+    )
+  }
 }

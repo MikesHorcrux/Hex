@@ -56,6 +56,38 @@ struct HexResidentGatewayActivationCheckerTests {
   }
 
   @Test
+  func localMLXDoesNotRequireAnOpenAICredential() async throws {
+    let workspace = try makeWorkspace()
+    let bundle = try makeBundle()
+    defer {
+      try? FileManager.default.removeItem(at: workspace)
+      try? FileManager.default.removeItem(at: bundle)
+    }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "local-model",
+      workspaceRoot: workspace
+    )
+    let inferenceSettings = try HexInferenceBackendSettings(
+      selectedBackend: .mlxLocal,
+      mlx: HexMLXBackendSettings(
+        modelID: "local-model",
+        displayName: "Local model",
+        directory: workspace
+      )
+    )
+    let checker = HexResidentGatewayActivationChecker(
+      settingsStore: FakeSettingsStore(settings: settings),
+      secretStore: FakeSecretStore(),
+      appBundleURL: bundle,
+      inferenceSettingsStore: FakeInferenceSettingsStore(settings: inferenceSettings)
+    )
+
+    let readiness = await checker.check()
+
+    #expect(readiness == .ready)
+  }
+
+  @Test
   func enabledManagedToolMustHaveAValidatedInstallation() async throws {
     let workspace = try makeWorkspace()
     let bundle = try makeBundle()
@@ -213,5 +245,19 @@ struct HexResidentGatewayActivationCheckerTests {
     func save(_ secret: String, for key: HexSecretKey) async throws {}
 
     func delete(_ key: HexSecretKey) async throws {}
+  }
+
+  private actor FakeInferenceSettingsStore: HexInferenceBackendSettingsStore {
+    let settings: HexInferenceBackendSettings?
+
+    init(settings: HexInferenceBackendSettings?) {
+      self.settings = settings
+    }
+
+    func load() async throws -> HexInferenceBackendSettings? {
+      settings
+    }
+
+    func save(_ settings: HexInferenceBackendSettings) async throws {}
   }
 }

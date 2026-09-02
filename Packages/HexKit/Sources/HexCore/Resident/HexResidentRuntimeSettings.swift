@@ -12,11 +12,13 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
   public let modelID: String
   public let workspaceRoot: URL
   public let mcpServers: [HexResidentMCPServerSettings]
+  public let authorizationMode: HexAuthorizationMode
 
   public init(
     modelID: String,
     workspaceRoot: URL,
     mcpServers: [HexResidentMCPServerSettings] = [],
+    authorizationMode: HexAuthorizationMode = .askEveryTime,
     schemaVersion: Int = Self.currentSchemaVersion
   ) throws {
     guard schemaVersion == Self.currentSchemaVersion else {
@@ -39,6 +41,7 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
     self.modelID = modelID
     self.workspaceRoot = workspaceRoot.standardizedFileURL
     self.mcpServers = mcpServers.sorted { $0.serverID < $1.serverID }
+    self.authorizationMode = authorizationMode
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -46,6 +49,7 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
     case modelID
     case workspaceRoot
     case mcpServers
+    case authorizationMode
   }
 
   public init(from decoder: Decoder) throws {
@@ -58,10 +62,14 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
         [HexResidentMCPServerSettings].self,
         forKey: .mcpServers
       ) ?? []
+    let authorizationMode =
+      try container.decodeIfPresent(HexAuthorizationMode.self, forKey: .authorizationMode)
+      ?? .askEveryTime
     try self.init(
       modelID: modelID,
       workspaceRoot: workspaceRoot,
       mcpServers: mcpServers,
+      authorizationMode: authorizationMode,
       schemaVersion: schemaVersion
     )
   }
@@ -72,6 +80,7 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
     try container.encode(modelID, forKey: .modelID)
     try container.encode(workspaceRoot, forKey: .workspaceRoot)
     try container.encode(mcpServers, forKey: .mcpServers)
+    try container.encode(authorizationMode, forKey: .authorizationMode)
   }
 
   private static func isPrintableASCII(_ value: String) -> Bool {

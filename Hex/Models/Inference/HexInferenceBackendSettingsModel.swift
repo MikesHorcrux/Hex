@@ -72,6 +72,17 @@ final class HexInferenceBackendSettingsModel {
     hasLoaded && !isLoading && !isSaving && settingsStore != nil && secretStore != nil
   }
 
+  var effectiveModelID: String {
+    switch selectedBackend {
+    case .openAIResponses:
+      openAIModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    case .mlxLocal:
+      mlxModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    case .codexCompatibility:
+      "codex-compatibility"
+    }
+  }
+
   var mlxDirectoryDisplayName: String {
     mlxDirectory?.path ?? "Choose an existing model folder"
   }

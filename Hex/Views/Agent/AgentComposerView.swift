@@ -13,11 +13,11 @@ struct AgentComposerView: View {
         .font(.body)
         .scrollContentBackground(.hidden)
         .padding(8)
-        .frame(minHeight: 74, maxHeight: 150)
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .frame(minHeight: 58, maxHeight: 130)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         .overlay {
-          RoundedRectangle(cornerRadius: 10)
-            .strokeBorder(Color.secondary.opacity(0.22))
+          RoundedRectangle(cornerRadius: 8)
+            .strokeBorder(.separator)
         }
         .accessibilityIdentifier("promptComposer")
 
@@ -35,23 +35,23 @@ struct AgentComposerView: View {
 
         if isRunning {
           Button("Cancel", action: onCancel)
-            .buttonStyle(.hexSecondaryAction)
+            .buttonStyle(.bordered)
             .keyboardShortcut(".", modifiers: [.command])
             .accessibilityIdentifier("cancelRunButton")
         }
 
         Button(action: onSend) {
-          Label("Send", systemImage: "arrow.up.circle.fill")
+          Label("Send", systemImage: "arrow.up")
         }
-        .buttonStyle(.hexPrimaryAction)
+        .buttonStyle(.borderedProminent)
         .keyboardShortcut(.return, modifiers: [.command])
         .disabled(!canSend)
         .accessibilityIdentifier("sendPromptButton")
       }
     }
-    .padding(.horizontal, 20)
+    .padding(.horizontal, 18)
     .padding(.top, 10)
     .padding(.bottom, 16)
-    .background(.thinMaterial)
+    .background(.bar)
   }
 }

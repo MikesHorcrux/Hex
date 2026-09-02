@@ -6,12 +6,13 @@ import HexPersistence
 
 /// Read-only preflight for a signed resident gateway bundle.
 ///
-/// The checker does not call `SMAppService` and does not read the credential value. It only asks the
-/// injected secret store whether the OpenAI credential exists, then validates the settings and the
-/// bundle layout required by the LaunchAgent contract.
+/// The checker does not call `SMAppService` or read credential values. It checks whether the
+/// selected backend needs an OpenAI credential, then validates the settings and bundle layout
+/// required by the LaunchAgent contract.
 nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationReadinessChecking {
   private let settingsStore: any HexResidentRuntimeSettingsStore
   private let secretStore: any HexSecretStore
+  private let inferenceSettingsStore: (any HexInferenceBackendSettingsStore)?
   private let appBundleURL: URL
   private let managedToolLayout: MCPManagedToolLayout?
 
@@ -19,10 +20,12 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
     settingsStore: any HexResidentRuntimeSettingsStore,
     secretStore: any HexSecretStore,
     appBundleURL: URL,
-    managedToolLayout: MCPManagedToolLayout? = nil
+    managedToolLayout: MCPManagedToolLayout? = nil,
+    inferenceSettingsStore: (any HexInferenceBackendSettingsStore)? = nil
   ) {
     self.settingsStore = settingsStore
     self.secretStore = secretStore
+    self.inferenceSettingsStore = inferenceSettingsStore
     self.appBundleURL = appBundleURL.standardizedFileURL
     self.managedToolLayout = managedToolLayout
   }
@@ -47,7 +50,19 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
       )
     }
 
-    guard await hasCredential() else {
+    if let inferenceSettingsStore {
+      let inferenceSettings: HexInferenceBackendSettings?
+      do {
+        inferenceSettings = try await inferenceSettingsStore.load()
+      } catch {
+        return Self.blocked(
+          "Inference backend settings could not be loaded. Check Inference in Settings."
+        )
+      }
+      if inferenceSettings?.selectedBackend != .mlxLocal, !(await hasCredential()) {
+        return Self.blocked("Resident setup is missing an OpenAI API key. Add one in Settings.")
+      }
+    } else if !(await hasCredential()) {
       return Self.blocked("Resident setup is missing an OpenAI API key. Add one in Settings.")
     }
 

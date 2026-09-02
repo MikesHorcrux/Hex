@@ -64,7 +64,8 @@ public final class HexGatewayResidentHost {
       executors: [personalToolExecutor, personalMemoryToolExecutor] + mcpToolExecutors
     )
     let authorizationProvider = CapabilityAuthorizationCenter(
-      prompter: authorizationBroker
+      prompter: authorizationBroker,
+      automaticallyAllowsValidatedRequests: configuration.authorizationMode == .fullAccess
     )
     let inferenceProvider = try configuration.inferenceProviderFactory.makeInferenceProvider(
       for: configuration.inferenceBackendSettings,
