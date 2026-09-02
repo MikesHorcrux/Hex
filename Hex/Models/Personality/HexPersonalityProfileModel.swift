@@ -109,7 +109,8 @@ final class HexPersonalityProfileModel {
       return
     }
     guard hasLoaded, !isLoading, !state.isUnavailable else {
-      errorMessage = state.isUnavailable
+      errorMessage =
+        state.isUnavailable
         ? "Personality profile editing is unavailable in this build."
         : "Wait for the personality profile to finish loading before saving."
       return

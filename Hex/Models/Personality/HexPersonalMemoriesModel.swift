@@ -122,7 +122,8 @@ final class HexPersonalMemoriesModel {
       return
     }
     guard canEdit else {
-      errorMessage = state.isUnavailable
+      errorMessage =
+        state.isUnavailable
         ? "Personal memories are unavailable in this build."
         : "Personal memories cannot be edited while their store is unavailable or corrupted."
       return
@@ -185,7 +186,8 @@ final class HexPersonalMemoriesModel {
       return
     }
     guard canEdit else {
-      errorMessage = state.isUnavailable
+      errorMessage =
+        state.isUnavailable
         ? "Personal memories are unavailable in this build."
         : "Personal memories cannot be deleted while their store is unavailable or corrupted."
       return
