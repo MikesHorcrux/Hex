@@ -59,6 +59,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let personalMemoryURL: URL
   public let personalMemoryScope: PersonalMemoryScope
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
+  public let authorizationMode: HexAuthorizationMode
   public let credentialProvider: any OpenAICredentialProvider
   public let inferenceBackendSettings: HexInferenceBackendSettings
   public let inferenceProviderFactory: HexGatewayInferenceProviderFactory
@@ -175,6 +176,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     personalMemoryURL: URL? = nil,
     personalMemoryScope: PersonalMemoryScope? = nil,
     mcpClientSessions: [any MCPClientSession] = [],
+    authorizationMode: HexAuthorizationMode = .askEveryTime,
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
     inferenceBackendSettings: HexInferenceBackendSettings? = nil,
     inferenceProviderFactory: HexGatewayInferenceProviderFactory =
@@ -259,6 +261,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.personalMemoryURL = standardizedPersonalMemoryURL
     self.personalMemoryScope = personalMemoryScope ?? Self.defaultPersonalityScope()
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
+    self.authorizationMode = authorizationMode
     self.credentialProvider = credentialProvider
     self.inferenceBackendSettings = resolvedInferenceBackendSettings
     self.inferenceProviderFactory = inferenceProviderFactory
@@ -278,6 +281,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     personalMemoryURL: URL? = nil,
     personalMemoryScope: PersonalMemoryScope? = nil,
     mcpClientSessions: [any MCPClientSession] = [],
+    authorizationMode: HexAuthorizationMode = .askEveryTime,
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
     inferenceBackendSettings: HexInferenceBackendSettings? = nil,
     inferenceProviderFactory: HexGatewayInferenceProviderFactory =
@@ -297,6 +301,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       personalMemoryURL: personalMemoryURL,
       personalMemoryScope: personalMemoryScope,
       mcpClientSessions: mcpClientSessions,
+      authorizationMode: authorizationMode,
       connectionAdmissionPolicy: connectionAdmissionPolicy,
       inferenceBackendSettings: inferenceBackendSettings,
       inferenceProviderFactory: inferenceProviderFactory
@@ -421,6 +426,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       personalityProfileURL: resolvedPaths.personalityProfileURL,
       personalMemoryURL: resolvedPaths.personalMemoryURL,
       mcpClientSessions: mcpClientSessions,
+      authorizationMode: settings.authorizationMode,
       connectionAdmissionPolicy: connectionAdmissionPolicy,
       inferenceBackendSettings: inferenceBackendSettings,
       inferenceProviderFactory: inferenceProviderFactory

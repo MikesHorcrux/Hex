@@ -8,7 +8,7 @@ import Testing
 @Suite("Resident setup")
 struct HexResidentSetupModelTests {
   @Test @MainActor
-  func firstSaveRequiresACredential() async throws {
+  func firstSaveCanPersistNonOpenAIResidentSettingsWithoutACredential() async throws {
     let settingsStore = FakeSettingsStore()
     let secretStore = FakeSecretStore()
     let model = HexResidentSetupModel(
@@ -22,10 +22,11 @@ struct HexResidentSetupModelTests {
     model.modelID = "gpt-5"
     model.chooseWorkspace(workspace)
     model.save()
+    try await waitForSave(model)
 
-    #expect(model.errorMessage == "Enter an OpenAI API key before saving for the first time.")
+    #expect(model.errorMessage == nil)
     #expect(!model.isSaving)
-    #expect(await settingsStore.savedSettings == nil)
+    #expect(await settingsStore.savedSettings?.modelID == "gpt-5")
     #expect(await secretStore.saveCount == 0)
   }
 
@@ -71,6 +72,7 @@ struct HexResidentSetupModelTests {
     model.modelID = "gpt-5-codex"
     model.apiKey = "sk-test-value"
     model.xcodeMCPEnabled = true
+    model.authorizationMode = .fullAccess
     model.chooseWorkspace(workspace)
     model.save()
     try await waitForSave(model)
@@ -78,6 +80,7 @@ struct HexResidentSetupModelTests {
     #expect(await settingsStore.savedSettings?.modelID == "gpt-5-codex")
     #expect(await settingsStore.savedSettings?.workspaceRoot == workspace.standardizedFileURL)
     #expect(await settingsStore.savedSettings?.mcpServers == [try .xcode()])
+    #expect(await settingsStore.savedSettings?.authorizationMode == .fullAccess)
     #expect(await secretStore.value == "sk-test-value")
     #expect(model.apiKey.isEmpty)
     #expect(model.hasStoredAPIKey)

@@ -9,6 +9,11 @@ struct HexTests {
     #expect(
       HexApp.isVerificationOnlyLaunch(arguments: ["Hex", "--hex-verify-no-connect"])
     )
+    #expect(!HexApp.isOnboardingSuppressed(arguments: ["Hex"]))
+    #expect(HexApp.isOnboardingSuppressed(arguments: ["Hex", "--hex-skip-onboarding"]))
+    #expect(
+      HexApp.isOnboardingSuppressed(arguments: ["Hex", "--hex-verify-no-connect"])
+    )
   }
 
   @Test @MainActor

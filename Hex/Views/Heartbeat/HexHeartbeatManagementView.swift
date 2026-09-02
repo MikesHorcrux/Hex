@@ -109,7 +109,6 @@ struct HexHeartbeatManagementView: View {
       }
     }
     .padding(20)
-    .frame(minWidth: 560, minHeight: 420)
     .task {
       guard !suppressAutomaticRefresh else { return }
       await model.refresh()

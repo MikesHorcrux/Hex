@@ -119,7 +119,7 @@ struct HexMenuBarView: View {
       .keyboardShortcut(.defaultAction)
 
       SettingsLink {
-        Label("Resident setup…", systemImage: "gearshape")
+        Label("Settings…", systemImage: "gearshape")
       }
 
       Button("Quit Hex UI", action: onQuitHexUI)

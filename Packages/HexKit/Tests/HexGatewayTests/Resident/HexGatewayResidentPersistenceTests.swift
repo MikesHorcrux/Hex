@@ -25,7 +25,8 @@ struct HexGatewayResidentPersistenceTests {
           transport: .streamableHTTP,
           endpointURL: URL(string: "https://mcp.example.com")
         )
-      ]
+      ],
+      authorizationMode: .fullAccess
     )
     let settingsStore = SettingsStore(value: settings)
     let secretStore = SecretStore(value: "sk-persisted-secret")
@@ -43,6 +44,7 @@ struct HexGatewayResidentPersistenceTests {
     #expect(configuration.databaseURL == paths.databaseURL)
     #expect(configuration.heartbeatStoreURL == paths.heartbeatStoreURL)
     #expect(configuration.mcpClientSessions.map(\.serverID) == ["docs"])
+    #expect(configuration.authorizationMode == .fullAccess)
     #expect(await secretStore.didReadValue() == false)
     #expect(try await configuration.makeCredentialProvider().apiKey() == "sk-persisted-secret")
     #expect(await secretStore.didReadValue())

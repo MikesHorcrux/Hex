@@ -10,8 +10,6 @@ struct HexPersonalitySettingsView: View {
       HexPersonalMemoriesView(model: model.memories)
     }
     .formStyle(.grouped)
-    .frame(width: 650, height: 760)
-    .scenePadding()
     .task {
       await model.load()
     }

@@ -8,6 +8,7 @@ public actor CapabilityAuthorizationCenter: AuthorizationProvider {
   private let prompter: any AuthorizationPrompting
   private let persistentStore: any AuthorizationGrantStore
   private let configuration: CapabilityAuthorizationCenterConfiguration
+  private let automaticallyAllowsValidatedRequests: Bool
   private var runGrants: Set<RunAuthorizationGrantKey> = []
   private var sessionGrants: Set<AuthorizationGrantKey> = []
 
@@ -15,17 +16,22 @@ public actor CapabilityAuthorizationCenter: AuthorizationProvider {
     sessionID: AuthorizationSessionID = AuthorizationSessionID(),
     prompter: any AuthorizationPrompting = DenyingAuthorizationPrompter(),
     persistentStore: any AuthorizationGrantStore = UnavailableAuthorizationGrantStore(),
-    configuration: CapabilityAuthorizationCenterConfiguration = .standard
+    configuration: CapabilityAuthorizationCenterConfiguration = .standard,
+    automaticallyAllowsValidatedRequests: Bool = false
   ) {
     self.sessionID = sessionID
     self.prompter = prompter
     self.persistentStore = persistentStore
     self.configuration = configuration
+    self.automaticallyAllowsValidatedRequests = automaticallyAllowsValidatedRequests
   }
 
   public func authorize(_ request: AuthorizationRequest) async throws -> AuthorizationDecision {
     try Task.checkCancellation()
     try validate(request)
+    if automaticallyAllowsValidatedRequests {
+      return .allow
+    }
     let grantKey = AuthorizationGrantKey(request: request)
     let runGrantKey = RunAuthorizationGrantKey(runID: request.runID, grantKey: grantKey)
 

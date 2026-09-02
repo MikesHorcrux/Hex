@@ -12,6 +12,7 @@ final class HexResidentSetupModel {
   var peekabooMCPEnabled = false
   var playwrightMCPEnabled = false
   var xcodeMCPEnabled = false
+  var authorizationMode = HexAuthorizationMode.askEveryTime
   private(set) var httpMCPServers: [HexHTTPMCPServer] = []
 
   private(set) var isLoading = false
@@ -49,6 +50,14 @@ final class HexResidentSetupModel {
     hasLoaded && !isLoading && !isSaving && settingsStore != nil && secretStore != nil
   }
 
+  var hasValidCoreSettings: Bool {
+    let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard Self.isValidModelID(normalizedModelID), let workspaceRoot else {
+      return false
+    }
+    return Self.isValidWorkspaceRoot(workspaceRoot)
+  }
+
   func load() async {
     guard !hasLoaded, !isLoading else { return }
     hasLoaded = true
@@ -70,6 +79,7 @@ final class HexResidentSetupModel {
       if let settings = try await settingsStore.load() {
         modelID = settings.modelID
         workspaceRoot = settings.workspaceRoot
+        authorizationMode = settings.authorizationMode
         loadedMCPServers = settings.mcpServers
         httpMCPServers = settings.mcpServers.compactMap { setting in
           guard setting.transport == .streamableHTTP, let endpointURL = setting.endpointURL else {
@@ -93,10 +103,7 @@ final class HexResidentSetupModel {
       }
       hasStoredAPIKey = try await secretStore.exists(.openAIAPIKey)
       errorMessage = nil
-      statusMessage =
-        hasStoredAPIKey
-        ? "A stored OpenAI API key is ready."
-        : "Add an OpenAI API key to enable the resident gateway."
+      statusMessage = "Resident settings are ready to edit."
     } catch {
       errorMessage = Self.safeLoadMessage(for: error)
       statusMessage = nil
@@ -182,10 +189,6 @@ final class HexResidentSetupModel {
     }
 
     let normalizedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard hasStoredAPIKey || !normalizedAPIKey.isEmpty else {
-      errorMessage = "Enter an OpenAI API key before saving for the first time."
-      return
-    }
     guard let settingsStore, let secretStore else {
       errorMessage = "Resident setup is unavailable in this build."
       return
@@ -227,7 +230,8 @@ final class HexResidentSetupModel {
       settings = try HexResidentRuntimeSettings(
         modelID: normalizedModelID,
         workspaceRoot: workspaceRoot,
-        mcpServers: mcpServers
+        mcpServers: mcpServers,
+        authorizationMode: authorizationMode
       )
     } catch {
       errorMessage = Self.safeMessage(for: error)

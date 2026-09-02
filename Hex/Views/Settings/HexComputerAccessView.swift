@@ -7,6 +7,7 @@ struct HexComputerAccessView: View {
     Section {
       Label("App discovery and activation", systemImage: "macwindow")
       Label("Semantic control through macOS Accessibility", systemImage: "accessibility")
+      Label("Protected folders through Full Disk Access", systemImage: "internaldrive")
       Label("Structured browser automation through Playwright", systemImage: "globe")
       Label("Screen observation and native interaction through Peekaboo", systemImage: "eye")
 
@@ -23,6 +24,28 @@ struct HexComputerAccessView: View {
         guard
           let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+          )
+        else {
+          return
+        }
+        openURL(url)
+      }
+
+      Button("Open Screen Recording Settings") {
+        guard
+          let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+          )
+        else {
+          return
+        }
+        openURL(url)
+      }
+
+      Button("Open Full Disk Access Settings") {
+        guard
+          let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
           )
         else {
           return

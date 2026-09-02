@@ -1,12 +1,13 @@
 import Observation
 import SwiftUI
 
-struct HexResidentSetupView: View {
+struct HexPermissionsSettingsView: View {
   @Bindable var model: HexResidentSetupModel
 
   var body: some View {
     Form {
-      HexResidentConfigurationFormView(model: model)
+      HexAuthorizationModePickerView(model: model)
+      HexComputerAccessView()
 
       if let statusMessage = model.statusMessage {
         Text(statusMessage)
@@ -15,10 +16,9 @@ struct HexResidentSetupView: View {
       }
 
       if let errorMessage = model.errorMessage {
-        Text(errorMessage)
+        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
           .font(.callout)
           .foregroundStyle(.orange)
-          .fixedSize(horizontal: false, vertical: true)
       }
 
       HStack {

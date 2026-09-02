@@ -19,13 +19,15 @@ struct HexResidentRuntimeSettingsTests {
           transport: .streamableHTTP,
           endpointURL: URL(string: "http://127.0.0.1:8765/mcp")
         ),
-      ]
+      ],
+      authorizationMode: .fullAccess
     )
     let data = try JSONEncoder().encode(settings)
     let decoded = try JSONDecoder().decode(HexResidentRuntimeSettings.self, from: data)
 
     #expect(settings == decoded)
     #expect(settings.schemaVersion == HexResidentRuntimeSettings.currentSchemaVersion)
+    #expect(decoded.authorizationMode == .fullAccess)
     #expect(!String(decoding: data, as: UTF8.self).contains("apiKey"))
     #expect(
       decoded.mcpServers.map(\.serverID)
@@ -72,6 +74,7 @@ struct HexResidentRuntimeSettingsTests {
     let settings = try JSONDecoder().decode(HexResidentRuntimeSettings.self, from: data)
 
     #expect(settings.mcpServers.isEmpty)
+    #expect(settings.authorizationMode == .askEveryTime)
   }
 
   @Test

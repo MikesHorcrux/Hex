@@ -13,17 +13,9 @@ struct AgentWorkspaceView: View {
   var body: some View {
     NavigationSplitView {
       AgentSidebarView(model: model)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+        .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 300)
     } detail: {
       VStack(spacing: 0) {
-        GatewayStatusView(
-          connectionState: model.connectionState,
-          runState: model.runState,
-          runSummary: model.runSummary,
-          onConnect: model.connectFromControl,
-          onDisconnect: model.disconnectFromControl
-        )
-
         if let error = model.errorMessage {
           ErrorBannerView(
             message: error,
@@ -53,7 +45,34 @@ struct AgentWorkspaceView: View {
         )
       }
       .background(Color(nsColor: .windowBackgroundColor))
+      .navigationTitle(model.selectedConversationTitle ?? "Hex")
+      .toolbar {
+        ToolbarItemGroup {
+          Button {
+            model.newConversation()
+          } label: {
+            Label("New conversation", systemImage: "square.and.pencil")
+          }
+
+          if model.connectionState == .connected {
+            Button(action: model.disconnectFromControl) {
+              Label("Disconnect", systemImage: "bolt.slash")
+            }
+            .disabled(model.isRunActive)
+          } else {
+            Button(action: model.connectFromControl) {
+              Label("Connect", systemImage: "bolt")
+            }
+            .disabled(model.connectionState == .connecting)
+          }
+
+          SettingsLink {
+            Label("Settings", systemImage: "gearshape")
+          }
+        }
+      }
     }
+    .navigationSplitViewStyle(.balanced)
     .task {
       await model.restoreConversationHistory()
       guard connectOnAppear else { return }

@@ -15,6 +15,21 @@ struct CapabilityAuthorizationCenterTests {
   }
 
   @Test
+  func fullAccessAllowsOnlyAfterRequestValidation() async throws {
+    let prompter = ScriptedPrompter(responses: [.deny(reason: "must not prompt")])
+    let center = CapabilityAuthorizationCenter(
+      prompter: prompter,
+      automaticallyAllowsValidatedRequests: true
+    )
+
+    #expect(try await center.authorize(request()) == .allow)
+    await #expect(throws: CapabilityAuthorizationCenterError.self) {
+      try await center.authorize(request(operation: " invalid"))
+    }
+    #expect(await prompter.requestCount() == 0)
+  }
+
+  @Test
   func onceGrantPromptsForEveryRequest() async throws {
     let prompter = ScriptedPrompter(responses: [.allow(scope: .once), .allow(scope: .once)])
     let center = CapabilityAuthorizationCenter(prompter: prompter)
