@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import HexCore
 import HexPersistence
@@ -84,19 +85,21 @@ struct HexGatewayResidentPersistenceTests {
       modelID: "legacy-model",
       workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace")
     )
+    let persistedStore = try JSONHexInferenceBackendSettingsStore(
+      fileURL: root.appendingPathComponent("inference-backends.json", isDirectory: false)
+    )
     let configuration = try await HexGatewayResidentConfiguration.loadPersisted(
       paths: paths,
       settingsStore: SettingsStore(value: settings),
-      secretStore: SecretStore(value: "sk-test")
+      secretStore: SecretStore(value: "sk-test"),
+      inferenceBackendSettingsStore: persistedStore
     )
 
     #expect(configuration.inferenceBackendSettings.selectedBackend == .openAIResponses)
     #expect(configuration.inferenceBackendSettings.openAI.modelID == "legacy-model")
     #expect(configuration.modelID == "legacy-model")
-    let persistedStore = try JSONHexInferenceBackendSettingsStore(
-      fileURL: root.appendingPathComponent("inference-backends.json", isDirectory: false)
-    )
-    #expect(try await persistedStore.load() == configuration.inferenceBackendSettings)
+    let loadedSettings = try await persistedStore.load()
+    #expect(loadedSettings == configuration.inferenceBackendSettings)
   }
 
   @Test
@@ -190,7 +193,21 @@ struct HexGatewayResidentPersistenceTests {
   }
 
   private func makeTemporaryDirectory() throws -> URL {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    let temporaryPath = FileManager.default.temporaryDirectory.path
+    var resolvedPath = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let didResolve = resolvedPath.withUnsafeMutableBufferPointer { buffer in
+      temporaryPath.withCString { source in
+        Darwin.realpath(source, buffer.baseAddress) != nil
+      }
+    }
+    guard didResolve else {
+      throw TestError.couldNotResolveTemporaryDirectory
+    }
+    let resolvedPathBytes = resolvedPath.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    let directory = URL(
+      fileURLWithPath: String(decoding: resolvedPathBytes, as: UTF8.self),
+      isDirectory: true
+    ).appendingPathComponent(
       "hex-resident-config-\(UUID().uuidString)",
       isDirectory: true
     )
@@ -200,6 +217,10 @@ struct HexGatewayResidentPersistenceTests {
       attributes: [.posixPermissions: 0o700]
     )
     return directory
+  }
+
+  private enum TestError: Error, Sendable {
+    case couldNotResolveTemporaryDirectory
   }
 
   private func makePaths(in root: URL) throws -> HexResidentDataPaths {
