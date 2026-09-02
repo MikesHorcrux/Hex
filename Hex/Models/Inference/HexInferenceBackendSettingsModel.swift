@@ -25,11 +25,15 @@ final class HexInferenceBackendSettingsModel {
 
   var codexExecutableURL: URL?
   var codexWorkingDirectoryURL: URL?
+  var codexLoginMode: CodexChatGPTLoginMode = .browser
 
   private(set) var isLoading = false
   private(set) var isSaving = false
   private(set) var hasStoredOpenAIAPIKey = false
   private(set) var codexAccountStatus = CodexCompatibilityAccountStatus.notConfigured
+  private(set) var codexLoginChallenge: CodexCompatibilityLoginChallenge?
+  private(set) var isCodexLoginInProgress = false
+  private(set) var isCodexLogoutInProgress = false
   private(set) var statusMessage: String?
   private(set) var errorMessage: String?
   private(set) var saveGeneration = 0
@@ -43,6 +47,8 @@ final class HexInferenceBackendSettingsModel {
     )?
   private var hasLoaded = false
   private var statusRequestGeneration = 0
+  private var codexAccountActionGeneration = 0
+  private var activeCodexAccountManager: (any CodexCompatibilityAccountManaging)?
 
   init(
     settingsStore: (any HexInferenceBackendSettingsStore)? = nil,
@@ -188,6 +194,168 @@ final class HexInferenceBackendSettingsModel {
     }
   }
 
+  func startCodexLogin() {
+    guard !isCodexLoginInProgress, !isCodexLogoutInProgress,
+      codexLoginChallenge == nil
+    else { return }
+
+    let manager: any CodexCompatibilityAccountManaging
+    do {
+      manager = try makeCodexAccountManager()
+    } catch {
+      errorMessage = Self.messageForCodexAccountAction(error)
+      statusMessage = nil
+      return
+    }
+
+    codexAccountActionGeneration += 1
+    let actionGeneration = codexAccountActionGeneration
+    let mode = codexLoginMode
+    activeCodexAccountManager = manager
+    isCodexLoginInProgress = true
+    errorMessage = nil
+    statusMessage = "Starting Codex sign-in…"
+
+    Task { [weak self] in
+      do {
+        let challenge = try await manager.startLogin(mode)
+        guard let self, self.codexAccountActionGeneration == actionGeneration else {
+          await manager.shutdown()
+          return
+        }
+        self.codexLoginChallenge = challenge
+        self.isCodexLoginInProgress = false
+        self.statusMessage = Self.messageForCodexLoginChallenge(challenge)
+      } catch {
+        await manager.shutdown()
+        guard let self, self.codexAccountActionGeneration == actionGeneration else { return }
+        self.activeCodexAccountManager = nil
+        self.isCodexLoginInProgress = false
+        if error is CancellationError { return }
+        self.statusMessage = nil
+        self.errorMessage = Self.messageForCodexAccountAction(error)
+      }
+    }
+  }
+
+  func completeCodexLogin() {
+    guard !isCodexLoginInProgress, !isCodexLogoutInProgress,
+      let challenge = codexLoginChallenge,
+      let manager = activeCodexAccountManager
+    else { return }
+
+    codexAccountActionGeneration += 1
+    let actionGeneration = codexAccountActionGeneration
+    let loginID = challenge.loginID
+    isCodexLoginInProgress = true
+    errorMessage = nil
+    statusMessage = "Waiting for Codex to confirm sign-in…"
+
+    Task { [weak self] in
+      do {
+        try await manager.completeLogin(loginID)
+        await manager.shutdown()
+        guard let self, self.codexAccountActionGeneration == actionGeneration else { return }
+        self.activeCodexAccountManager = nil
+        self.codexLoginChallenge = nil
+        self.isCodexLoginInProgress = false
+        self.errorMessage = nil
+        self.statusMessage =
+          "Codex sign-in completed. Refresh to read the redacted account status."
+      } catch {
+        await manager.shutdown()
+        guard let self, self.codexAccountActionGeneration == actionGeneration else { return }
+        self.activeCodexAccountManager = nil
+        self.codexLoginChallenge = nil
+        self.isCodexLoginInProgress = false
+        if error is CancellationError { return }
+        self.statusMessage = nil
+        self.errorMessage = Self.messageForCodexAccountAction(error)
+      }
+    }
+  }
+
+  func cancelCodexLogin() {
+    guard !isCodexLogoutInProgress, let manager = activeCodexAccountManager else { return }
+
+    codexAccountActionGeneration += 1
+    let actionGeneration = codexAccountActionGeneration
+    let loginID = codexLoginChallenge?.loginID
+    isCodexLoginInProgress = true
+    errorMessage = nil
+    statusMessage = "Cancelling Codex sign-in…"
+
+    Task { [weak self] in
+      do {
+        if let loginID {
+          let status = try await manager.cancelLogin(loginID)
+          guard status == .cancelled else {
+            throw CodexCompatibilityAccountManagerError.loginNotFound
+          }
+        }
+        await manager.shutdown()
+        guard let self, self.codexAccountActionGeneration == actionGeneration else { return }
+        self.activeCodexAccountManager = nil
+        self.codexLoginChallenge = nil
+        self.isCodexLoginInProgress = false
+        self.errorMessage = nil
+        self.statusMessage = "Codex sign-in cancelled."
+      } catch {
+        await manager.shutdown()
+        guard let self, self.codexAccountActionGeneration == actionGeneration else { return }
+        self.activeCodexAccountManager = nil
+        self.codexLoginChallenge = nil
+        self.isCodexLoginInProgress = false
+        if error is CancellationError { return }
+        self.statusMessage = nil
+        self.errorMessage = Self.messageForCodexAccountAction(error)
+      }
+    }
+  }
+
+  func logoutCodexAccount() {
+    guard !isCodexLoginInProgress, !isCodexLogoutInProgress,
+      codexLoginChallenge == nil
+    else { return }
+
+    let manager: any CodexCompatibilityAccountManaging
+    do {
+      manager = try makeCodexAccountManager()
+    } catch {
+      errorMessage = Self.messageForCodexAccountAction(error)
+      statusMessage = nil
+      return
+    }
+
+    codexAccountActionGeneration += 1
+    let actionGeneration = codexAccountActionGeneration
+    activeCodexAccountManager = manager
+    isCodexLogoutInProgress = true
+    errorMessage = nil
+    statusMessage = "Signing out of the Codex account…"
+
+    Task { [weak self] in
+      do {
+        try await manager.logout()
+        await manager.shutdown()
+        guard let self, self.codexAccountActionGeneration == actionGeneration else { return }
+        self.activeCodexAccountManager = nil
+        self.isCodexLogoutInProgress = false
+        self.codexAccountStatus = .signedOut
+        self.errorMessage = nil
+        self.statusMessage = "Codex signed out."
+      } catch {
+        await manager.shutdown()
+        guard let self, self.codexAccountActionGeneration == actionGeneration else { return }
+        self.activeCodexAccountManager = nil
+        self.isCodexLogoutInProgress = false
+        if error is CancellationError { return }
+        self.statusMessage = nil
+        self.errorMessage = Self.messageForCodexAccountAction(error)
+      }
+    }
+  }
+
   func save() {
     guard !isSaving else { return }
     errorMessage = nil
@@ -258,6 +426,24 @@ final class HexInferenceBackendSettingsModel {
     mlxSupportsParallelToolCalling = settings.mlx.supportsParallelToolCalling
     codexExecutableURL = settings.codex.executableURL
     codexWorkingDirectoryURL = settings.codex.workingDirectoryURL
+  }
+
+  private func makeCodexAccountManager() throws -> any CodexCompatibilityAccountManaging {
+    guard let makeCodexStatusProvider else {
+      throw CodexCompatibilityAccountManagerError.unsupported
+    }
+    guard let executableURL = codexExecutableURL else {
+      throw HexInferenceBackendSettingsError.invalidCodexExecutable
+    }
+    let codexSettings = try HexCodexCompatibilitySettings(
+      executableURL: executableURL,
+      workingDirectoryURL: codexWorkingDirectoryURL
+    )
+    let provider = try makeCodexStatusProvider(codexSettings)
+    guard let manager = provider as? any CodexCompatibilityAccountManaging else {
+      throw CodexCompatibilityAccountManagerError.unsupported
+    }
+    return manager
   }
 
   private func makeSettings() throws -> HexInferenceBackendSettings {
@@ -363,6 +549,38 @@ final class HexInferenceBackendSettingsModel {
       "Choose an existing Codex working directory."
     case .unsupportedSchemaVersion:
       "The saved inference-backend settings use an unsupported version."
+    }
+  }
+
+  private static func messageForCodexAccountAction(_ error: any Error) -> String {
+    switch error {
+    case CodexCompatibilityAccountManagerError.loginTimedOut:
+      "Codex sign-in timed out. Start sign-in again."
+    case CodexCompatibilityAccountManagerError.loginRejected:
+      "Codex rejected sign-in. Check the Codex authorization page and try again."
+    case CodexCompatibilityAccountManagerError.loginNotFound:
+      "Codex could not find that sign-in flow. Start sign-in again."
+    case CodexCompatibilityAccountManagerError.unsupported:
+      "Codex account actions are unavailable in this compatibility provider."
+    case CodexCompatibilityAccountManagerError.failed:
+      "The Codex account action failed. Check the existing executable and try again."
+    case HexInferenceBackendSettingsError.invalidCodexExecutable:
+      "Choose an existing Codex executable before managing its account."
+    case is CodexAccountClientError:
+      "The Codex account action could not be completed. Check Codex and try again."
+    default:
+      "The Codex account action could not be completed. Check Codex and try again."
+    }
+  }
+
+  private static func messageForCodexLoginChallenge(
+    _ challenge: CodexCompatibilityLoginChallenge
+  ) -> String {
+    switch challenge {
+    case .browser:
+      "Open the Codex authorization page, then check for completion."
+    case .deviceCode:
+      "Open the Codex verification page, enter the code, then check for completion."
     }
   }
 }
