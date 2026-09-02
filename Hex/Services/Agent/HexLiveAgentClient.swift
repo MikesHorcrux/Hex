@@ -12,12 +12,15 @@ import HexProviders
 actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHeartbeatManaging {
   enum ClientError: Error, Equatable, LocalizedError, Sendable {
     case applicationSupportUnavailable
+    case workspaceUnavailable
     case modelMismatch(expected: String)
 
     var errorDescription: String? {
       switch self {
       case .applicationSupportUnavailable:
         "Hex could not locate Application Support for its local event journal."
+      case .workspaceUnavailable:
+        "The in-process developer gateway needs an absolute workspace folder. Set HEX_WORKSPACE_ROOT and try again."
       case .modelMismatch(let expected):
         "The selected model must match HEX_OPENAI_MODEL (\(expected))."
       }
@@ -27,11 +30,14 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
   private let configuration: HexDeveloperConfiguration
   private let authorizationBroker: HexAuthorizationBroker
   private let route: HexGatewayRoute
+  private let inProcessInferenceConfigurationResolver: HexInProcessInferenceConfigurationResolver
   private let residentAuthorizationTransportBuilder:
     @Sendable (HexGatewayClient) -> any HexAuthorizationDecisionSubmitting
   private var composition: HexGatewayComposition?
   private var adapter: HexGatewayClientAdapter?
   private var connectionResult: GatewayConnectionResult?
+  private var resolvedInProcessInferenceConfiguration:
+    HexInProcessInferenceConfigurationResolver.Resolution?
 
   init(
     configuration: HexDeveloperConfiguration,
@@ -40,11 +46,22 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     residentAuthorizationTransportBuilder:
       @escaping @Sendable (HexGatewayClient) -> any HexAuthorizationDecisionSubmitting =
       { client in HexGatewayAuthorizationDecisionAdapter(client: client) },
+    inProcessInferenceConfigurationResolver:
+      HexInProcessInferenceConfigurationResolver? = nil,
     initialGatewayAdapter: HexGatewayClientAdapter? = nil
   ) {
+    let resolvedRoute = route ?? configuration.gatewayRoute
+    let settingsDependencies = HexInferenceBackendSettingsDependencies.live(for: resolvedRoute)
     self.configuration = configuration
     self.authorizationBroker = authorizationBroker
-    self.route = route ?? configuration.gatewayRoute
+    self.route = resolvedRoute
+    self.inProcessInferenceConfigurationResolver =
+      inProcessInferenceConfigurationResolver
+      ?? HexInProcessInferenceConfigurationResolver(
+        settingsStore: settingsDependencies.settingsStore,
+        secretStore: settingsDependencies.secretStore,
+        defaultOpenAIModelID: configuration.openAIModel
+      )
     self.residentAuthorizationTransportBuilder = residentAuthorizationTransportBuilder
     adapter = initialGatewayAdapter
   }
@@ -64,22 +81,25 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
 
   func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {
     do {
+      let adapter = try await gatewayAdapter()
       if route.kind == .developerInProcess {
-        let values = try configuration.liveValues()
-        guard request.modelID.rawValue == values.modelID else {
-          throw ClientError.modelMismatch(expected: values.modelID)
+        let resolution = try await inProcessInferenceConfiguration()
+        let modelID: String
+        switch resolution {
+        case .openAI(let selectedModelID, _):
+          modelID = selectedModelID
         }
         let scopedRequest = GatewayStartRunRequest(
           runID: request.runID,
-          modelID: request.modelID,
+          modelID: ModelID(rawValue: modelID),
           initialMessages: request.initialMessages,
           options: request.options,
           toolChoice: request.toolChoice,
-          workingDirectory: values.workspaceRoot
+          workingDirectory: try inProcessWorkspaceRoot()
         )
-        return try await gatewayAdapter().startRun(scopedRequest)
+        return try await adapter.startRun(scopedRequest)
       }
-      return try await gatewayAdapter().startRun(request)
+      return try await adapter.startRun(request)
     } catch {
       clearConnectionIfUnavailable(error)
       throw error
@@ -313,8 +333,16 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
       return adapter
     }
 
-    let values = try configuration.liveValues()
-    let fileSystem = try WorkspaceFileSystem(root: values.workspaceRoot)
+    let resolution = try await inProcessInferenceConfiguration()
+    let modelID: String
+    let credentialProvider: any OpenAICredentialProvider
+    switch resolution {
+    case .openAI(let selectedModelID, let selectedCredentialProvider):
+      modelID = selectedModelID
+      credentialProvider = selectedCredentialProvider
+    }
+    let workspaceRoot = try inProcessWorkspaceRoot()
+    let fileSystem = try WorkspaceFileSystem(root: workspaceRoot)
     let processExecutor = POSIXProcessExecutor()
     let toolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
@@ -325,22 +353,23 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     )
     let providerID = ProviderID(rawValue: "openai")
     let model = ModelDescriptor(
-      id: ModelID(rawValue: values.modelID),
+      id: ModelID(rawValue: modelID),
       providerID: providerID,
-      displayName: values.modelID,
+      displayName: modelID,
       capabilities: [.textInput, .streaming, .toolCalling]
     )
     let providerConfiguration = try OpenAIResponsesConfiguration(models: [model])
     let provider = OpenAIResponsesProvider(
       configuration: providerConfiguration,
-      credentialProvider: HexOpenAICredentialProvider(apiKey: values.apiKey)
+      credentialProvider: credentialProvider
     )
     let journalURL = try journalDatabaseURL()
     let compositionConfiguration = HexGatewayCompositionConfiguration(
       journalConfiguration: SQLiteAgentEventJournalConfiguration(databaseURL: journalURL),
       inferenceProvider: provider,
       toolExecutor: toolExecutor,
-      authorizationProvider: authorizationProvider
+      authorizationProvider: authorizationProvider,
+      enforcedWorkingDirectory: workspaceRoot
     )
     let composition = try await HexGatewayComposition.open(
       configuration: compositionConfiguration
@@ -356,6 +385,24 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     self.composition = composition
     self.adapter = adapter
     return adapter
+  }
+
+  private func inProcessInferenceConfiguration() async throws
+    -> HexInProcessInferenceConfigurationResolver.Resolution
+  {
+    if let resolvedInProcessInferenceConfiguration {
+      return resolvedInProcessInferenceConfiguration
+    }
+    let resolution = try await inProcessInferenceConfigurationResolver.resolve()
+    resolvedInProcessInferenceConfiguration = resolution
+    return resolution
+  }
+
+  private func inProcessWorkspaceRoot() throws -> URL {
+    guard let workspaceRoot = configuration.workspaceRoot else {
+      throw ClientError.workspaceUnavailable
+    }
+    return workspaceRoot
   }
 
   private func journalDatabaseURL() throws -> URL {
