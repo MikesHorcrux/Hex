@@ -19,6 +19,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
   public let toolExecutor: any ToolExecutor
   public let authorizationProvider: any AuthorizationProvider
   public let personalityContext: PersonalityContext?
+  public let personalityContextService: PersonalityContextService?
+  public let personalityMemoryQuery: PersonalMemoryQuery?
 
   /// When present, the gateway ignores client-requested working directories and supplies this
   /// host-owned directory to every runtime tool execution context.
@@ -32,6 +34,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     gatewayConfiguration: GatewayConfiguration = .standard,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
     personalityContext: PersonalityContext? = nil,
+    personalityContextService: PersonalityContextService? = nil,
+    personalityMemoryQuery: PersonalMemoryQuery? = nil,
     enforcedWorkingDirectory: URL? = nil
   ) {
     self.journalConfiguration = journalConfiguration
@@ -42,6 +46,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.toolExecutor = toolExecutor
     self.authorizationProvider = authorizationProvider
     self.personalityContext = personalityContext
+    self.personalityContextService = personalityContextService
+    self.personalityMemoryQuery = personalityMemoryQuery
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
   }
 
@@ -55,6 +61,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     gatewayConfiguration: GatewayConfiguration = .standard,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
     personalityContext: PersonalityContext? = nil,
+    personalityContextService: PersonalityContextService? = nil,
+    personalityMemoryQuery: PersonalMemoryQuery? = nil,
     enforcedWorkingDirectory: URL? = nil
   ) {
     journalConfiguration = nil
@@ -65,6 +73,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.toolExecutor = toolExecutor
     self.authorizationProvider = authorizationProvider
     self.personalityContext = personalityContext
+    self.personalityContextService = personalityContextService
+    self.personalityMemoryQuery = personalityMemoryQuery
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
   }
 

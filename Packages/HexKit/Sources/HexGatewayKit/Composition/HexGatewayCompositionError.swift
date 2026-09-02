@@ -6,6 +6,7 @@ public enum HexGatewayCompositionError: Error, Equatable, LocalizedError, Sendab
   case missingJournal
   case inferenceUnavailable
   case toolUnavailable
+  case invalidPersonalityConfiguration
 
   public var errorDescription: String? {
     switch self {
@@ -19,6 +20,8 @@ public enum HexGatewayCompositionError: Error, Equatable, LocalizedError, Sendab
       "No inference provider is configured for this gateway."
     case .toolUnavailable:
       "No tool executor is configured for this gateway."
+    case .invalidPersonalityConfiguration:
+      "The gateway personality context dependencies are incomplete."
     }
   }
 }

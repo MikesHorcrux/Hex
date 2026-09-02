@@ -3,6 +3,7 @@ import HexCore
 import HexIPC
 import HexMCP
 import HexPersistence
+import HexPersonality
 import HexProviders
 
 /// Resident gateway composition settings. Credentials are injected as a provider and are never
@@ -44,12 +45,17 @@ public struct HexGatewayResidentConfiguration: Sendable {
   private static let heartbeatStoreVariable = "HEX_HEARTBEAT_STORE_URL"
   private static let heartbeatDatabaseVariable = "HEX_HEARTBEAT_DATABASE_URL"
   private static let xcodeMCPVariable = "HEX_XCODE_MCP_ENABLED"
+  private static let personalityScopeVariable = "HEX_PERSONALITY_SCOPE"
+  private static let defaultPersonalityScopeValue = "hex"
 
   public let machServiceName: String
   public let modelID: String
   public let workspaceRoot: URL
   public let databaseURL: URL
   public let heartbeatStoreURL: URL
+  public let personalityProfileURL: URL
+  public let personalMemoryURL: URL
+  public let personalMemoryScope: PersonalMemoryScope
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
   public let credentialProvider: any OpenAICredentialProvider
   public let mcpClientSessions: [any MCPClientSession]
@@ -106,6 +112,16 @@ public struct HexGatewayResidentConfiguration: Sendable {
       heartbeatStoreURL = databaseURL.deletingLastPathComponent()
         .appendingPathComponent("heartbeats.json", isDirectory: false)
     }
+    let personalMemoryScope: PersonalMemoryScope
+    if let rawScope = Self.value(named: Self.personalityScopeVariable, in: environment) {
+      do {
+        personalMemoryScope = try PersonalMemoryScope(rawValue: rawScope)
+      } catch {
+        throw ConfigurationError.invalidVariable(Self.personalityScopeVariable)
+      }
+    } else {
+      personalMemoryScope = try Self.defaultPersonalityScope()
+    }
     let mcpClientSessions: [any MCPClientSession]
     if let rawXcodeMCP = Self.value(named: Self.xcodeMCPVariable, in: environment) {
       switch rawXcodeMCP.lowercased() {
@@ -135,6 +151,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: databaseURL,
       apiKey: apiKey,
       heartbeatStoreURL: heartbeatStoreURL,
+      personalMemoryScope: personalMemoryScope,
       mcpClientSessions: mcpClientSessions,
       connectionAdmissionPolicy: .production()
     )
@@ -150,6 +167,9 @@ public struct HexGatewayResidentConfiguration: Sendable {
     databaseURL: URL,
     credentialProvider: any OpenAICredentialProvider,
     heartbeatStoreURL: URL? = nil,
+    personalityProfileURL: URL? = nil,
+    personalMemoryURL: URL? = nil,
+    personalMemoryScope: PersonalMemoryScope? = nil,
     mcpClientSessions: [any MCPClientSession] = [],
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
   ) throws {
@@ -184,6 +204,28 @@ public struct HexGatewayResidentConfiguration: Sendable {
     else {
       throw ConfigurationError.invalidVariable(Self.heartbeatStoreVariable)
     }
+    let resolvedPersonalityProfileURL =
+      personalityProfileURL
+      ?? databaseURL.deletingLastPathComponent()
+      .appendingPathComponent("personality-profile.json", isDirectory: false)
+    let resolvedPersonalMemoryURL =
+      personalMemoryURL
+      ?? databaseURL.deletingLastPathComponent()
+      .appendingPathComponent("personal-memory.json", isDirectory: false)
+    let standardizedPersonalityProfileURL = resolvedPersonalityProfileURL.standardizedFileURL
+    let standardizedPersonalMemoryURL = resolvedPersonalMemoryURL.standardizedFileURL
+    guard
+      Self.isValidDataFileURL(resolvedPersonalityProfileURL),
+      Self.isValidDataFileURL(standardizedPersonalityProfileURL)
+    else {
+      throw ConfigurationError.invalidVariable("HEX_PERSONALITY_PROFILE_URL")
+    }
+    guard
+      Self.isValidDataFileURL(resolvedPersonalMemoryURL),
+      Self.isValidDataFileURL(standardizedPersonalMemoryURL)
+    else {
+      throw ConfigurationError.invalidVariable("HEX_PERSONAL_MEMORY_URL")
+    }
     guard
       mcpClientSessions.count <= 16,
       Set(mcpClientSessions.map(\.serverID)).count == mcpClientSessions.count
@@ -196,6 +238,9 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.workspaceRoot = standardizedWorkspaceRoot
     self.databaseURL = standardizedDatabaseURL
     self.heartbeatStoreURL = standardizedHeartbeatStoreURL
+    self.personalityProfileURL = standardizedPersonalityProfileURL
+    self.personalMemoryURL = standardizedPersonalMemoryURL
+    self.personalMemoryScope = try (personalMemoryScope ?? Self.defaultPersonalityScope())
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.credentialProvider = credentialProvider
     self.mcpClientSessions = mcpClientSessions.sorted { $0.serverID < $1.serverID }
@@ -210,6 +255,9 @@ public struct HexGatewayResidentConfiguration: Sendable {
     databaseURL: URL,
     apiKey: String,
     heartbeatStoreURL: URL? = nil,
+    personalityProfileURL: URL? = nil,
+    personalMemoryURL: URL? = nil,
+    personalMemoryScope: PersonalMemoryScope? = nil,
     mcpClientSessions: [any MCPClientSession] = [],
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
   ) throws {
@@ -223,6 +271,9 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: databaseURL,
       credentialProvider: HexGatewayMemoryCredentialProvider(apiKey: apiKey),
       heartbeatStoreURL: heartbeatStoreURL,
+      personalityProfileURL: personalityProfileURL,
+      personalMemoryURL: personalMemoryURL,
+      personalMemoryScope: personalMemoryScope,
       mcpClientSessions: mcpClientSessions,
       connectionAdmissionPolicy: connectionAdmissionPolicy
     )
@@ -304,6 +355,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: resolvedPaths.databaseURL,
       credentialProvider: HexSecretStoreOpenAICredentialProvider(store: resolvedSecretStore),
       heartbeatStoreURL: resolvedPaths.heartbeatStoreURL,
+      personalityProfileURL: resolvedPaths.personalityProfileURL,
+      personalMemoryURL: resolvedPaths.personalMemoryURL,
       mcpClientSessions: mcpClientSessions,
       connectionAdmissionPolicy: connectionAdmissionPolicy
     )
@@ -322,11 +375,16 @@ public struct HexGatewayResidentConfiguration: Sendable {
       Self.heartbeatStoreVariable,
       Self.heartbeatDatabaseVariable,
       Self.xcodeMCPVariable,
+      Self.personalityScopeVariable,
     ].contains { environment[$0] != nil }
   }
 
   public func makeCredentialProvider() -> any OpenAICredentialProvider {
     credentialProvider
+  }
+
+  private static func defaultPersonalityScope() throws -> PersonalMemoryScope {
+    try PersonalMemoryScope(rawValue: Self.defaultPersonalityScopeValue)
   }
 
   private static func makeMCPClientSessions(

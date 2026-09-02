@@ -6,6 +6,7 @@ import HexCore
 import HexIPC
 import HexMCP
 import HexPersistence
+import HexPersonality
 import HexProviders
 
 /// Owns the headless gateway process lifetime. It composes the real provider/tool/runtime graph,
@@ -70,6 +71,20 @@ public final class HexGatewayResidentHost {
       configuration: providerConfiguration,
       credentialProvider: configuration.makeCredentialProvider()
     )
+    let personalityProfileStore = try JSONPersonalityProfileStore(
+      fileURL: configuration.personalityProfileURL
+    )
+    let personalMemoryStore = try JSONPersonalMemoryStore(
+      fileURL: configuration.personalMemoryURL
+    )
+    let personalityContextService = try PersonalityContextService(
+      profileStore: personalityProfileStore,
+      memoryStore: personalMemoryStore
+    )
+    let personalityMemoryQuery = try PersonalMemoryQuery(
+      scope: configuration.personalMemoryScope,
+      limit: 64
+    )
     let compositionConfiguration = HexGatewayCompositionConfiguration(
       journalConfiguration: SQLiteAgentEventJournalConfiguration(
         databaseURL: configuration.databaseURL
@@ -77,6 +92,8 @@ public final class HexGatewayResidentHost {
       inferenceProvider: inferenceProvider,
       toolExecutor: routedToolExecutor,
       authorizationProvider: authorizationProvider,
+      personalityContextService: personalityContextService,
+      personalityMemoryQuery: personalityMemoryQuery,
       enforcedWorkingDirectory: configuration.workspaceRoot
     )
     let composition = try await HexGatewayComposition.open(

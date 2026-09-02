@@ -23,6 +23,8 @@ public struct HexResidentDataPaths: Equatable, Sendable {
   public let settingsURL: URL
   public let databaseURL: URL
   public let heartbeatStoreURL: URL
+  public let personalityProfileURL: URL
+  public let personalMemoryURL: URL
 
   /// Creates the conventional resident paths beneath an Application Support directory.
   public init(applicationSupportURL: URL) throws {
@@ -36,7 +38,11 @@ public struct HexResidentDataPaths: Equatable, Sendable {
       settingsURL: directoryURL.appendingPathComponent(
         "resident-settings.json", isDirectory: false),
       databaseURL: directoryURL.appendingPathComponent("agent-events.sqlite", isDirectory: false),
-      heartbeatStoreURL: directoryURL.appendingPathComponent("heartbeats.json", isDirectory: false)
+      heartbeatStoreURL: directoryURL.appendingPathComponent("heartbeats.json", isDirectory: false),
+      personalityProfileURL: directoryURL.appendingPathComponent(
+        "personality-profile.json", isDirectory: false),
+      personalMemoryURL: directoryURL.appendingPathComponent(
+        "personal-memory.json", isDirectory: false)
     )
   }
 
@@ -44,12 +50,23 @@ public struct HexResidentDataPaths: Equatable, Sendable {
   public init(
     settingsURL: URL,
     databaseURL: URL,
-    heartbeatStoreURL: URL
+    heartbeatStoreURL: URL,
+    personalityProfileURL: URL? = nil,
+    personalMemoryURL: URL? = nil
   ) throws {
+    let directoryURL = settingsURL.standardizedFileURL.deletingLastPathComponent()
+    let resolvedPersonalityProfileURL =
+      personalityProfileURL
+      ?? directoryURL.appendingPathComponent("personality-profile.json", isDirectory: false)
+    let resolvedPersonalMemoryURL =
+      personalMemoryURL
+      ?? directoryURL.appendingPathComponent("personal-memory.json", isDirectory: false)
     guard
       Self.isAbsoluteFileURL(settingsURL),
       Self.isAbsoluteFileURL(databaseURL),
-      Self.isAbsoluteFileURL(heartbeatStoreURL)
+      Self.isAbsoluteFileURL(heartbeatStoreURL),
+      Self.isAbsoluteFileURL(resolvedPersonalityProfileURL),
+      Self.isAbsoluteFileURL(resolvedPersonalMemoryURL)
     else {
       throw PathError.invalidDataURL
     }
@@ -57,6 +74,8 @@ public struct HexResidentDataPaths: Equatable, Sendable {
     self.settingsURL = settingsURL.standardizedFileURL
     self.databaseURL = databaseURL.standardizedFileURL
     self.heartbeatStoreURL = heartbeatStoreURL.standardizedFileURL
+    self.personalityProfileURL = resolvedPersonalityProfileURL.standardizedFileURL
+    self.personalMemoryURL = resolvedPersonalMemoryURL.standardizedFileURL
     self.directoryURL = self.settingsURL.deletingLastPathComponent()
   }
 
