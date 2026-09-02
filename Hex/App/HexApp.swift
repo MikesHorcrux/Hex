@@ -7,6 +7,7 @@ struct HexApp: App {
   @State private var residentGateway: HexResidentGatewayModel
   @State private var startAtLogin: HexStartAtLoginModel
   @State private var residentSetup: HexResidentSetupModel
+  @State private var heartbeatManagement: HexHeartbeatManagementModel
   private let route: HexGatewayRoute
   private let isVerificationOnlyLaunch: Bool
 
@@ -42,6 +43,7 @@ struct HexApp: App {
     residentGatewayController: any HexResidentGatewayControlling =
       HexUnavailableResidentGatewayController(),
     setupDependencies: HexResidentSetupDependencies = .blocked,
+    heartbeatService: (any HexHeartbeatManaging)? = nil,
     lifecycleController: any HexGatewayLifecycleControlling =
       HexSMAppServiceLifecycleController(),
     isVerificationOnlyLaunch: Bool = false
@@ -66,6 +68,17 @@ struct HexApp: App {
         managedToolLayout: setupDependencies.managedToolLayout
       )
     )
+    let resolvedHeartbeatService: any HexHeartbeatManaging
+    if let heartbeatService {
+      resolvedHeartbeatService = heartbeatService
+    } else if route.isResident, let heartbeatClient = client as? any HexHeartbeatManaging {
+      resolvedHeartbeatService = heartbeatClient
+    } else {
+      resolvedHeartbeatService = HexUnavailableHeartbeatService()
+    }
+    _heartbeatManagement = State(
+      initialValue: HexHeartbeatManagementModel(service: resolvedHeartbeatService)
+    )
   }
 
   var body: some Scene {
@@ -87,13 +100,26 @@ struct HexApp: App {
     }
 
     Settings {
-      HexResidentSetupView(model: residentSetup)
-        .onChange(of: residentSetup.saveGeneration) { _, _ in
-          guard !isVerificationOnlyLaunch else { return }
-          Task {
-            await startAtLogin.refresh()
+      TabView {
+        HexResidentSetupView(model: residentSetup)
+          .tabItem {
+            Label("Resident", systemImage: "gearshape")
           }
-        }
+          .onChange(of: residentSetup.saveGeneration) { _, _ in
+            guard !isVerificationOnlyLaunch else { return }
+            Task {
+              await startAtLogin.refresh()
+            }
+          }
+
+        HexHeartbeatManagementView(
+          model: heartbeatManagement,
+          suppressAutomaticRefresh: isVerificationOnlyLaunch
+        )
+          .tabItem {
+            Label("Heartbeats", systemImage: "calendar.badge.clock")
+          }
+      }
     }
 
     MenuBarExtra {

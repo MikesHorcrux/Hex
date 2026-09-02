@@ -4,7 +4,16 @@ import SwiftUI
 
 struct HexHeartbeatManagementView: View {
   @Bindable var model: HexHeartbeatManagementModel
+  let suppressAutomaticRefresh: Bool
   @State private var isPresentingEditor = false
+
+  init(
+    model: HexHeartbeatManagementModel,
+    suppressAutomaticRefresh: Bool = false
+  ) {
+    self.model = model
+    self.suppressAutomaticRefresh = suppressAutomaticRefresh
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -47,7 +56,16 @@ struct HexHeartbeatManagementView: View {
         }
       }
 
-      if model.schedules.isEmpty {
+      if !model.isAvailable {
+        ContentUnavailableView(
+          "Resident gateway unavailable",
+          systemImage: "antenna.radiowaves.left.and.right.slash",
+          description: Text(
+            "Connect to the resident gateway to view or manage heartbeat schedules."
+          )
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if model.schedules.isEmpty {
         ContentUnavailableView(
           "No heartbeats yet",
           systemImage: "calendar.badge.clock",
@@ -93,6 +111,7 @@ struct HexHeartbeatManagementView: View {
     .padding(20)
     .frame(minWidth: 560, minHeight: 420)
     .task {
+      guard !suppressAutomaticRefresh else { return }
       await model.refresh()
     }
     .sheet(isPresented: $isPresentingEditor) {
