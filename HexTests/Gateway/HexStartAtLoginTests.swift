@@ -28,20 +28,43 @@ struct HexStartAtLoginTests {
   }
 
   @Test @MainActor
-  func missingBundledHelperIsPresentedAsPending() async throws {
+  func notFoundServiceWithReadyBundleCanRegister() async throws {
+    let controller = SpyController(status: .notFound)
     let model = HexStartAtLoginModel(
-      controller: FakeController(status: .notFound),
+      controller: controller,
       readinessChecker: FixedReadinessChecker(value: .ready)
     )
     await model.refresh()
 
     #expect(model.status == .notFound)
-    #expect(!model.canChange)
+    #expect(model.status.label == "Not registered")
+    #expect(model.canChange)
 
     model.toggle()
     try await waitForUpdate(model)
 
-    #expect(model.message == "Start at login is pending the bundled gateway helper.")
+    #expect(await controller.registerCallCount == 1)
+    #expect(model.status == .enabled)
+    #expect(model.message == nil)
+  }
+
+  @Test @MainActor
+  func notFoundServiceWithBlockedReadinessDoesNotRegister() async throws {
+    let controller = SpyController(status: .notFound)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .blocked)
+    )
+    await model.refresh()
+
+    #expect(!model.canChange)
+    #expect(model.readinessMessage == HexGatewayActivationReadiness.blocked.message)
+
+    model.toggle()
+    try await waitForUpdate(model)
+
+    #expect(await controller.registerCallCount == 0)
+    #expect(model.message == HexGatewayActivationReadiness.blocked.message)
   }
 
   @Test @MainActor
@@ -111,22 +134,6 @@ struct HexStartAtLoginTests {
     Issue.record("Start-at-login operation did not finish within the test budget.")
   }
 
-  private actor FakeController: HexGatewayLifecycleControlling {
-    let currentStatus: HexGatewayLifecycleStatus
-
-    init(status: HexGatewayLifecycleStatus) {
-      currentStatus = status
-    }
-
-    func status() async -> HexGatewayLifecycleStatus {
-      currentStatus
-    }
-
-    func register() async throws {}
-
-    func unregister() async throws {}
-  }
-
   private actor SpyController: HexGatewayLifecycleControlling {
     private(set) var currentStatus: HexGatewayLifecycleStatus
     private(set) var statusCallCount = 0
@@ -144,6 +151,7 @@ struct HexStartAtLoginTests {
 
     func register() async throws {
       registerCallCount += 1
+      currentStatus = .enabled
     }
 
     func unregister() async throws {

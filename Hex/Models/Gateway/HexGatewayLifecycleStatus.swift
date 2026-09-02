@@ -1,6 +1,6 @@
-/// App-facing projection of SMAppService status. `.notFound` is intentionally distinct from
-/// `.notRegistered`: it means the helper plist is not in the app bundle yet, so the UI can explain
-/// that start-at-login is pending rather than claiming it is disabled by the user.
+/// App-facing projection of SMAppService status. `.notFound` means ServiceManagement has no service
+/// record; it does not prove that the bundled helper is absent. Activation readiness validates the
+/// bundle independently before Hex offers registration.
 nonisolated enum HexGatewayLifecycleStatus: String, Equatable, Sendable {
   case unknown
   case enabled
@@ -20,18 +20,9 @@ nonisolated enum HexGatewayLifecycleStatus: String, Equatable, Sendable {
     case .requiresApproval:
       "Needs approval"
     case .notFound:
-      "Pending helper bundle"
+      "Not registered"
     case .unavailable:
       "Unavailable"
-    }
-  }
-
-  var canChange: Bool {
-    switch self {
-    case .enabled, .notRegistered, .requiresApproval:
-      true
-    case .unknown, .notFound, .unavailable:
-      false
     }
   }
 
