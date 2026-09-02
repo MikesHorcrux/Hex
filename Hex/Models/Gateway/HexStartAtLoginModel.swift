@@ -35,9 +35,9 @@ final class HexStartAtLoginModel {
     return switch status {
     case .enabled:
       true
-    case .notRegistered:
+    case .notRegistered, .notFound:
       readiness.isReady
-    case .requiresApproval, .unknown, .notFound, .unavailable:
+    case .requiresApproval, .unknown, .unavailable:
       false
     }
   }
@@ -80,7 +80,7 @@ final class HexStartAtLoginModel {
         switch status {
         case .enabled:
           try await controller.unregister()
-        case .notRegistered:
+        case .notRegistered, .notFound:
           guard readiness.isReady else {
             message = readiness.message
             isUpdating = false
@@ -92,10 +92,6 @@ final class HexStartAtLoginModel {
           isUpdating = false
           return
         case .unknown:
-          isUpdating = false
-          return
-        case .notFound:
-          message = "Start at login is pending the bundled gateway helper."
           isUpdating = false
           return
         case .unavailable:

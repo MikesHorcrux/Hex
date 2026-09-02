@@ -84,12 +84,7 @@ struct HexMenuBarView: View {
           }
           .disabled(!startAtLogin.canChange)
 
-          if startAtLogin.status == .notFound {
-            Text("Pending the bundled gateway helper; no launch service has been registered.")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
-          } else if startAtLogin.status == .requiresApproval {
+          if startAtLogin.status == .requiresApproval {
             Button("Open Login Items Settings") {
               Task {
                 await startAtLogin.openLoginItemsSettings()
