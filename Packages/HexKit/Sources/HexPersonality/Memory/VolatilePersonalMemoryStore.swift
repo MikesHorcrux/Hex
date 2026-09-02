@@ -61,6 +61,14 @@ public actor VolatilePersonalMemoryStore: PersonalMemoryStore {
     totalEncodedBytes = candidateTotal
   }
 
+  public func memory(
+    id: PersonalMemoryID,
+    scope: PersonalMemoryScope
+  ) async throws -> PersonalMemoryRecord? {
+    try Task.checkCancellation()
+    return recordsByKey[PersonalMemoryStorageKey(scope: scope, id: id)]
+  }
+
   @discardableResult
   public func remove(
     id: PersonalMemoryID,

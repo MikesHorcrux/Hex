@@ -1,5 +1,6 @@
 import Foundation
 import HexCore
+import HexMCP
 import Testing
 
 @testable import Hex
@@ -69,17 +70,125 @@ struct HexResidentSetupModelTests {
     defer { try? FileManager.default.removeItem(at: workspace) }
     model.modelID = "gpt-5-codex"
     model.apiKey = "sk-test-value"
+    model.xcodeMCPEnabled = true
     model.chooseWorkspace(workspace)
     model.save()
     try await waitForSave(model)
 
     #expect(await settingsStore.savedSettings?.modelID == "gpt-5-codex")
     #expect(await settingsStore.savedSettings?.workspaceRoot == workspace.standardizedFileURL)
+    #expect(await settingsStore.savedSettings?.mcpServers == [try .xcode()])
     #expect(await secretStore.value == "sk-test-value")
     #expect(model.apiKey.isEmpty)
     #expect(model.hasStoredAPIKey)
     #expect(model.statusMessage == "Resident settings saved.")
     #expect(model.errorMessage == nil)
+  }
+
+  @Test @MainActor
+  func savePersistsInstalledBrowserAndMacIntegrations() async throws {
+    let installation = try makeManagedToolInstallation()
+    defer { try? FileManager.default.removeItem(at: installation.rootURL) }
+    let settingsStore = FakeSettingsStore()
+    let secretStore = FakeSecretStore()
+    let model = HexResidentSetupModel(
+      settingsStore: settingsStore,
+      secretStore: secretStore,
+      managedToolLayout: installation.layout
+    )
+    await model.load()
+
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    model.modelID = "gpt-5-codex"
+    model.apiKey = "sk-test-value"
+    model.peekabooMCPEnabled = true
+    model.playwrightMCPEnabled = true
+    model.xcodeMCPEnabled = true
+    model.chooseWorkspace(workspace)
+    model.save()
+    try await waitForSave(model)
+
+    #expect(model.peekabooAvailability == .ready)
+    #expect(model.playwrightAvailability == .ready)
+    #expect(
+      await settingsStore.savedSettings?.mcpServers
+        == [try .peekaboo(), try .playwright(), try .xcode()]
+    )
+    #expect(model.errorMessage == nil)
+  }
+
+  @Test @MainActor
+  func loadAndSavePreserveHTTPServersWhileTogglingXcode() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let httpServer = try HexResidentMCPServerSettings(
+      serverID: "docs",
+      transport: .streamableHTTP,
+      endpointURL: URL(string: "https://mcp.example.com")
+    )
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "existing-model",
+      workspaceRoot: workspace,
+      mcpServers: [httpServer, try .xcode()]
+    )
+    let settingsStore = FakeSettingsStore(settings: settings)
+    let secretStore = FakeSecretStore(value: "existing-secret")
+    let model = HexResidentSetupModel(
+      settingsStore: settingsStore,
+      secretStore: secretStore
+    )
+
+    await model.load()
+    #expect(model.xcodeMCPEnabled)
+    model.xcodeMCPEnabled = false
+    model.save()
+    try await waitForSave(model)
+
+    #expect(await settingsStore.savedSettings?.mcpServers == [httpServer])
+  }
+
+  @Test @MainActor
+  func managesValidatedHTTPServersWithoutPersistingDrafts() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "existing-model",
+      workspaceRoot: workspace
+    )
+    let settingsStore = FakeSettingsStore(settings: settings)
+    let secretStore = FakeSecretStore(value: "existing-secret")
+    let model = HexResidentSetupModel(
+      settingsStore: settingsStore,
+      secretStore: secretStore
+    )
+    await model.load()
+
+    #expect(
+      model.addHTTPMCPServer(
+        serverID: "local_docs",
+        endpoint: "http://localhost:8765/mcp"
+      )
+    )
+    #expect(
+      !model.addHTTPMCPServer(
+        serverID: "playwright",
+        endpoint: "http://localhost:9999/mcp"
+      )
+    )
+    model.setHTTPMCPServerEnabled("local_docs", isEnabled: false)
+    model.save()
+    try await waitForSave(model)
+
+    let savedServer = try #require(await settingsStore.savedSettings?.mcpServers.first)
+    #expect(savedServer.serverID == "local_docs")
+    #expect(savedServer.endpointURL?.absoluteString == "http://localhost:8765/mcp")
+    #expect(!savedServer.isEnabled)
+
+    model.removeHTTPMCPServer("local_docs")
+    model.save()
+    try await waitForSave(model)
+    #expect(await settingsStore.savedSettings?.mcpServers.isEmpty == true)
   }
 
   @Test @MainActor
@@ -116,6 +225,61 @@ struct HexResidentSetupModelTests {
 
   private func makeWorkspace() throws -> URL {
     try Self.makeWorkspace()
+  }
+
+  private func makeManagedToolInstallation() throws -> (
+    rootURL: URL,
+    layout: MCPManagedToolLayout
+  ) {
+    let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "HexManagedTools-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    let layout = try MCPManagedToolLayout(rootURL: rootURL)
+    try writeFixture("node", to: layout.nodeExecutableURL, executable: true)
+    try writeFixture("node-script", to: layout.playwrightServerScriptURL)
+    let manifest = try JSONSerialization.data(
+      withJSONObject: [
+        "name": "@playwright/mcp",
+        "version": MCPManagedToolLayout.playwrightVersion,
+        "license": "Apache-2.0",
+      ],
+      options: [.sortedKeys]
+    )
+    try writeFixture(manifest, to: layout.playwrightPackageManifestURL)
+    try writeFixture("browser", to: layout.playwrightBrowserExecutableURL, executable: true)
+    try writeFixture("peekaboo", to: layout.peekabooExecutableURL, executable: true)
+    try writeFixture(
+      MCPManagedToolLayout.peekabooVersion,
+      to: layout.peekabooVersionFileURL
+    )
+    return (rootURL, layout)
+  }
+
+  private func writeFixture(
+    _ value: String,
+    to url: URL,
+    executable: Bool = false
+  ) throws {
+    try writeFixture(Data(value.utf8), to: url, executable: executable)
+  }
+
+  private func writeFixture(
+    _ data: Data,
+    to url: URL,
+    executable: Bool = false
+  ) throws {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try data.write(to: url, options: .atomic)
+    if executable {
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: url.path
+      )
+    }
   }
 
   @MainActor

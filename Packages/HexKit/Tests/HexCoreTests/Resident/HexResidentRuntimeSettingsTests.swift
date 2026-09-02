@@ -9,7 +9,17 @@ struct HexResidentRuntimeSettingsTests {
   func roundTripsOnlyNonSecretSettingsWithCurrentSchema() throws {
     let settings = try HexResidentRuntimeSettings(
       modelID: "gpt-test",
-      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace")
+      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace"),
+      mcpServers: [
+        try .xcode(),
+        try .playwright(),
+        try .peekaboo(),
+        try HexResidentMCPServerSettings(
+          serverID: "local_docs",
+          transport: .streamableHTTP,
+          endpointURL: URL(string: "http://127.0.0.1:8765/mcp")
+        ),
+      ]
     )
     let data = try JSONEncoder().encode(settings)
     let decoded = try JSONDecoder().decode(HexResidentRuntimeSettings.self, from: data)
@@ -17,6 +27,10 @@ struct HexResidentRuntimeSettingsTests {
     #expect(settings == decoded)
     #expect(settings.schemaVersion == HexResidentRuntimeSettings.currentSchemaVersion)
     #expect(!String(decoding: data, as: UTF8.self).contains("apiKey"))
+    #expect(
+      decoded.mcpServers.map(\.serverID)
+        == ["local_docs", "peekaboo", "playwright", "xcode"]
+    )
   }
 
   @Test
@@ -45,6 +59,50 @@ struct HexResidentRuntimeSettingsTests {
       Issue.record("Expected an unsupported schema version to be rejected.")
     } catch let error as HexResidentRuntimeSettingsError {
       #expect(error == .unsupportedSchemaVersion(unsupportedVersion))
+    }
+  }
+
+  @Test
+  func decodesLegacySchemaWithoutMCPServers() throws {
+    let data = Data(
+      #"{"schemaVersion":1,"modelID":"gpt-test","workspaceRoot":"file:\/\/\/tmp\/hex-workspace"}"#
+        .utf8
+    )
+
+    let settings = try JSONDecoder().decode(HexResidentRuntimeSettings.self, from: data)
+
+    #expect(settings.mcpServers.isEmpty)
+  }
+
+  @Test
+  func rejectsDuplicateAndUnsafeMCPSettings() throws {
+    let xcode = try HexResidentMCPServerSettings.xcode()
+    #expect(throws: HexResidentRuntimeSettingsError.invalidMCPServers) {
+      _ = try HexResidentRuntimeSettings(
+        modelID: "gpt-test",
+        workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace"),
+        mcpServers: [xcode, xcode]
+      )
+    }
+    #expect(throws: HexResidentRuntimeSettingsError.invalidMCPServers) {
+      _ = try HexResidentMCPServerSettings(
+        serverID: "remote",
+        transport: .streamableHTTP,
+        endpointURL: URL(string: "http://example.com/mcp")
+      )
+    }
+    #expect(throws: HexResidentRuntimeSettingsError.invalidMCPServers) {
+      _ = try HexResidentMCPServerSettings(
+        serverID: "not-playwright",
+        transport: .playwright
+      )
+    }
+    #expect(throws: HexResidentRuntimeSettingsError.invalidMCPServers) {
+      _ = try HexResidentMCPServerSettings(
+        serverID: "peekaboo",
+        transport: .peekaboo,
+        endpointURL: URL(string: "http://localhost:8765/mcp")
+      )
     }
   }
 }

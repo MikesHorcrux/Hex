@@ -53,6 +53,15 @@ public struct HexGatewayComposition: Sendable {
   public static func open(
     configuration: HexGatewayCompositionConfiguration
   ) async throws -> Self {
+    guard
+      (configuration.personalityContextService == nil)
+        == (configuration.personalityMemoryQuery == nil),
+      !(configuration.personalityContext != nil
+        && configuration.personalityContextService != nil)
+    else {
+      throw HexGatewayCompositionError.invalidPersonalityConfiguration
+    }
+
     let journal: any AgentEventJournal
     let closeAction: @Sendable () async throws -> Void
     if let injectedJournal = configuration.journal {
@@ -74,6 +83,9 @@ public struct HexGatewayComposition: Sendable {
       journal: journal,
       runtimeConfiguration: configuration.runtimeConfiguration,
       personalityContext: configuration.personalityContext,
+      personalityContextService: configuration.personalityContextService,
+      personalityMemoryQuery: configuration.personalityMemoryQuery,
+      enforcedModelID: configuration.enforcedModelID,
       enforcedWorkingDirectory: configuration.enforcedWorkingDirectory
     )
     let service = HexGatewayService(

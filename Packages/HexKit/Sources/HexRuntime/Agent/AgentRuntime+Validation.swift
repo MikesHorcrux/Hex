@@ -10,20 +10,23 @@ extension AgentRuntime {
       throw AgentRuntimeError.invalidRequest("At least one initial message is required.")
     }
 
+    let allInitialMessages = request.contextMessages + request.initialMessages
     var messageIDs: Set<MessageID> = []
-    for message in request.initialMessages {
+    for message in allInitialMessages {
       guard messageIDs.insert(message.id).inserted else {
-        throw AgentRuntimeError.invalidRequest("Initial message IDs must be unique.")
+        throw AgentRuntimeError.invalidRequest("Initial and context message IDs must be unique.")
       }
       guard !message.content.isEmpty else {
-        throw AgentRuntimeError.invalidRequest("Initial messages cannot have empty content.")
+        throw AgentRuntimeError.invalidRequest(
+          "Initial and context messages cannot have empty content."
+        )
       }
     }
-    _ = try initialToolCallIDs(in: request.initialMessages)
+    _ = try initialToolCallIDs(in: allInitialMessages)
 
     let initialInputBytes: Int
     do {
-      initialInputBytes = try JSONEncoder().encode(request.initialMessages).count
+      initialInputBytes = try JSONEncoder().encode(allInitialMessages).count
     } catch {
       throw AgentRuntimeError.invalidRequest("Initial messages must be serializable.")
     }
@@ -110,7 +113,7 @@ extension AgentRuntime {
 
     try requireCapability(.textInput, from: model)
     try requireCapability(.streaming, from: model)
-    let containsImage = request.initialMessages.contains { message in
+    let containsImage = (request.contextMessages + request.initialMessages).contains { message in
       message.content.contains { content in
         if case .image = content {
           return true

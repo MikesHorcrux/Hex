@@ -2,6 +2,10 @@ import HexCore
 
 extension AgentWorkspaceModel {
   func append(_ message: Message) {
+    guard pendingInitialMessageIDs.remove(message.id) == nil else {
+      return
+    }
+
     let text = messageText(message)
     guard !text.isEmpty else { return }
 
@@ -24,6 +28,8 @@ extension AgentWorkspaceModel {
     case .system, .developer:
       transcript.append(ConversationItem(role: .event, text: text))
     }
+    updateCurrentConversation()
+    persistConversationArchive()
   }
 
   func appendAssistantDelta(_ text: String) {
@@ -38,6 +44,8 @@ extension AgentWorkspaceModel {
     let item = ConversationItem(role: .assistant, text: text, isStreaming: true)
     streamingAssistantItemID = item.id
     transcript.append(item)
+    updateCurrentConversation()
+    persistConversationArchive()
   }
 
   func finishStreamingAssistant() {
@@ -48,14 +56,20 @@ extension AgentWorkspaceModel {
     }
     transcript[index].isStreaming = false
     self.streamingAssistantItemID = nil
+    updateCurrentConversation()
+    persistConversationArchive()
   }
 
   func appendEvent(_ text: String) {
     transcript.append(ConversationItem(role: .event, text: text))
+    updateCurrentConversation()
+    persistConversationArchive()
   }
 
   func appendTool(_ text: String) {
     transcript.append(ConversationItem(role: .tool, text: text))
+    updateCurrentConversation()
+    persistConversationArchive()
   }
 
   func toolResultText(_ result: ToolResult) -> String {

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import HexCore
 import HexPersistence
@@ -17,7 +18,14 @@ struct HexGatewayResidentPersistenceTests {
     let paths = try makePaths(in: root)
     let settings = try HexResidentRuntimeSettings(
       modelID: "gpt-persisted",
-      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace")
+      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace"),
+      mcpServers: [
+        try HexResidentMCPServerSettings(
+          serverID: "docs",
+          transport: .streamableHTTP,
+          endpointURL: URL(string: "https://mcp.example.com")
+        )
+      ]
     )
     let settingsStore = SettingsStore(value: settings)
     let secretStore = SecretStore(value: "sk-persisted-secret")
@@ -29,9 +37,12 @@ struct HexGatewayResidentPersistenceTests {
     )
 
     #expect(configuration.modelID == "gpt-persisted")
+    #expect(configuration.inferenceBackendSettings.selectedBackend == .openAIResponses)
+    #expect(configuration.inferenceBackendSettings.openAI.modelID == "gpt-persisted")
     #expect(configuration.workspaceRoot.path == "/tmp/hex-workspace")
     #expect(configuration.databaseURL == paths.databaseURL)
     #expect(configuration.heartbeatStoreURL == paths.heartbeatStoreURL)
+    #expect(configuration.mcpClientSessions.map(\.serverID) == ["docs"])
     #expect(await secretStore.didReadValue() == false)
     #expect(try await configuration.makeCredentialProvider().apiKey() == "sk-persisted-secret")
     #expect(await secretStore.didReadValue())
@@ -61,6 +72,67 @@ struct HexGatewayResidentPersistenceTests {
       #expect(error == .credentialsUnavailable)
     }
     #expect(await secretStore.didReadValue() == false)
+  }
+
+  @Test
+  func migratesLegacyModelIntoAbsentInferenceSettingsDocument() async throws {
+    let root = try makeTemporaryDirectory()
+    defer {
+      try? FileManager.default.removeItem(at: root)
+    }
+    let paths = try makePaths(in: root)
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "legacy-model",
+      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace")
+    )
+    let persistedStore = try JSONHexInferenceBackendSettingsStore(
+      fileURL: root.appendingPathComponent("inference-backends.json", isDirectory: false)
+    )
+    let configuration = try await HexGatewayResidentConfiguration.loadPersisted(
+      paths: paths,
+      settingsStore: SettingsStore(value: settings),
+      secretStore: SecretStore(value: "sk-test"),
+      inferenceBackendSettingsStore: persistedStore
+    )
+
+    #expect(configuration.inferenceBackendSettings.selectedBackend == .openAIResponses)
+    #expect(configuration.inferenceBackendSettings.openAI.modelID == "legacy-model")
+    #expect(configuration.modelID == "legacy-model")
+    let loadedSettings = try await persistedStore.load()
+    #expect(loadedSettings == configuration.inferenceBackendSettings)
+  }
+
+  @Test
+  func selectedLocalBackendDoesNotRequireAnOpenAICredential() async throws {
+    let root = try makeTemporaryDirectory()
+    defer {
+      try? FileManager.default.removeItem(at: root)
+    }
+    let paths = try makePaths(in: root)
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "legacy-model",
+      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace")
+    )
+    let inferenceSettings = try HexInferenceBackendSettings(
+      selectedBackend: .mlxLocal,
+      openAIModelID: "openai-model",
+      mlx: HexMLXBackendSettings(
+        modelID: "local-model",
+        displayName: "Local model",
+        directory: URL(fileURLWithPath: "/tmp/hex-model")
+      )
+    )
+    let secretStore = SecretStore(value: nil)
+    let configuration = try await HexGatewayResidentConfiguration.loadPersisted(
+      paths: paths,
+      settingsStore: SettingsStore(value: settings),
+      secretStore: secretStore,
+      inferenceBackendSettingsStore: BackendSettingsStore(value: inferenceSettings)
+    )
+
+    #expect(configuration.inferenceBackendSettings == inferenceSettings)
+    #expect(configuration.modelID == "local-model")
+    #expect(await secretStore.didCheckExistence() == false)
   }
 
   @Test
@@ -121,7 +193,21 @@ struct HexGatewayResidentPersistenceTests {
   }
 
   private func makeTemporaryDirectory() throws -> URL {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    let temporaryPath = FileManager.default.temporaryDirectory.path
+    var resolvedPath = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let didResolve = resolvedPath.withUnsafeMutableBufferPointer { buffer in
+      temporaryPath.withCString { source in
+        Darwin.realpath(source, buffer.baseAddress) != nil
+      }
+    }
+    guard didResolve else {
+      throw TestError.couldNotResolveTemporaryDirectory
+    }
+    let resolvedPathBytes = resolvedPath.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    let directory = URL(
+      fileURLWithPath: String(decoding: resolvedPathBytes, as: UTF8.self),
+      isDirectory: true
+    ).appendingPathComponent(
       "hex-resident-config-\(UUID().uuidString)",
       isDirectory: true
     )
@@ -131,6 +217,10 @@ struct HexGatewayResidentPersistenceTests {
       attributes: [.posixPermissions: 0o700]
     )
     return directory
+  }
+
+  private enum TestError: Error, Sendable {
+    case couldNotResolveTemporaryDirectory
   }
 
   private func makePaths(in root: URL) throws -> HexResidentDataPaths {
@@ -160,6 +250,7 @@ struct HexGatewayResidentPersistenceTests {
   private actor SecretStore: HexSecretStore {
     private var value: String?
     private var didRead = false
+    private var didCheck = false
 
     init(value: String?) {
       self.value = value
@@ -174,7 +265,8 @@ struct HexGatewayResidentPersistenceTests {
     }
 
     func exists(_ key: HexSecretKey) async throws -> Bool {
-      key == .openAIAPIKey && value != nil
+      didCheck = true
+      return key == .openAIAPIKey && value != nil
     }
 
     func save(_ secret: String, for key: HexSecretKey) async throws {
@@ -193,6 +285,26 @@ struct HexGatewayResidentPersistenceTests {
 
     func didReadValue() -> Bool {
       didRead
+    }
+
+    func didCheckExistence() -> Bool {
+      didCheck
+    }
+  }
+
+  private actor BackendSettingsStore: HexInferenceBackendSettingsStore {
+    let value: HexInferenceBackendSettings
+
+    init(value: HexInferenceBackendSettings) {
+      self.value = value
+    }
+
+    func load() async throws -> HexInferenceBackendSettings? {
+      value
+    }
+
+    func save(_ settings: HexInferenceBackendSettings) async throws {
+      _ = settings
     }
   }
 

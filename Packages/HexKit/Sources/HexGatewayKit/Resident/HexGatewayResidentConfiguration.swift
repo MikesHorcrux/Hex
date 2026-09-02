@@ -1,7 +1,9 @@
 import Foundation
 import HexCore
 import HexIPC
+import HexMCP
 import HexPersistence
+import HexPersonality
 import HexProviders
 
 /// Resident gateway composition settings. Credentials are injected as a provider and are never
@@ -14,7 +16,9 @@ public struct HexGatewayResidentConfiguration: Sendable {
     case invalidVariable(String)
     case applicationSupportUnavailable
     case settingsUnavailable
+    case inferenceSettingsUnavailable
     case credentialsUnavailable
+    case mcpConfigurationUnavailable
 
     public var errorDescription: String? {
       switch self {
@@ -26,8 +30,12 @@ public struct HexGatewayResidentConfiguration: Sendable {
         "Hex could not locate Application Support for the resident gateway."
       case .settingsUnavailable:
         "Hex resident settings are unavailable or invalid."
+      case .inferenceSettingsUnavailable:
+        "Hex inference-backend settings are unavailable or invalid. Open Inference settings and choose a supported backend configuration."
       case .credentialsUnavailable:
         "Hex resident credentials are unavailable."
+      case .mcpConfigurationUnavailable:
+        "Hex resident MCP configuration is unavailable or invalid."
       }
     }
   }
@@ -39,14 +47,22 @@ public struct HexGatewayResidentConfiguration: Sendable {
   private static let databaseVariable = "HEX_GATEWAY_DATABASE_URL"
   private static let heartbeatStoreVariable = "HEX_HEARTBEAT_STORE_URL"
   private static let heartbeatDatabaseVariable = "HEX_HEARTBEAT_DATABASE_URL"
+  private static let xcodeMCPVariable = "HEX_XCODE_MCP_ENABLED"
+  private static let personalityScopeVariable = "HEX_PERSONALITY_SCOPE"
 
   public let machServiceName: String
   public let modelID: String
   public let workspaceRoot: URL
   public let databaseURL: URL
   public let heartbeatStoreURL: URL
+  public let personalityProfileURL: URL
+  public let personalMemoryURL: URL
+  public let personalMemoryScope: PersonalMemoryScope
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
   public let credentialProvider: any OpenAICredentialProvider
+  public let inferenceBackendSettings: HexInferenceBackendSettings
+  public let inferenceProviderFactory: HexGatewayInferenceProviderFactory
+  public let mcpClientSessions: [any MCPClientSession]
 
   /// Parses the complete, explicit developer environment override. The API key remains in the
   /// resulting process-only memory provider and is never copied to a persisted settings file.
@@ -100,6 +116,37 @@ public struct HexGatewayResidentConfiguration: Sendable {
       heartbeatStoreURL = databaseURL.deletingLastPathComponent()
         .appendingPathComponent("heartbeats.json", isDirectory: false)
     }
+    let personalMemoryScope: PersonalMemoryScope
+    if let rawScope = Self.value(named: Self.personalityScopeVariable, in: environment) {
+      do {
+        personalMemoryScope = try PersonalMemoryScope(rawValue: rawScope)
+      } catch {
+        throw ConfigurationError.invalidVariable(Self.personalityScopeVariable)
+      }
+    } else {
+      personalMemoryScope = Self.defaultPersonalityScope()
+    }
+    let mcpClientSessions: [any MCPClientSession]
+    if let rawXcodeMCP = Self.value(named: Self.xcodeMCPVariable, in: environment) {
+      switch rawXcodeMCP.lowercased() {
+      case "1", "true", "yes":
+        do {
+          mcpClientSessions = [
+            LocalMCPClientSession(
+              configuration: try MCPServerConfiguration.xcode(sourceEnvironment: environment)
+            )
+          ]
+        } catch {
+          throw ConfigurationError.mcpConfigurationUnavailable
+        }
+      case "0", "false", "no":
+        mcpClientSessions = []
+      default:
+        throw ConfigurationError.invalidVariable(Self.xcodeMCPVariable)
+      }
+    } else {
+      mcpClientSessions = []
+    }
 
     try self.init(
       machServiceName: machServiceName,
@@ -108,6 +155,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: databaseURL,
       apiKey: apiKey,
       heartbeatStoreURL: heartbeatStoreURL,
+      personalMemoryScope: personalMemoryScope,
+      mcpClientSessions: mcpClientSessions,
       connectionAdmissionPolicy: .production()
     )
   }
@@ -122,12 +171,29 @@ public struct HexGatewayResidentConfiguration: Sendable {
     databaseURL: URL,
     credentialProvider: any OpenAICredentialProvider,
     heartbeatStoreURL: URL? = nil,
-    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
+    personalityProfileURL: URL? = nil,
+    personalMemoryURL: URL? = nil,
+    personalMemoryScope: PersonalMemoryScope? = nil,
+    mcpClientSessions: [any MCPClientSession] = [],
+    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
+    inferenceBackendSettings: HexInferenceBackendSettings? = nil,
+    inferenceProviderFactory: HexGatewayInferenceProviderFactory =
+      HexGatewayInferenceProviderFactory()
   ) throws {
     guard Self.isPrintableASCII(machServiceName), machServiceName.utf8.count <= 256 else {
       throw ConfigurationError.invalidVariable(Self.serviceVariable)
     }
     guard Self.isPrintableASCII(modelID), modelID.utf8.count <= 512 else {
+      throw ConfigurationError.invalidVariable(Self.modelVariable)
+    }
+    let resolvedInferenceBackendSettings =
+      try inferenceBackendSettings
+      ?? HexInferenceBackendSettings(openAIModelID: modelID)
+    let resolvedModelID = Self.modelID(
+      for: resolvedInferenceBackendSettings,
+      fallback: modelID
+    )
+    guard Self.isPrintableASCII(resolvedModelID), resolvedModelID.utf8.count <= 512 else {
       throw ConfigurationError.invalidVariable(Self.modelVariable)
     }
     let standardizedWorkspaceRoot = workspaceRoot.standardizedFileURL
@@ -155,14 +221,48 @@ public struct HexGatewayResidentConfiguration: Sendable {
     else {
       throw ConfigurationError.invalidVariable(Self.heartbeatStoreVariable)
     }
+    let resolvedPersonalityProfileURL =
+      personalityProfileURL
+      ?? databaseURL.deletingLastPathComponent()
+      .appendingPathComponent("personality-profile.json", isDirectory: false)
+    let resolvedPersonalMemoryURL =
+      personalMemoryURL
+      ?? databaseURL.deletingLastPathComponent()
+      .appendingPathComponent("personal-memory.json", isDirectory: false)
+    let standardizedPersonalityProfileURL = resolvedPersonalityProfileURL.standardizedFileURL
+    let standardizedPersonalMemoryURL = resolvedPersonalMemoryURL.standardizedFileURL
+    guard
+      Self.isValidDataFileURL(resolvedPersonalityProfileURL),
+      Self.isValidDataFileURL(standardizedPersonalityProfileURL)
+    else {
+      throw ConfigurationError.invalidVariable("HEX_PERSONALITY_PROFILE_URL")
+    }
+    guard
+      Self.isValidDataFileURL(resolvedPersonalMemoryURL),
+      Self.isValidDataFileURL(standardizedPersonalMemoryURL)
+    else {
+      throw ConfigurationError.invalidVariable("HEX_PERSONAL_MEMORY_URL")
+    }
+    guard
+      mcpClientSessions.count <= 16,
+      Set(mcpClientSessions.map(\.serverID)).count == mcpClientSessions.count
+    else {
+      throw ConfigurationError.mcpConfigurationUnavailable
+    }
 
     self.machServiceName = machServiceName
-    self.modelID = modelID
+    self.modelID = resolvedModelID
     self.workspaceRoot = standardizedWorkspaceRoot
     self.databaseURL = standardizedDatabaseURL
     self.heartbeatStoreURL = standardizedHeartbeatStoreURL
+    self.personalityProfileURL = standardizedPersonalityProfileURL
+    self.personalMemoryURL = standardizedPersonalMemoryURL
+    self.personalMemoryScope = personalMemoryScope ?? Self.defaultPersonalityScope()
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.credentialProvider = credentialProvider
+    self.inferenceBackendSettings = resolvedInferenceBackendSettings
+    self.inferenceProviderFactory = inferenceProviderFactory
+    self.mcpClientSessions = mcpClientSessions.sorted { $0.serverID < $1.serverID }
   }
 
   /// Keeps the explicit environment initializer source-compatible for local development and
@@ -174,7 +274,14 @@ public struct HexGatewayResidentConfiguration: Sendable {
     databaseURL: URL,
     apiKey: String,
     heartbeatStoreURL: URL? = nil,
-    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
+    personalityProfileURL: URL? = nil,
+    personalMemoryURL: URL? = nil,
+    personalMemoryScope: PersonalMemoryScope? = nil,
+    mcpClientSessions: [any MCPClientSession] = [],
+    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
+    inferenceBackendSettings: HexInferenceBackendSettings? = nil,
+    inferenceProviderFactory: HexGatewayInferenceProviderFactory =
+      HexGatewayInferenceProviderFactory()
   ) throws {
     guard Self.isPrintableASCII(apiKey) else {
       throw ConfigurationError.invalidVariable(Self.apiKeyVariable)
@@ -186,7 +293,13 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: databaseURL,
       credentialProvider: HexGatewayMemoryCredentialProvider(apiKey: apiKey),
       heartbeatStoreURL: heartbeatStoreURL,
-      connectionAdmissionPolicy: connectionAdmissionPolicy
+      personalityProfileURL: personalityProfileURL,
+      personalMemoryURL: personalMemoryURL,
+      personalMemoryScope: personalMemoryScope,
+      mcpClientSessions: mcpClientSessions,
+      connectionAdmissionPolicy: connectionAdmissionPolicy,
+      inferenceBackendSettings: inferenceBackendSettings,
+      inferenceProviderFactory: inferenceProviderFactory
     )
   }
 
@@ -198,7 +311,10 @@ public struct HexGatewayResidentConfiguration: Sendable {
     paths: HexResidentDataPaths? = nil,
     settingsStore: (any HexResidentRuntimeSettingsStore)? = nil,
     secretStore: (any HexSecretStore)? = nil,
-    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
+    connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
+    inferenceBackendSettingsStore: (any HexInferenceBackendSettingsStore)? = nil,
+    inferenceProviderFactory: HexGatewayInferenceProviderFactory =
+      HexGatewayInferenceProviderFactory()
   ) async throws -> Self {
     let resolvedPaths: HexResidentDataPaths
     do {
@@ -220,6 +336,22 @@ public struct HexGatewayResidentConfiguration: Sendable {
       throw ConfigurationError.settingsUnavailable
     }
 
+    let resolvedInferenceSettingsStore: any HexInferenceBackendSettingsStore
+    do {
+      if let inferenceBackendSettingsStore {
+        resolvedInferenceSettingsStore = inferenceBackendSettingsStore
+      } else {
+        resolvedInferenceSettingsStore = try JSONHexInferenceBackendSettingsStore(
+          fileURL: resolvedPaths.directoryURL.appendingPathComponent(
+            "inference-backends.json",
+            isDirectory: false
+          )
+        )
+      }
+    } catch {
+      throw ConfigurationError.inferenceSettingsUnavailable
+    }
+
     let settings: HexResidentRuntimeSettings
     do {
       guard let loadedSettings = try await resolvedSettingsStore.load() else {
@@ -232,27 +364,66 @@ public struct HexGatewayResidentConfiguration: Sendable {
       throw ConfigurationError.settingsUnavailable
     }
 
-    let resolvedSecretStore: any HexSecretStore = secretStore ?? KeychainHexSecretStore()
+    let inferenceBackendSettings: HexInferenceBackendSettings
     do {
-      guard try await resolvedSecretStore.exists(.openAIAPIKey) else {
-        throw ConfigurationError.credentialsUnavailable
+      if let loadedSettings = try await resolvedInferenceSettingsStore.load() {
+        inferenceBackendSettings = loadedSettings
+      } else {
+        // Migrate the legacy resident model explicitly. The new document defaults to OpenAI so an
+        // absent backend file preserves the previously operational resident path.
+        inferenceBackendSettings = try HexInferenceBackendSettings.migrationDefault(
+          legacyOpenAIModelID: settings.modelID
+        )
+        try await resolvedInferenceSettingsStore.save(inferenceBackendSettings)
       }
     } catch is CancellationError {
       throw CancellationError()
-    } catch let error as ConfigurationError {
-      throw error
     } catch {
-      throw ConfigurationError.credentialsUnavailable
+      throw ConfigurationError.inferenceSettingsUnavailable
+    }
+
+    let resolvedSecretStore: any HexSecretStore = secretStore ?? KeychainHexSecretStore()
+    if inferenceBackendSettings.selectedBackend == .openAIResponses {
+      do {
+        guard try await resolvedSecretStore.exists(.openAIAPIKey) else {
+          throw ConfigurationError.credentialsUnavailable
+        }
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch let error as ConfigurationError {
+        throw error
+      } catch {
+        throw ConfigurationError.credentialsUnavailable
+      }
+    }
+
+    let mcpClientSessions: [any MCPClientSession]
+    do {
+      let managedToolLayout = try MCPManagedToolLayout(
+        rootURL: resolvedPaths.directoryURL.appendingPathComponent("Tools", isDirectory: true)
+      )
+      mcpClientSessions = try Self.makeMCPClientSessions(
+        from: settings.mcpServers,
+        managedToolLayout: managedToolLayout,
+        workspaceRoot: settings.workspaceRoot
+      )
+    } catch {
+      throw ConfigurationError.mcpConfigurationUnavailable
     }
 
     return try Self(
       machServiceName: HexGatewayServiceIdentity.machServiceName,
-      modelID: settings.modelID,
+      modelID: Self.modelID(for: inferenceBackendSettings, fallback: settings.modelID),
       workspaceRoot: settings.workspaceRoot,
       databaseURL: resolvedPaths.databaseURL,
       credentialProvider: HexSecretStoreOpenAICredentialProvider(store: resolvedSecretStore),
       heartbeatStoreURL: resolvedPaths.heartbeatStoreURL,
-      connectionAdmissionPolicy: connectionAdmissionPolicy
+      personalityProfileURL: resolvedPaths.personalityProfileURL,
+      personalMemoryURL: resolvedPaths.personalMemoryURL,
+      mcpClientSessions: mcpClientSessions,
+      connectionAdmissionPolicy: connectionAdmissionPolicy,
+      inferenceBackendSettings: inferenceBackendSettings,
+      inferenceProviderFactory: inferenceProviderFactory
     )
   }
 
@@ -268,11 +439,68 @@ public struct HexGatewayResidentConfiguration: Sendable {
       Self.databaseVariable,
       Self.heartbeatStoreVariable,
       Self.heartbeatDatabaseVariable,
+      Self.xcodeMCPVariable,
+      Self.personalityScopeVariable,
     ].contains { environment[$0] != nil }
   }
 
   public func makeCredentialProvider() -> any OpenAICredentialProvider {
     credentialProvider
+  }
+
+  private static func modelID(
+    for settings: HexInferenceBackendSettings,
+    fallback: String
+  ) -> String {
+    switch settings.selectedBackend {
+    case .openAIResponses:
+      settings.openAI.modelID
+    case .mlxLocal:
+      settings.mlx.modelID.isEmpty ? fallback : settings.mlx.modelID
+    case .codexCompatibility:
+      fallback
+    }
+  }
+
+  private static func defaultPersonalityScope() -> PersonalMemoryScope {
+    PersonalMemoryScope.hex
+  }
+
+  private static func makeMCPClientSessions(
+    from settings: [HexResidentMCPServerSettings],
+    managedToolLayout: MCPManagedToolLayout,
+    workspaceRoot: URL
+  ) throws -> [any MCPClientSession] {
+    try settings.filter(\.isEnabled).map { setting in
+      switch setting.transport {
+      case .peekaboo:
+        return LocalMCPClientSession(
+          configuration: try MCPServerConfiguration.peekaboo(
+            layout: managedToolLayout,
+            workspaceRoot: workspaceRoot
+          )
+        )
+      case .playwright:
+        return LocalMCPClientSession(
+          configuration: try MCPServerConfiguration.playwright(
+            layout: managedToolLayout,
+            workspaceRoot: workspaceRoot
+          )
+        )
+      case .xcode:
+        return LocalMCPClientSession(configuration: try MCPServerConfiguration.xcode())
+      case .streamableHTTP:
+        guard let endpointURL = setting.endpointURL else {
+          throw ConfigurationError.mcpConfigurationUnavailable
+        }
+        return StreamableHTTPMCPClientSession(
+          configuration: try MCPStreamableHTTPServerConfiguration(
+            serverID: setting.serverID,
+            endpointURL: endpointURL
+          )
+        )
+      }
+    }
   }
 
   private static func value(

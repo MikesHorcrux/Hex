@@ -11,10 +11,12 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
   public let schemaVersion: Int
   public let modelID: String
   public let workspaceRoot: URL
+  public let mcpServers: [HexResidentMCPServerSettings]
 
   public init(
     modelID: String,
     workspaceRoot: URL,
+    mcpServers: [HexResidentMCPServerSettings] = [],
     schemaVersion: Int = Self.currentSchemaVersion
   ) throws {
     guard schemaVersion == Self.currentSchemaVersion else {
@@ -26,16 +28,24 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
     guard Self.isAbsoluteWorkspaceURL(workspaceRoot) else {
       throw HexResidentRuntimeSettingsError.invalidWorkspaceRoot
     }
+    guard
+      mcpServers.count <= 16,
+      Set(mcpServers.map(\.serverID)).count == mcpServers.count
+    else {
+      throw HexResidentRuntimeSettingsError.invalidMCPServers
+    }
 
     self.schemaVersion = schemaVersion
     self.modelID = modelID
     self.workspaceRoot = workspaceRoot.standardizedFileURL
+    self.mcpServers = mcpServers.sorted { $0.serverID < $1.serverID }
   }
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion
     case modelID
     case workspaceRoot
+    case mcpServers
   }
 
   public init(from decoder: Decoder) throws {
@@ -43,9 +53,15 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
     let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
     let modelID = try container.decode(String.self, forKey: .modelID)
     let workspaceRoot = try container.decode(URL.self, forKey: .workspaceRoot)
+    let mcpServers =
+      try container.decodeIfPresent(
+        [HexResidentMCPServerSettings].self,
+        forKey: .mcpServers
+      ) ?? []
     try self.init(
       modelID: modelID,
       workspaceRoot: workspaceRoot,
+      mcpServers: mcpServers,
       schemaVersion: schemaVersion
     )
   }
@@ -55,6 +71,7 @@ public struct HexResidentRuntimeSettings: Codable, Equatable, Sendable {
     try container.encode(schemaVersion, forKey: .schemaVersion)
     try container.encode(modelID, forKey: .modelID)
     try container.encode(workspaceRoot, forKey: .workspaceRoot)
+    try container.encode(mcpServers, forKey: .mcpServers)
   }
 
   private static func isPrintableASCII(_ value: String) -> Bool {

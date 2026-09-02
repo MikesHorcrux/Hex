@@ -1,6 +1,7 @@
 import Foundation
 import HexCore
 import HexGatewayKit
+import HexMCP
 import HexPersistence
 
 /// Read-only preflight for a signed resident gateway bundle.
@@ -12,15 +13,18 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
   private let settingsStore: any HexResidentRuntimeSettingsStore
   private let secretStore: any HexSecretStore
   private let appBundleURL: URL
+  private let managedToolLayout: MCPManagedToolLayout?
 
   init(
     settingsStore: any HexResidentRuntimeSettingsStore,
     secretStore: any HexSecretStore,
-    appBundleURL: URL
+    appBundleURL: URL,
+    managedToolLayout: MCPManagedToolLayout? = nil
   ) {
     self.settingsStore = settingsStore
     self.secretStore = secretStore
     self.appBundleURL = appBundleURL.standardizedFileURL
+    self.managedToolLayout = managedToolLayout
   }
 
   func check() async -> HexGatewayActivationReadiness {
@@ -36,6 +40,11 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
     }
     guard Self.isValid(settings: settings) else {
       return Self.blocked("Resident setup contains invalid model or workspace settings.")
+    }
+    guard managedToolsAreReady(settings.mcpServers) else {
+      return Self.blocked(
+        "An enabled managed MCP tool is missing or incomplete. Check Agent Tools in Settings."
+      )
     }
 
     guard await hasCredential() else {
@@ -75,6 +84,24 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
     } catch {
       return false
     }
+  }
+
+  private func managedToolsAreReady(_ settings: [HexResidentMCPServerSettings]) -> Bool {
+    for setting in settings where setting.isEnabled {
+      let tool: MCPManagedTool?
+      switch setting.transport {
+      case .peekaboo:
+        tool = .peekaboo
+      case .playwright:
+        tool = .playwright
+      case .streamableHTTP, .xcode:
+        tool = nil
+      }
+      if let tool, managedToolLayout?.availability(for: tool) != .ready {
+        return false
+      }
+    }
+    return true
   }
 
   private static func isValid(settings: HexResidentRuntimeSettings) -> Bool {

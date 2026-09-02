@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import HexGatewayKit
+import HexMLXProvider
 
 @main
 enum HexGatewayCommand {
@@ -11,7 +12,14 @@ enum HexGatewayCommand {
       if HexGatewayResidentConfiguration.hasEnvironmentOverride(in: environment) {
         configuration = try HexGatewayResidentConfiguration(environment: environment)
       } else {
-        configuration = try await HexGatewayResidentConfiguration.loadPersisted()
+        let inferenceProviderFactory = HexGatewayInferenceProviderFactory(
+          makeMLXProvider: { settings in
+            try MLXLocalInferenceProviderBuilder().makeInferenceProvider(for: settings)
+          }
+        )
+        configuration = try await HexGatewayResidentConfiguration.loadPersisted(
+          inferenceProviderFactory: inferenceProviderFactory
+        )
       }
       let host = try await HexGatewayResidentHost.open(configuration: configuration)
       try await host.run()

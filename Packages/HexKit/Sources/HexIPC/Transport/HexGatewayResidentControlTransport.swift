@@ -16,3 +16,56 @@ public protocol HexGatewayResidentControlTransport: Sendable {
     lease: GatewayTransportConnectionLease
   ) async throws -> GatewayResidentStatus
 }
+
+extension HexGatewayResidentControlTransport {
+  /// Returns the current bounded schedule projection. Implementations that do not expose the
+  /// optional heartbeat-management capability fail closed instead of silently returning local data.
+  public func listHeartbeats(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    throw GatewayFailure(
+      code: .transportUnavailable,
+      message: "The connected gateway transport does not support heartbeat schedule management."
+    )
+  }
+
+  public func addHeartbeat(
+    _ request: GatewayHeartbeatScheduleRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    throw GatewayFailure(
+      code: .transportUnavailable,
+      message: "The connected gateway transport does not support heartbeat schedule management."
+    )
+  }
+
+  public func removeHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    throw GatewayFailure(
+      code: .transportUnavailable,
+      message: "The connected gateway transport does not support heartbeat schedule management."
+    )
+  }
+
+  public func pauseHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    throw GatewayFailure(
+      code: .transportUnavailable,
+      message: "The connected gateway transport does not support heartbeat schedule management."
+    )
+  }
+
+  public func resumeHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatScheduleList {
+    throw GatewayFailure(
+      code: .transportUnavailable,
+      message: "The connected gateway transport does not support heartbeat schedule management."
+    )
+  }
+}

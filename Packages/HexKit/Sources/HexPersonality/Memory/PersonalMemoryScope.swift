@@ -3,6 +3,9 @@ import Foundation
 public struct PersonalMemoryScope: Codable, Hashable, Sendable {
   public let rawValue: String
 
+  /// The default scope shared by the resident gateway and its Settings surface.
+  public static let hex = Self(uncheckedRawValue: "hex")
+
   public init(rawValue: String) throws {
     guard
       let first = rawValue.utf8.first,
@@ -28,6 +31,10 @@ public struct PersonalMemoryScope: Codable, Hashable, Sendable {
   public func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
+  }
+
+  private init(uncheckedRawValue: String) {
+    rawValue = uncheckedRawValue
   }
 
   private static func isLowercaseLetterOrDigit(_ byte: UInt8) -> Bool {

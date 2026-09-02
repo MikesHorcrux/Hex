@@ -10,6 +10,11 @@ public enum GatewayXPCOperation: String, Codable, Hashable, Sendable {
   case status
   case pauseHeartbeats
   case resumeHeartbeats
+  case listHeartbeats
+  case addHeartbeat
+  case removeHeartbeat
+  case pauseHeartbeat
+  case resumeHeartbeat
   case subscribeEvents
   case cancelSubscription
   case disconnect

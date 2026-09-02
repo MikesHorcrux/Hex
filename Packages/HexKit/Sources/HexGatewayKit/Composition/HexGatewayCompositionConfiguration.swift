@@ -19,10 +19,17 @@ public struct HexGatewayCompositionConfiguration: Sendable {
   public let toolExecutor: any ToolExecutor
   public let authorizationProvider: any AuthorizationProvider
   public let personalityContext: PersonalityContext?
+  public let personalityContextService: PersonalityContextService?
+  public let personalityMemoryQuery: PersonalMemoryQuery?
 
   /// When present, the gateway ignores client-requested working directories and supplies this
   /// host-owned directory to every runtime tool execution context.
   public let enforcedWorkingDirectory: URL?
+
+  /// When present, the gateway uses this host-selected model for every runtime inference request.
+  /// A resident host supplies the model selected by its persisted backend settings so a stale XPC
+  /// client's model field cannot route inference to a different model.
+  public let enforcedModelID: ModelID?
 
   public init(
     journalConfiguration: SQLiteAgentEventJournalConfiguration,
@@ -32,7 +39,10 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     gatewayConfiguration: GatewayConfiguration = .standard,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
     personalityContext: PersonalityContext? = nil,
-    enforcedWorkingDirectory: URL? = nil
+    personalityContextService: PersonalityContextService? = nil,
+    personalityMemoryQuery: PersonalMemoryQuery? = nil,
+    enforcedWorkingDirectory: URL? = nil,
+    enforcedModelID: ModelID? = nil
   ) {
     self.journalConfiguration = journalConfiguration
     journal = nil
@@ -42,7 +52,10 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.toolExecutor = toolExecutor
     self.authorizationProvider = authorizationProvider
     self.personalityContext = personalityContext
+    self.personalityContextService = personalityContextService
+    self.personalityMemoryQuery = personalityMemoryQuery
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
+    self.enforcedModelID = enforcedModelID
   }
 
   /// Creates a composition around a caller-owned durable journal. The composition does not close
@@ -55,7 +68,10 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     gatewayConfiguration: GatewayConfiguration = .standard,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
     personalityContext: PersonalityContext? = nil,
-    enforcedWorkingDirectory: URL? = nil
+    personalityContextService: PersonalityContextService? = nil,
+    personalityMemoryQuery: PersonalMemoryQuery? = nil,
+    enforcedWorkingDirectory: URL? = nil,
+    enforcedModelID: ModelID? = nil
   ) {
     journalConfiguration = nil
     self.journal = journal
@@ -65,7 +81,10 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.toolExecutor = toolExecutor
     self.authorizationProvider = authorizationProvider
     self.personalityContext = personalityContext
+    self.personalityContextService = personalityContextService
+    self.personalityMemoryQuery = personalityMemoryQuery
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
+    self.enforcedModelID = enforcedModelID
   }
 
   public static func inert(

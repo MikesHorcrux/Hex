@@ -55,6 +55,7 @@ struct AgentWorkspaceView: View {
       .background(Color(nsColor: .windowBackgroundColor))
     }
     .task {
+      await model.restoreConversationHistory()
       guard connectOnAppear else { return }
       await model.connect()
     }

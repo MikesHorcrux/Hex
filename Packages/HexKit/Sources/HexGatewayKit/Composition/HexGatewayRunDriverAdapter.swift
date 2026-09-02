@@ -11,6 +11,9 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
 
   private let journal: HexGatewayEventJournal
   private let personalityMessages: [Message]
+  private let personalityContextService: PersonalityContextService?
+  private let personalityMemoryQuery: PersonalMemoryQuery?
+  private let enforcedModelID: ModelID?
   private let enforcedWorkingDirectory: URL?
 
   public init(
@@ -20,6 +23,9 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
     journal: any AgentEventJournal,
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration(),
     personalityContext: PersonalityContext? = nil,
+    personalityContextService: PersonalityContextService? = nil,
+    personalityMemoryQuery: PersonalMemoryQuery? = nil,
+    enforcedModelID: ModelID? = nil,
     enforcedWorkingDirectory: URL? = nil
   ) {
     let eventJournal = HexGatewayEventJournal(base: journal)
@@ -32,6 +38,9 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       configuration: runtimeConfiguration
     )
     personalityMessages = personalityContext?.messages ?? []
+    self.personalityContextService = personalityContextService
+    self.personalityMemoryQuery = personalityMemoryQuery
+    self.enforcedModelID = enforcedModelID
     self.enforcedWorkingDirectory = enforcedWorkingDirectory
   }
 
@@ -40,17 +49,31 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
     emit: @escaping @Sendable (AgentEventRecord) async throws -> Void
   ) async throws {
     try await journal.installEmitter(for: request.runID, emit: emit)
-    let agentRequest = AgentRunRequest(
-      runID: request.runID,
-      modelID: request.modelID,
-      initialMessages: personalityMessages + request.initialMessages,
-      options: request.options,
-      toolChoice: request.toolChoice,
-      // A resident host grants its configured workspace identity; an XPC client cannot replace it.
-      workingDirectory: enforcedWorkingDirectory ?? request.workingDirectory
-    )
 
     do {
+      let contextMessages: [Message]
+      if let personalityContextService {
+        guard let personalityMemoryQuery else {
+          throw HexGatewayCompositionError.invalidPersonalityConfiguration
+        }
+        let context = try await personalityContextService.assemble(
+          query: personalityMemoryQuery
+        )
+        contextMessages = context.messages
+      } else {
+        contextMessages = personalityMessages
+      }
+
+      let agentRequest = AgentRunRequest(
+        runID: request.runID,
+        modelID: enforcedModelID ?? request.modelID,
+        initialMessages: request.initialMessages,
+        contextMessages: contextMessages,
+        options: request.options,
+        toolChoice: request.toolChoice,
+        // A resident host grants its configured workspace identity; an XPC client cannot replace it.
+        workingDirectory: enforcedWorkingDirectory ?? request.workingDirectory
+      )
       _ = try await runtime.run(agentRequest)
       await journal.removeEmitter(for: request.runID)
     } catch {

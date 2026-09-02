@@ -8,7 +8,7 @@ extension AgentRuntime {
     let tools = try await discoverTools()
     try validateToolSnapshot(tools, request: request, model: model)
 
-    var conversation = request.initialMessages
+    var conversation = request.contextMessages + request.initialMessages
     var turns: [InferenceTurn] = []
     var seenToolCallIDs = try initialToolCallIDs(in: conversation)
     var seenAuthorizationRequestIDs = Set<AuthorizationRequestID>()

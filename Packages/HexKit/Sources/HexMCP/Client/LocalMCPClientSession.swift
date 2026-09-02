@@ -5,7 +5,7 @@ public actor LocalMCPClientSession: MCPClientSession {
   public nonisolated let serverID: String
   public private(set) var initialization: MCPSessionInitialization?
 
-  private let configuration: MCPServerConfiguration
+  private let configuration: MCPClientSessionConfiguration
   private let connection: any MCPJSONRPCConnection
   private var state = MCPClientSessionState.disconnected
   private var lifecycleGeneration = UInt64(0)
@@ -13,12 +13,21 @@ public actor LocalMCPClientSession: MCPClientSession {
 
   public init(configuration: MCPServerConfiguration) {
     self.serverID = configuration.serverID
-    self.configuration = configuration
+    self.configuration = MCPClientSessionConfiguration(configuration)
     self.connection = MCPStdioJSONRPCConnection(configuration: configuration)
   }
 
   init(
     configuration: MCPServerConfiguration,
+    connection: any MCPJSONRPCConnection
+  ) {
+    self.serverID = configuration.serverID
+    self.configuration = MCPClientSessionConfiguration(configuration)
+    self.connection = connection
+  }
+
+  init(
+    configuration: MCPClientSessionConfiguration,
     connection: any MCPJSONRPCConnection
   ) {
     self.serverID = configuration.serverID

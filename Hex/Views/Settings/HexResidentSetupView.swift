@@ -45,6 +45,9 @@ struct HexResidentSetupView: View {
         Text("Workspace")
       }
 
+      HexMCPIntegrationsView(model: model)
+      HexHTTPMCPServersView(model: model)
+
       HexComputerAccessView()
 
       if let statusMessage = model.statusMessage {

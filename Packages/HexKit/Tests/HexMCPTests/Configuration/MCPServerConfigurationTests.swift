@@ -64,6 +64,63 @@ struct MCPServerConfigurationTests {
     #expect(configuration.environment["MCP_XCODE_SESSION_ID"] == sessionID)
   }
 
+  @Test("Creates pinned Playwright and Peekaboo configurations without ambient credentials")
+  func createsManagedToolConfigurations() throws {
+    let installation = try makeManagedToolInstallation()
+    defer { try? FileManager.default.removeItem(at: installation.rootURL) }
+    let workspace = installation.rootURL.appendingPathComponent("workspace", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false)
+
+    let playwright = try MCPServerConfiguration.playwright(
+      layout: installation.layout,
+      workspaceRoot: workspace,
+      sourceEnvironment: [
+        "HOME": "/Users/example",
+        "OPENAI_API_KEY": "must-not-cross-the-boundary",
+      ]
+    )
+    let peekaboo = try MCPServerConfiguration.peekaboo(
+      layout: installation.layout,
+      workspaceRoot: workspace,
+      sourceEnvironment: [
+        "HOME": "/Users/example",
+        "OPENAI_API_KEY": "must-not-cross-the-boundary",
+      ]
+    )
+
+    #expect(playwright.serverID == "playwright")
+    #expect(playwright.executableURL == installation.layout.nodeExecutableURL)
+    #expect(playwright.arguments.first == installation.layout.playwrightServerScriptURL.path)
+    #expect(
+      playwright.environment["PLAYWRIGHT_BROWSERS_PATH"]
+        == installation.layout.playwrightBrowsersURL.path
+    )
+    #expect(playwright.environment["OPENAI_API_KEY"] == nil)
+    #expect(peekaboo.serverID == "peekaboo")
+    #expect(peekaboo.executableURL == installation.layout.peekabooExecutableURL)
+    #expect(peekaboo.arguments == ["mcp", "serve", "--input-strategy", "actionFirst"])
+    #expect(peekaboo.environment["OPENAI_API_KEY"] == nil)
+  }
+
+  @Test("Rejects incomplete managed tool installations")
+  func rejectsIncompleteManagedToolInstallations() throws {
+    let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "HexManagedTools-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    let layout = try MCPManagedToolLayout(rootURL: rootURL)
+
+    #expect(layout.availability(for: .playwright) == .unavailable)
+    #expect(layout.availability(for: .peekaboo) == .unavailable)
+    #expect(throws: MCPManagedToolLayoutError.invalidInstallation(.playwright)) {
+      try layout.validate(.playwright)
+    }
+    #expect(throws: MCPManagedToolLayoutError.invalidInstallation(.peekaboo)) {
+      try layout.validate(.peekaboo)
+    }
+  }
+
   @Test("Rejects invalid explicit Xcode routing values")
   func rejectsInvalidXcodeRoutingValues() {
     #expect(throws: MCPServerConfigurationError.invalidEnvironment) {
@@ -164,6 +221,61 @@ struct MCPServerConfigurationTests {
         maximumEntriesPerSlot: 8,
         maximumPathMetadataBytesPerSlot: 4_096,
         maximumCopiedBytesPerSlot: 1_024
+      )
+    }
+  }
+
+  private func makeManagedToolInstallation() throws -> (
+    rootURL: URL,
+    layout: MCPManagedToolLayout
+  ) {
+    let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "HexManagedTools-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    let layout = try MCPManagedToolLayout(rootURL: rootURL)
+    try writeFixture("node", to: layout.nodeExecutableURL, executable: true)
+    try writeFixture("#!/usr/bin/env node", to: layout.playwrightServerScriptURL)
+    let packageData = try JSONSerialization.data(
+      withJSONObject: [
+        "name": "@playwright/mcp",
+        "version": MCPManagedToolLayout.playwrightVersion,
+        "license": "Apache-2.0",
+      ],
+      options: [.sortedKeys]
+    )
+    try writeFixture(packageData, to: layout.playwrightPackageManifestURL)
+    try writeFixture("browser", to: layout.playwrightBrowserExecutableURL, executable: true)
+    try writeFixture("peekaboo", to: layout.peekabooExecutableURL, executable: true)
+    try writeFixture(
+      MCPManagedToolLayout.peekabooVersion,
+      to: layout.peekabooVersionFileURL
+    )
+    return (rootURL, layout)
+  }
+
+  private func writeFixture(
+    _ value: String,
+    to url: URL,
+    executable: Bool = false
+  ) throws {
+    try writeFixture(Data(value.utf8), to: url, executable: executable)
+  }
+
+  private func writeFixture(
+    _ data: Data,
+    to url: URL,
+    executable: Bool = false
+  ) throws {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try data.write(to: url, options: .atomic)
+    if executable {
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: url.path
       )
     }
   }

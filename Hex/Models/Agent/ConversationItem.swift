@@ -1,7 +1,7 @@
 import Foundation
 
-struct ConversationItem: Identifiable, Equatable, Sendable {
-  enum Role: String, Sendable {
+nonisolated struct ConversationItem: Codable, Identifiable, Equatable, Sendable {
+  nonisolated enum Role: String, Codable, Sendable {
     case user
     case assistant
     case tool

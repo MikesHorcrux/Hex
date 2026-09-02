@@ -4,7 +4,9 @@ import Dispatch
 import HexCapabilities
 import HexCore
 import HexIPC
+import HexMCP
 import HexPersistence
+import HexPersonality
 import HexProviders
 
 /// Owns the headless gateway process lifetime. It composes the real provider/tool/runtime graph,
@@ -29,6 +31,7 @@ public final class HexGatewayResidentHost {
   private let heartbeatClient: HexGatewayClient
   private let heartbeatScheduler: HexHeartbeatScheduler
   private let authorizationBroker: HexGatewayAuthorizationBroker
+  private let mcpToolExecutors: [MCPManagedToolExecutor]
   private let listener: NSXPCListener
   private let listenerDelegate: HexGatewayXPCListenerDelegate
   private var signalSources: [DispatchSourceSignal] = []
@@ -43,33 +46,52 @@ public final class HexGatewayResidentHost {
     let authorizationBroker = HexGatewayAuthorizationBroker()
     let fileSystem = try WorkspaceFileSystem(root: configuration.workspaceRoot)
     let processExecutor = POSIXProcessExecutor()
-    let toolExecutor = try PersonalAgentToolExecutor(
+    let personalMemoryStore = try JSONPersonalMemoryStore(
+      fileURL: configuration.personalMemoryURL
+    )
+    let personalMemoryToolExecutor = try PersonalMemoryToolExecutor(
+      memoryStore: personalMemoryStore,
+      scope: configuration.personalMemoryScope
+    )
+    let personalToolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
       processExecutor: processExecutor
+    )
+    let mcpToolExecutors = try configuration.mcpClientSessions.map {
+      try MCPManagedToolExecutor(session: $0)
+    }
+    let routedToolExecutor = try CompositeToolExecutor(
+      executors: [personalToolExecutor, personalMemoryToolExecutor] + mcpToolExecutors
     )
     let authorizationProvider = CapabilityAuthorizationCenter(
       prompter: authorizationBroker
     )
-    let providerID = ProviderID(rawValue: "openai")
-    let model = ModelDescriptor(
-      id: ModelID(rawValue: configuration.modelID),
-      providerID: providerID,
-      displayName: configuration.modelID,
-      capabilities: [.textInput, .streaming, .toolCalling]
-    )
-    let providerConfiguration = try OpenAIResponsesConfiguration(models: [model])
-    let inferenceProvider = OpenAIResponsesProvider(
-      configuration: providerConfiguration,
+    let inferenceProvider = try configuration.inferenceProviderFactory.makeInferenceProvider(
+      for: configuration.inferenceBackendSettings,
       credentialProvider: configuration.makeCredentialProvider()
+    )
+    let personalityProfileStore = try JSONPersonalityProfileStore(
+      fileURL: configuration.personalityProfileURL
+    )
+    let personalityContextService = try PersonalityContextService(
+      profileStore: personalityProfileStore,
+      memoryStore: personalMemoryStore
+    )
+    let personalityMemoryQuery = try PersonalMemoryQuery(
+      scope: configuration.personalMemoryScope,
+      limit: 64
     )
     let compositionConfiguration = HexGatewayCompositionConfiguration(
       journalConfiguration: SQLiteAgentEventJournalConfiguration(
         databaseURL: configuration.databaseURL
       ),
       inferenceProvider: inferenceProvider,
-      toolExecutor: toolExecutor,
+      toolExecutor: routedToolExecutor,
       authorizationProvider: authorizationProvider,
-      enforcedWorkingDirectory: configuration.workspaceRoot
+      personalityContextService: personalityContextService,
+      personalityMemoryQuery: personalityMemoryQuery,
+      enforcedWorkingDirectory: configuration.workspaceRoot,
+      enforcedModelID: ModelID(rawValue: configuration.modelID)
     )
     let composition = try await HexGatewayComposition.open(
       configuration: compositionConfiguration
@@ -96,7 +118,8 @@ public final class HexGatewayResidentHost {
       composition: composition,
       heartbeatClient: heartbeatClient,
       heartbeatScheduler: heartbeatScheduler,
-      authorizationBroker: authorizationBroker
+      authorizationBroker: authorizationBroker,
+      mcpToolExecutors: mcpToolExecutors
     )
   }
 
@@ -105,13 +128,15 @@ public final class HexGatewayResidentHost {
     composition: HexGatewayComposition,
     heartbeatClient: HexGatewayClient,
     heartbeatScheduler: HexHeartbeatScheduler,
-    authorizationBroker: HexGatewayAuthorizationBroker
+    authorizationBroker: HexGatewayAuthorizationBroker,
+    mcpToolExecutors: [MCPManagedToolExecutor]
   ) {
     self.configuration = configuration
     self.composition = composition
     self.heartbeatClient = heartbeatClient
     self.heartbeatScheduler = heartbeatScheduler
     self.authorizationBroker = authorizationBroker
+    self.mcpToolExecutors = mcpToolExecutors
     listener = NSXPCListener(machServiceName: configuration.machServiceName)
     let service = composition.service
     let gatewayConfiguration = composition.gatewayConfiguration
@@ -124,6 +149,9 @@ public final class HexGatewayResidentHost {
       }
       return await service.hasActiveRun() ? .active : .idle
     }
+    let listHeartbeats: @Sendable () async throws -> GatewayHeartbeatScheduleList = {
+      try HexGatewayHeartbeatScheduleMapper.list(from: await scheduler.snapshot())
+    }
     let residentControlHandlers = HexGatewayResidentControlHandlers(
       status: statusHandler,
       pauseHeartbeats: {
@@ -133,6 +161,27 @@ public final class HexGatewayResidentHost {
       resumeHeartbeats: {
         try await scheduler.resumeAll()
         return try await statusHandler()
+      },
+      listHeartbeats: listHeartbeats,
+      addHeartbeat: { request in
+        let schedule = try HexGatewayHeartbeatScheduleMapper.schedule(from: request)
+        try await scheduler.add(schedule)
+        return try await listHeartbeats()
+      },
+      removeHeartbeat: { mutation in
+        let mutation = try mutation.validated()
+        try await scheduler.remove(HexHeartbeatScheduleID(rawValue: mutation.scheduleID))
+        return try await listHeartbeats()
+      },
+      pauseHeartbeat: { mutation in
+        let mutation = try mutation.validated()
+        try await scheduler.pause(HexHeartbeatScheduleID(rawValue: mutation.scheduleID))
+        return try await listHeartbeats()
+      },
+      resumeHeartbeat: { mutation in
+        let mutation = try mutation.validated()
+        try await scheduler.resume(HexHeartbeatScheduleID(rawValue: mutation.scheduleID))
+        return try await listHeartbeats()
       }
     )
     listenerDelegate = HexGatewayXPCListenerDelegate(
@@ -202,6 +251,9 @@ public final class HexGatewayResidentHost {
     await heartbeatScheduler.stop()
     await disconnectHeartbeatClientWithoutCancellation()
     await authorizationBroker.cancelAll()
+    for executor in mcpToolExecutors.reversed() {
+      await executor.stop()
+    }
     do {
       try await composition.close()
     } catch {
@@ -228,6 +280,16 @@ public final class HexGatewayResidentHost {
   /// Reports whether the resident heartbeat loop is active.
   public func heartbeatIsRunning() async -> Bool {
     await heartbeatScheduler.isRunning()
+  }
+
+  /// Returns each configured MCP server's current connection/catalog health without triggering a
+  /// connection attempt. A disconnected or unavailable server is retried by the next agent run.
+  public func mcpServerStates() async -> [String: MCPManagedToolExecutorState] {
+    var states: [String: MCPManagedToolExecutorState] = [:]
+    for executor in mcpToolExecutors {
+      states[executor.serverID] = await executor.currentState()
+    }
+    return states
   }
 
   /// Requests an idempotent graceful shutdown. This does not install, unregister, or otherwise
