@@ -9,6 +9,7 @@ public enum ChatGPTCodexOAuthError: Error, Equatable, LocalizedError, Sendable {
   case rateLimited
   case tokenExchangeFailed
   case refreshRejected
+  case unexpectedResponse
   case transportFailed
 
   public var errorDescription: String? {
@@ -27,6 +28,8 @@ public enum ChatGPTCodexOAuthError: Error, Equatable, LocalizedError, Sendable {
       "ChatGPT sign-in could not complete. Start sign-in again."
     case .refreshRejected:
       "The ChatGPT session expired or was replaced. Sign in again."
+    case .unexpectedResponse:
+      "OpenAI's sign-in service returned a response Hex could not understand. Update Hex and try again."
     case .transportFailed:
       "Hex could not reach OpenAI's sign-in service."
     }

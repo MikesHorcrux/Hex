@@ -39,21 +39,33 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
     let response = try await send(request)
     guard response.statusCode != 429 else { throw ChatGPTCodexOAuthError.rateLimited }
     guard response.statusCode == 200 else { throw ChatGPTCodexOAuthError.transportFailed }
-    let decoded: DeviceAuthorizationResponse = try Self.decode(response.data)
+    return try Self.decodeDeviceAuthorizationChallenge(response.data)
+  }
+
+  static func decodeDeviceAuthorizationChallenge(
+    _ data: Data,
+    receivedAt: Date = Date()
+  ) throws -> ChatGPTCodexDeviceAuthorizationChallenge {
+    let decoded: DeviceAuthorizationResponse
+    do {
+      decoded = try JSONDecoder().decode(DeviceAuthorizationResponse.self, from: data)
+    } catch {
+      throw ChatGPTCodexOAuthError.unexpectedResponse
+    }
     let interval = TimeInterval(max(3, min(decoded.interval ?? 5, 30)))
     guard
       Self.isValidOpaqueValue(decoded.userCode, maximumBytes: 128),
       Self.isValidOpaqueValue(decoded.deviceAuthorizationID, maximumBytes: 2_048),
       let verificationURL = URL(string: "\(Self.issuer)/codex/device")
     else {
-      throw ChatGPTCodexOAuthError.transportFailed
+      throw ChatGPTCodexOAuthError.unexpectedResponse
     }
     return ChatGPTCodexDeviceAuthorizationChallenge(
       userCode: decoded.userCode,
       verificationURL: verificationURL,
       deviceAuthorizationID: decoded.deviceAuthorizationID,
       pollInterval: interval,
-      expiresAt: Date().addingTimeInterval(15 * 60)
+      expiresAt: receivedAt.addingTimeInterval(15 * 60)
     )
   }
 
@@ -246,6 +258,39 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
       case userCode = "user_code"
       case deviceAuthorizationID = "device_auth_id"
       case interval
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      userCode = try container.decode(String.self, forKey: .userCode)
+      deviceAuthorizationID = try container.decode(String.self, forKey: .deviceAuthorizationID)
+
+      guard container.contains(.interval) else {
+        interval = nil
+        return
+      }
+      guard try !container.decodeNil(forKey: .interval) else {
+        interval = nil
+        return
+      }
+
+      if let numericInterval = try? container.decode(Int.self, forKey: .interval) {
+        interval = numericInterval
+      } else {
+        let stringInterval = try container.decode(String.self, forKey: .interval)
+        guard
+          !stringInterval.isEmpty,
+          stringInterval.utf8.allSatisfy({ (0x30...0x39).contains($0) }),
+          let numericInterval = Int(stringInterval)
+        else {
+          throw DecodingError.dataCorruptedError(
+            forKey: .interval,
+            in: container,
+            debugDescription: "Polling interval must contain only decimal digits."
+          )
+        }
+        interval = numericInterval
+      }
     }
   }
 
