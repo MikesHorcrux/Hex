@@ -4,6 +4,7 @@ import Dispatch
 import HexCapabilities
 import HexCore
 import HexIPC
+import HexMCP
 import HexPersistence
 import HexProviders
 
@@ -29,6 +30,7 @@ public final class HexGatewayResidentHost {
   private let heartbeatClient: HexGatewayClient
   private let heartbeatScheduler: HexHeartbeatScheduler
   private let authorizationBroker: HexGatewayAuthorizationBroker
+  private let mcpToolExecutors: [MCPManagedToolExecutor]
   private let listener: NSXPCListener
   private let listenerDelegate: HexGatewayXPCListenerDelegate
   private var signalSources: [DispatchSourceSignal] = []
@@ -43,9 +45,15 @@ public final class HexGatewayResidentHost {
     let authorizationBroker = HexGatewayAuthorizationBroker()
     let fileSystem = try WorkspaceFileSystem(root: configuration.workspaceRoot)
     let processExecutor = POSIXProcessExecutor()
-    let toolExecutor = try PersonalAgentToolExecutor(
+    let personalToolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
       processExecutor: processExecutor
+    )
+    let mcpToolExecutors = try configuration.mcpClientSessions.map {
+      try MCPManagedToolExecutor(session: $0)
+    }
+    let routedToolExecutor = try CompositeToolExecutor(
+      executors: [personalToolExecutor] + mcpToolExecutors
     )
     let authorizationProvider = CapabilityAuthorizationCenter(
       prompter: authorizationBroker
@@ -67,7 +75,7 @@ public final class HexGatewayResidentHost {
         databaseURL: configuration.databaseURL
       ),
       inferenceProvider: inferenceProvider,
-      toolExecutor: toolExecutor,
+      toolExecutor: routedToolExecutor,
       authorizationProvider: authorizationProvider,
       enforcedWorkingDirectory: configuration.workspaceRoot
     )
@@ -96,7 +104,8 @@ public final class HexGatewayResidentHost {
       composition: composition,
       heartbeatClient: heartbeatClient,
       heartbeatScheduler: heartbeatScheduler,
-      authorizationBroker: authorizationBroker
+      authorizationBroker: authorizationBroker,
+      mcpToolExecutors: mcpToolExecutors
     )
   }
 
@@ -105,13 +114,15 @@ public final class HexGatewayResidentHost {
     composition: HexGatewayComposition,
     heartbeatClient: HexGatewayClient,
     heartbeatScheduler: HexHeartbeatScheduler,
-    authorizationBroker: HexGatewayAuthorizationBroker
+    authorizationBroker: HexGatewayAuthorizationBroker,
+    mcpToolExecutors: [MCPManagedToolExecutor]
   ) {
     self.configuration = configuration
     self.composition = composition
     self.heartbeatClient = heartbeatClient
     self.heartbeatScheduler = heartbeatScheduler
     self.authorizationBroker = authorizationBroker
+    self.mcpToolExecutors = mcpToolExecutors
     listener = NSXPCListener(machServiceName: configuration.machServiceName)
     let service = composition.service
     let gatewayConfiguration = composition.gatewayConfiguration
@@ -202,6 +213,9 @@ public final class HexGatewayResidentHost {
     await heartbeatScheduler.stop()
     await disconnectHeartbeatClientWithoutCancellation()
     await authorizationBroker.cancelAll()
+    for executor in mcpToolExecutors.reversed() {
+      await executor.stop()
+    }
     do {
       try await composition.close()
     } catch {
@@ -228,6 +242,16 @@ public final class HexGatewayResidentHost {
   /// Reports whether the resident heartbeat loop is active.
   public func heartbeatIsRunning() async -> Bool {
     await heartbeatScheduler.isRunning()
+  }
+
+  /// Returns each configured MCP server's current connection/catalog health without triggering a
+  /// connection attempt. A disconnected or unavailable server is retried by the next agent run.
+  public func mcpServerStates() async -> [String: MCPManagedToolExecutorState] {
+    var states: [String: MCPManagedToolExecutorState] = [:]
+    for executor in mcpToolExecutors {
+      states[executor.serverID] = await executor.currentState()
+    }
+    return states
   }
 
   /// Requests an idempotent graceful shutdown. This does not install, unregister, or otherwise

@@ -17,7 +17,14 @@ struct HexGatewayResidentPersistenceTests {
     let paths = try makePaths(in: root)
     let settings = try HexResidentRuntimeSettings(
       modelID: "gpt-persisted",
-      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace")
+      workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace"),
+      mcpServers: [
+        try HexResidentMCPServerSettings(
+          serverID: "docs",
+          transport: .streamableHTTP,
+          endpointURL: URL(string: "https://mcp.example.com")
+        )
+      ]
     )
     let settingsStore = SettingsStore(value: settings)
     let secretStore = SecretStore(value: "sk-persisted-secret")
@@ -32,6 +39,7 @@ struct HexGatewayResidentPersistenceTests {
     #expect(configuration.workspaceRoot.path == "/tmp/hex-workspace")
     #expect(configuration.databaseURL == paths.databaseURL)
     #expect(configuration.heartbeatStoreURL == paths.heartbeatStoreURL)
+    #expect(configuration.mcpClientSessions.map(\.serverID) == ["docs"])
     #expect(await secretStore.didReadValue() == false)
     #expect(try await configuration.makeCredentialProvider().apiKey() == "sk-persisted-secret")
     #expect(await secretStore.didReadValue())

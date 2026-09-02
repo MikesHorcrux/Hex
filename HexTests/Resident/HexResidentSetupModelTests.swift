@@ -69,17 +69,49 @@ struct HexResidentSetupModelTests {
     defer { try? FileManager.default.removeItem(at: workspace) }
     model.modelID = "gpt-5-codex"
     model.apiKey = "sk-test-value"
+    model.xcodeMCPEnabled = true
     model.chooseWorkspace(workspace)
     model.save()
     try await waitForSave(model)
 
     #expect(await settingsStore.savedSettings?.modelID == "gpt-5-codex")
     #expect(await settingsStore.savedSettings?.workspaceRoot == workspace.standardizedFileURL)
+    #expect(await settingsStore.savedSettings?.mcpServers == [try .xcode()])
     #expect(await secretStore.value == "sk-test-value")
     #expect(model.apiKey.isEmpty)
     #expect(model.hasStoredAPIKey)
     #expect(model.statusMessage == "Resident settings saved.")
     #expect(model.errorMessage == nil)
+  }
+
+  @Test @MainActor
+  func loadAndSavePreserveHTTPServersWhileTogglingXcode() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let httpServer = try HexResidentMCPServerSettings(
+      serverID: "docs",
+      transport: .streamableHTTP,
+      endpointURL: URL(string: "https://mcp.example.com")
+    )
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "existing-model",
+      workspaceRoot: workspace,
+      mcpServers: [httpServer, try .xcode()]
+    )
+    let settingsStore = FakeSettingsStore(settings: settings)
+    let secretStore = FakeSecretStore(value: "existing-secret")
+    let model = HexResidentSetupModel(
+      settingsStore: settingsStore,
+      secretStore: secretStore
+    )
+
+    await model.load()
+    #expect(model.xcodeMCPEnabled)
+    model.xcodeMCPEnabled = false
+    model.save()
+    try await waitForSave(model)
+
+    #expect(await settingsStore.savedSettings?.mcpServers == [httpServer])
   }
 
   @Test @MainActor

@@ -12,6 +12,21 @@ published and cannot be called directly. This fail-closed rule follows a tool's 
 capabilities. A future stateless MCP revision should be added as a separate negotiation path instead
 of silently changing the local legacy handshake.
 
+The resident gateway can also construct handshake-era Streamable HTTP clients through protocol
+revision `2025-11-25`. HTTPS is required except for literal loopback HTTP endpoints. The transport
+rejects redirects, URL credentials and queries, caller overrides of transport-owned headers,
+duplicate JSON members, oversized responses, and unbounded SSE streams. HTTP authentication headers
+come from an injected process-only `MCPHTTPHeaderProvider`; they are not part of resident Codable
+settings. The stateless `2026-07-28` revision remains a separate future negotiation path.
+
+Configured servers are wrapped independently and merged with Hex's native Mac, web, terminal, and
+workspace tools through `CompositeToolExecutor`. Discovery starts each MCP connection lazily at an
+agent-run boundary. A server that is absent or stops responding contributes no tools to that run and
+is retried at the next discovery boundary; it does not remove native tools or another MCP server's
+catalog. MCP calls still pass through Hex-owned authorization and ordinary runtime journaling. The
+resident host exposes each wrapper's disconnected, connecting, ready, or unavailable state and
+closes all MCP sessions during ordered shutdown.
+
 ## Boundary rules
 
 - Open the configured executable without following symbolic links and require its descriptor to
@@ -67,8 +82,9 @@ of silently changing the local legacy handshake.
 - Treat server annotations, descriptions, schemas, content, stderr, and errors as untrusted input.
 - Namespace tools as `mcp.<server>.<tool>` and derive authorization from Hex-owned policy metadata.
   The MCP server never grants authority to itself.
-- Keep `availableTools()` side-effect free by publishing an atomic cached catalog only after the
-  explicit `MCPToolExecutor.start()` boundary succeeds.
+- Keep the low-level `MCPToolExecutor.availableTools()` side-effect free by publishing an atomic
+  cached catalog only after its explicit `start()` boundary succeeds. The resident-only managed
+  wrapper owns the deliberate lazy start/retry policy at runtime discovery boundaries.
 
 The spawner compares descriptor-backed and named identities and metadata before and immediately
 after `posix_spawn`. This detects configured-source changes during snapshot construction and snapshot

@@ -45,6 +45,20 @@ struct HexResidentSetupView: View {
         Text("Workspace")
       }
 
+      Section {
+        Toggle("Use Xcode MCP tools", isOn: $model.xcodeMCPEnabled)
+          .accessibilityIdentifier("residentXcodeMCPToggle")
+
+        Text(
+          "When Xcode is open, Hex can discover its MCP tools through Xcode's local stdio bridge. "
+            + "The bridge starts lazily when an agent run needs tools."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      } header: {
+        Text("Model Context Protocol")
+      }
+
       HexComputerAccessView()
 
       if let statusMessage = model.statusMessage {

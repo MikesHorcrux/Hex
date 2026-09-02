@@ -1,6 +1,7 @@
 import Foundation
 import HexCore
 import HexIPC
+import HexMCP
 import HexPersistence
 import HexProviders
 
@@ -15,6 +16,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     case applicationSupportUnavailable
     case settingsUnavailable
     case credentialsUnavailable
+    case mcpConfigurationUnavailable
 
     public var errorDescription: String? {
       switch self {
@@ -28,6 +30,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
         "Hex resident settings are unavailable or invalid."
       case .credentialsUnavailable:
         "Hex resident credentials are unavailable."
+      case .mcpConfigurationUnavailable:
+        "Hex resident MCP configuration is unavailable or invalid."
       }
     }
   }
@@ -39,6 +43,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
   private static let databaseVariable = "HEX_GATEWAY_DATABASE_URL"
   private static let heartbeatStoreVariable = "HEX_HEARTBEAT_STORE_URL"
   private static let heartbeatDatabaseVariable = "HEX_HEARTBEAT_DATABASE_URL"
+  private static let xcodeMCPVariable = "HEX_XCODE_MCP_ENABLED"
 
   public let machServiceName: String
   public let modelID: String
@@ -47,6 +52,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let heartbeatStoreURL: URL
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
   public let credentialProvider: any OpenAICredentialProvider
+  public let mcpClientSessions: [any MCPClientSession]
 
   /// Parses the complete, explicit developer environment override. The API key remains in the
   /// resulting process-only memory provider and is never copied to a persisted settings file.
@@ -100,6 +106,27 @@ public struct HexGatewayResidentConfiguration: Sendable {
       heartbeatStoreURL = databaseURL.deletingLastPathComponent()
         .appendingPathComponent("heartbeats.json", isDirectory: false)
     }
+    let mcpClientSessions: [any MCPClientSession]
+    if let rawXcodeMCP = Self.value(named: Self.xcodeMCPVariable, in: environment) {
+      switch rawXcodeMCP.lowercased() {
+      case "1", "true", "yes":
+        do {
+          mcpClientSessions = [
+            LocalMCPClientSession(
+              configuration: try MCPServerConfiguration.xcode(sourceEnvironment: environment)
+            )
+          ]
+        } catch {
+          throw ConfigurationError.mcpConfigurationUnavailable
+        }
+      case "0", "false", "no":
+        mcpClientSessions = []
+      default:
+        throw ConfigurationError.invalidVariable(Self.xcodeMCPVariable)
+      }
+    } else {
+      mcpClientSessions = []
+    }
 
     try self.init(
       machServiceName: machServiceName,
@@ -108,6 +135,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: databaseURL,
       apiKey: apiKey,
       heartbeatStoreURL: heartbeatStoreURL,
+      mcpClientSessions: mcpClientSessions,
       connectionAdmissionPolicy: .production()
     )
   }
@@ -122,6 +150,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     databaseURL: URL,
     credentialProvider: any OpenAICredentialProvider,
     heartbeatStoreURL: URL? = nil,
+    mcpClientSessions: [any MCPClientSession] = [],
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
   ) throws {
     guard Self.isPrintableASCII(machServiceName), machServiceName.utf8.count <= 256 else {
@@ -155,6 +184,12 @@ public struct HexGatewayResidentConfiguration: Sendable {
     else {
       throw ConfigurationError.invalidVariable(Self.heartbeatStoreVariable)
     }
+    guard
+      mcpClientSessions.count <= 16,
+      Set(mcpClientSessions.map(\.serverID)).count == mcpClientSessions.count
+    else {
+      throw ConfigurationError.mcpConfigurationUnavailable
+    }
 
     self.machServiceName = machServiceName
     self.modelID = modelID
@@ -163,6 +198,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.heartbeatStoreURL = standardizedHeartbeatStoreURL
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.credentialProvider = credentialProvider
+    self.mcpClientSessions = mcpClientSessions.sorted { $0.serverID < $1.serverID }
   }
 
   /// Keeps the explicit environment initializer source-compatible for local development and
@@ -174,6 +210,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     databaseURL: URL,
     apiKey: String,
     heartbeatStoreURL: URL? = nil,
+    mcpClientSessions: [any MCPClientSession] = [],
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production()
   ) throws {
     guard Self.isPrintableASCII(apiKey) else {
@@ -186,6 +223,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: databaseURL,
       credentialProvider: HexGatewayMemoryCredentialProvider(apiKey: apiKey),
       heartbeatStoreURL: heartbeatStoreURL,
+      mcpClientSessions: mcpClientSessions,
       connectionAdmissionPolicy: connectionAdmissionPolicy
     )
   }
@@ -245,6 +283,13 @@ public struct HexGatewayResidentConfiguration: Sendable {
       throw ConfigurationError.credentialsUnavailable
     }
 
+    let mcpClientSessions: [any MCPClientSession]
+    do {
+      mcpClientSessions = try Self.makeMCPClientSessions(from: settings.mcpServers)
+    } catch {
+      throw ConfigurationError.mcpConfigurationUnavailable
+    }
+
     return try Self(
       machServiceName: HexGatewayServiceIdentity.machServiceName,
       modelID: settings.modelID,
@@ -252,6 +297,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       databaseURL: resolvedPaths.databaseURL,
       credentialProvider: HexSecretStoreOpenAICredentialProvider(store: resolvedSecretStore),
       heartbeatStoreURL: resolvedPaths.heartbeatStoreURL,
+      mcpClientSessions: mcpClientSessions,
       connectionAdmissionPolicy: connectionAdmissionPolicy
     )
   }
@@ -268,11 +314,33 @@ public struct HexGatewayResidentConfiguration: Sendable {
       Self.databaseVariable,
       Self.heartbeatStoreVariable,
       Self.heartbeatDatabaseVariable,
+      Self.xcodeMCPVariable,
     ].contains { environment[$0] != nil }
   }
 
   public func makeCredentialProvider() -> any OpenAICredentialProvider {
     credentialProvider
+  }
+
+  private static func makeMCPClientSessions(
+    from settings: [HexResidentMCPServerSettings]
+  ) throws -> [any MCPClientSession] {
+    try settings.filter(\.isEnabled).map { setting in
+      switch setting.transport {
+      case .xcode:
+        return LocalMCPClientSession(configuration: try MCPServerConfiguration.xcode())
+      case .streamableHTTP:
+        guard let endpointURL = setting.endpointURL else {
+          throw ConfigurationError.mcpConfigurationUnavailable
+        }
+        return StreamableHTTPMCPClientSession(
+          configuration: try MCPStreamableHTTPServerConfiguration(
+            serverID: setting.serverID,
+            endpointURL: endpointURL
+          )
+        )
+      }
+    }
   }
 
   private static func value(

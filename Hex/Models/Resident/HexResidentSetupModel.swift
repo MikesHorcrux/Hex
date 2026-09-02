@@ -8,6 +8,7 @@ final class HexResidentSetupModel {
   var apiKey = ""
   var modelID: String
   var workspaceRoot: URL?
+  var xcodeMCPEnabled = false
 
   private(set) var isLoading = false
   private(set) var isSaving = false
@@ -19,6 +20,7 @@ final class HexResidentSetupModel {
   private let settingsStore: (any HexResidentRuntimeSettingsStore)?
   private let secretStore: (any HexSecretStore)?
   private var hasLoaded = false
+  private var loadedMCPServers: [HexResidentMCPServerSettings] = []
 
   init(
     initialModelID: String = "",
@@ -54,6 +56,10 @@ final class HexResidentSetupModel {
       if let settings = try await settingsStore.load() {
         modelID = settings.modelID
         workspaceRoot = settings.workspaceRoot
+        loadedMCPServers = settings.mcpServers
+        xcodeMCPEnabled = settings.mcpServers.contains {
+          $0.serverID == "xcode" && $0.transport == .xcode && $0.isEnabled
+        }
       }
       hasStoredAPIKey = try await secretStore.exists(.openAIAPIKey)
       errorMessage = nil
@@ -109,9 +115,14 @@ final class HexResidentSetupModel {
 
     let settings: HexResidentRuntimeSettings
     do {
+      var mcpServers = loadedMCPServers.filter { $0.serverID != "xcode" }
+      if xcodeMCPEnabled {
+        mcpServers.append(try .xcode())
+      }
       settings = try HexResidentRuntimeSettings(
         modelID: normalizedModelID,
-        workspaceRoot: workspaceRoot
+        workspaceRoot: workspaceRoot,
+        mcpServers: mcpServers
       )
     } catch {
       errorMessage = Self.safeMessage(for: error)
@@ -132,6 +143,7 @@ final class HexResidentSetupModel {
         apiKey = ""
         modelID = normalizedModelID
         self.workspaceRoot = workspaceRoot
+        loadedMCPServers = settings.mcpServers
         saveGeneration += 1
         statusMessage = "Resident settings saved."
         errorMessage = nil
