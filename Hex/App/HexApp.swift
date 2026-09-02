@@ -107,7 +107,8 @@ struct HexApp: App {
       initialValue: HexInferenceBackendSettingsModel(
         settingsStore: inferenceBackendDependencies.settingsStore,
         secretStore: inferenceBackendDependencies.secretStore,
-        makeCodexStatusProvider: inferenceBackendDependencies.makeCodexStatusProvider
+        chatGPTAuthorizationManager:
+          inferenceBackendDependencies.chatGPTAuthorizationManager
       )
     )
   }

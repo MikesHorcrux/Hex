@@ -69,7 +69,7 @@ public final class HexGatewayResidentHost {
     )
     let inferenceProvider = try configuration.inferenceProviderFactory.makeInferenceProvider(
       for: configuration.inferenceBackendSettings,
-      credentialProvider: configuration.makeCredentialProvider()
+      authorizationProvider: configuration.makeAuthorizationProvider()
     )
     let personalityProfileStore = try JSONPersonalityProfileStore(
       fileURL: configuration.personalityProfileURL

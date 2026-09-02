@@ -86,8 +86,8 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
         let resolution = try await inProcessInferenceConfiguration()
         let modelID: String
         switch resolution {
-        case .openAI(let selectedModelID, _):
-          modelID = selectedModelID
+        case .openAI(let settings, _):
+          modelID = settings.modelID
         }
         let scopedRequest = GatewayStartRunRequest(
           runID: request.runID,
@@ -334,12 +334,12 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     }
 
     let resolution = try await inProcessInferenceConfiguration()
-    let modelID: String
-    let credentialProvider: any OpenAICredentialProvider
+    let openAISettings: HexOpenAIBackendSettings
+    let openAIAuthorizationProvider: any OpenAIResponsesAuthorizationProvider
     switch resolution {
-    case .openAI(let selectedModelID, let selectedCredentialProvider):
-      modelID = selectedModelID
-      credentialProvider = selectedCredentialProvider
+    case .openAI(let settings, let selectedAuthorizationProvider):
+      openAISettings = settings
+      openAIAuthorizationProvider = selectedAuthorizationProvider
     }
     let workspaceRoot = try inProcessWorkspaceRoot()
     let fileSystem = try WorkspaceFileSystem(root: workspaceRoot)
@@ -353,15 +353,29 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     )
     let providerID = ProviderID(rawValue: "openai")
     let model = ModelDescriptor(
-      id: ModelID(rawValue: modelID),
+      id: ModelID(rawValue: openAISettings.modelID),
       providerID: providerID,
-      displayName: modelID,
-      capabilities: [.textInput, .streaming, .toolCalling]
+      displayName: openAISettings.modelID,
+      capabilities: [
+        .textInput,
+        .imageInput,
+        .streaming,
+        .toolCalling,
+        .parallelToolCalling,
+        .reasoningSummary,
+      ]
     )
-    let providerConfiguration = try OpenAIResponsesConfiguration(models: [model])
+    let service: OpenAIResponsesService =
+      openAISettings.authenticationMethod == .chatGPT
+      ? .chatGPTCodexSubscription
+      : .platformAPI
+    let providerConfiguration = try OpenAIResponsesConfiguration(
+      service: service,
+      models: [model]
+    )
     let provider = OpenAIResponsesProvider(
       configuration: providerConfiguration,
-      credentialProvider: credentialProvider
+      authorizationProvider: openAIAuthorizationProvider
     )
     let journalURL = try journalDatabaseURL()
     let compositionConfiguration = HexGatewayCompositionConfiguration(

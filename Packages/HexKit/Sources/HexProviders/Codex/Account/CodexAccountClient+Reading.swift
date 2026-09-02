@@ -1,1 +1,0 @@
-extension CodexAccountClient: CodexAccountReading {}

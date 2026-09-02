@@ -3,7 +3,7 @@ import HexCore
 public actor OpenAIResponsesProvider: InferenceProvider {
   public nonisolated let descriptor: ProviderDescriptor
   let configuration: OpenAIResponsesConfiguration
-  let credentialProvider: any OpenAICredentialProvider
+  let authorizationProvider: any OpenAIResponsesAuthorizationProvider
   let transport: any OpenAIResponsesTransport
   var issuedResponseIDs = Set<String>()
   var issuedResponseIDBytes = 0
@@ -17,7 +17,7 @@ public actor OpenAIResponsesProvider: InferenceProvider {
 
   public init(
     configuration: OpenAIResponsesConfiguration,
-    credentialProvider: any OpenAICredentialProvider,
+    authorizationProvider: any OpenAIResponsesAuthorizationProvider,
     transport: any OpenAIResponsesTransport = URLSessionOpenAIResponsesTransport()
   ) {
     var capabilities = Set<InferenceCapability>()
@@ -39,8 +39,20 @@ public actor OpenAIResponsesProvider: InferenceProvider {
       capabilities: capabilities
     )
     self.configuration = configuration
-    self.credentialProvider = credentialProvider
+    self.authorizationProvider = authorizationProvider
     self.transport = transport
+  }
+
+  public init(
+    configuration: OpenAIResponsesConfiguration,
+    credentialProvider: any OpenAICredentialProvider,
+    transport: any OpenAIResponsesTransport = URLSessionOpenAIResponsesTransport()
+  ) {
+    self.init(
+      configuration: configuration,
+      authorizationProvider: credentialProvider,
+      transport: transport
+    )
   }
 
   public func availableModels() async throws -> [ModelDescriptor] {

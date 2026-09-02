@@ -21,7 +21,7 @@ struct HexGatewayInferenceProviderFactoryTests {
 
     let provider = try HexGatewayInferenceProviderFactory().makeInferenceProvider(
       for: settings,
-      credentialProvider: credentialProvider
+      authorizationProvider: credentialProvider
     )
     let models = try await provider.availableModels()
 
@@ -44,7 +44,7 @@ struct HexGatewayInferenceProviderFactoryTests {
     do {
       _ = try HexGatewayInferenceProviderFactory().makeInferenceProvider(
         for: settings,
-        credentialProvider: RecordingCredentialProvider()
+        authorizationProvider: RecordingCredentialProvider()
       )
       Issue.record("Expected an unlinked MLX adapter to fail closed.")
     } catch let error as HexGatewayInferenceProviderFactoryError {
@@ -55,26 +55,27 @@ struct HexGatewayInferenceProviderFactoryTests {
   }
 
   @Test
-  func selectedCodexFailsClosedWithoutRawSubscriptionInference() throws {
-    let settings = try HexInferenceBackendSettings(
-      selectedBackend: .codexCompatibility,
-      openAIModelID: "openai-fallback",
-      codex: HexCodexCompatibilitySettings(
-        executableURL: URL(fileURLWithPath: "/tmp/hex-codex")
+  func chatGPTSubscriptionIsAnOpenAIAuthenticationChoice() async throws {
+    let authorizationProvider = RecordingAuthorizationProvider(
+      authorization: OpenAIResponsesAuthorization(
+        bearerToken: "test-subscription-token",
+        accountID: "account-test"
       )
     )
+    let settings = try HexInferenceBackendSettings(
+      selectedBackend: .openAIResponses,
+      openAIModelID: "subscription-model",
+      openAIAuthenticationMethod: .chatGPT
+    )
 
-    do {
-      _ = try HexGatewayInferenceProviderFactory().makeInferenceProvider(
-        for: settings,
-        credentialProvider: RecordingCredentialProvider()
-      )
-      Issue.record("Expected Codex compatibility without an adapter to fail closed.")
-    } catch let error as HexGatewayInferenceProviderFactoryError {
-      #expect(error == .providerUnavailable(.codexCompatibility))
-      #expect(error.localizedDescription.contains("app-server runtime adapter"))
-      #expect(error.localizedDescription.contains("never used as raw inference"))
-    }
+    let provider = try HexGatewayInferenceProviderFactory().makeInferenceProvider(
+      for: settings,
+      authorizationProvider: authorizationProvider
+    )
+    let models = try await provider.availableModels()
+
+    #expect(models.map(\.id.rawValue) == ["subscription-model"])
+    #expect(await authorizationProvider.didReadValue() == false)
   }
 
   @Test
@@ -82,9 +83,6 @@ struct HexGatewayInferenceProviderFactoryTests {
     let factory = HexGatewayInferenceProviderFactory(
       makeMLXProvider: { settings in
         StubInferenceProvider(modelID: ModelID(rawValue: settings.modelID))
-      },
-      makeCodexCompatibilityProvider: { _ in
-        StubInferenceProvider(modelID: ModelID(rawValue: "codex-adapter-model"))
       }
     )
     let settings = try HexInferenceBackendSettings(
@@ -98,7 +96,7 @@ struct HexGatewayInferenceProviderFactoryTests {
 
     let provider = try factory.makeInferenceProvider(
       for: settings,
-      credentialProvider: RecordingCredentialProvider()
+      authorizationProvider: RecordingCredentialProvider()
     )
 
     let models = try await provider.availableModels()
@@ -112,7 +110,7 @@ struct HexGatewayInferenceProviderFactoryTests {
     do {
       _ = try HexGatewayInferenceProviderFactory().makeInferenceProvider(
         for: settings,
-        credentialProvider: RecordingCredentialProvider()
+        authorizationProvider: RecordingCredentialProvider()
       )
       Issue.record("Expected an unconfigured MLX backend to fail closed.")
     } catch let error as HexGatewayInferenceProviderFactoryError {
@@ -127,6 +125,24 @@ struct HexGatewayInferenceProviderFactoryTests {
     func apiKey() async throws -> String {
       didRead = true
       return "test-only-key"
+    }
+
+    func didReadValue() -> Bool {
+      didRead
+    }
+  }
+
+  private actor RecordingAuthorizationProvider: OpenAIResponsesAuthorizationProvider {
+    private let value: OpenAIResponsesAuthorization
+    private var didRead = false
+
+    init(authorization: OpenAIResponsesAuthorization) {
+      value = authorization
+    }
+
+    func authorization() async throws -> OpenAIResponsesAuthorization {
+      didRead = true
+      return value
     }
 
     func didReadValue() -> Bool {

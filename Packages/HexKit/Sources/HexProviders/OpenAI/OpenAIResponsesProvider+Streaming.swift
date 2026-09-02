@@ -76,9 +76,9 @@ extension OpenAIResponsesProvider {
       }
     }
 
-    let apiKey: String
+    let authorization: OpenAIResponsesAuthorization
     do {
-      apiKey = try await credentialProvider.apiKey()
+      authorization = try await authorizationProvider.authorization()
       try Task.checkCancellation()
     } catch is CancellationError {
       throw CancellationError()
@@ -89,8 +89,18 @@ extension OpenAIResponsesProvider {
       throw OpenAIResponsesProviderError.credentialUnavailable
     }
 
-    guard isValidAPIKey(apiKey) else {
+    guard isValidBearerToken(authorization.bearerToken) else {
       throw OpenAIResponsesProviderError.credentialUnavailable
+    }
+    switch configuration.service {
+    case .platformAPI:
+      guard authorization.accountID == nil else {
+        throw OpenAIResponsesProviderError.credentialUnavailable
+      }
+    case .chatGPTCodexSubscription:
+      guard let accountID = authorization.accountID, isValidAccountID(accountID) else {
+        throw OpenAIResponsesProviderError.credentialUnavailable
+      }
     }
 
     var urlRequest = URLRequest(url: configuration.endpoint)
@@ -99,7 +109,17 @@ extension OpenAIResponsesProvider {
     urlRequest.httpBody = plan.body
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-    urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    urlRequest.setValue(
+      "Bearer \(authorization.bearerToken)",
+      forHTTPHeaderField: "Authorization"
+    )
+    urlRequest.setValue(configuration.userAgent, forHTTPHeaderField: "User-Agent")
+    if configuration.service == .chatGPTCodexSubscription,
+      let accountID = authorization.accountID
+    {
+      urlRequest.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
+      urlRequest.setValue(configuration.originator, forHTTPHeaderField: "originator")
+    }
 
     let response: OpenAIResponsesTransportResponse
     do {
@@ -268,9 +288,17 @@ extension OpenAIResponsesProvider {
     }
   }
 
-  func isValidAPIKey(_ value: String) -> Bool {
+  func isValidBearerToken(_ value: String) -> Bool {
     let bytes = value.utf8
-    guard !bytes.isEmpty, bytes.count <= 4_096 else { return false }
+    guard !bytes.isEmpty, bytes.count <= 32 * 1_024 else { return false }
+    return bytes.allSatisfy { byte in
+      byte >= 0x21 && byte <= 0x7E
+    }
+  }
+
+  func isValidAccountID(_ value: String) -> Bool {
+    let bytes = value.utf8
+    guard !bytes.isEmpty, bytes.count <= 512 else { return false }
     return bytes.allSatisfy { byte in
       byte >= 0x21 && byte <= 0x7E
     }

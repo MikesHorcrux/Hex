@@ -11,14 +11,11 @@ struct HexOnboardingInferenceView: View {
         Text("Choose the model engine. Hex—not the provider SDK—owns the agent loop and tools.")
           .foregroundStyle(.secondary)
       }
-      HexInferenceBackendFormView(model: model, includesCodexCompatibility: false)
+      HexInferenceBackendFormView(model: model)
     }
     .formStyle(.grouped)
     .task {
       await model.load()
-      if model.selectedBackend == .codexCompatibility {
-        model.selectedBackend = .openAIResponses
-      }
     }
   }
 }

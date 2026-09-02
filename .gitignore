@@ -2,3 +2,5 @@
 /.build/
 /dist/
 /Packages/HexKit/.build/
+/Packages/HexKit/Package.resolved
+/Hex.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

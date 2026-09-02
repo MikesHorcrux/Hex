@@ -48,11 +48,8 @@ Packages/HexKit/Sources/
 │   ├── Tools/                   # host-tool contracts and dispatch
 │   └── Workspace/               # workspace-scoped coding operations
 ├── HexProviders/
-│   ├── Codex/
-│   │   ├── Account/             # account and login protocol
-│   │   └── AppServer/           # Codex JSONL app-server protocol
 │   ├── MLX/                     # provider-neutral local-model adapter
-│   └── OpenAI/                  # Responses API adapter and transport
+│   └── OpenAI/                  # Platform/ChatGPT auth and Responses transport
 ├── HexMLXProvider/
 │   ├── Engine/                  # concrete MLX Swift runtime
 │   ├── Mapping/                 # Hex request to MLX request mapping

@@ -10,7 +10,7 @@ extension OpenAIResponsesProviderError: LocalizedError {
     case .unsupportedModel:
       "The requested model is not available from this provider."
     case .credentialUnavailable:
-      "An OpenAI Platform API key is unavailable."
+      "OpenAI authorization is unavailable."
     case .transportFailed:
       "The OpenAI Responses request could not be completed."
     case .httpFailure(let statusCode):

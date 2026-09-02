@@ -9,6 +9,7 @@ struct HexInferenceBackendSettingsTests {
     let settings = try HexInferenceBackendSettings(
       selectedBackend: .mlxLocal,
       openAIModelID: "gpt-test",
+      openAIAuthenticationMethod: .chatGPT,
       mlx: try HexMLXBackendSettings(
         modelID: "mlx-model",
         displayName: "Local model",
@@ -17,10 +18,6 @@ struct HexInferenceBackendSettingsTests {
         maximumOutputTokens: 2_048,
         supportsToolCalling: true,
         supportsParallelToolCalling: true
-      ),
-      codex: try HexCodexCompatibilitySettings(
-        executableURL: URL(fileURLWithPath: "/Users/test/bin/codex"),
-        workingDirectoryURL: URL(fileURLWithPath: "/Users/test/workspace")
       )
     )
 
@@ -35,12 +32,13 @@ struct HexInferenceBackendSettingsTests {
   }
 
   @Test
-  func exposesDistinctBackendKindsAndCodexCompatibilityTruth() {
-    #expect(HexInferenceBackendKind.allCases.count == 3)
-    #expect(HexInferenceBackendKind.openAIResponses.detail.contains("API-key"))
-    #expect(HexInferenceBackendKind.mlxLocal.detail.contains("existing model directory"))
-    #expect(HexInferenceBackendKind.codexCompatibility.displayName == "Codex compatibility")
-    #expect(HexInferenceBackendKind.codexCompatibility.detail.contains("account/runtime"))
+  func exposesOpenAIWithTwoAuthChoicesAndLocalMLX() {
+    #expect(HexInferenceBackendKind.allCases == [.openAIResponses, .mlxLocal])
+    #expect(HexInferenceBackendKind.openAIResponses.detail.contains("subscription"))
+    #expect(HexInferenceBackendKind.mlxLocal.displayName == "Local MLX")
+    #expect(HexOpenAIAuthenticationMethod.allCases == [.chatGPT, .apiKey])
+    #expect(HexOpenAIAuthenticationMethod.chatGPT.displayName.contains("Codex"))
+    #expect(HexOpenAIAuthenticationMethod.apiKey.detail.contains("API billing"))
   }
 
   @Test
@@ -64,21 +62,12 @@ struct HexInferenceBackendSettingsTests {
     } catch let error as HexInferenceBackendSettingsError {
       #expect(error == .invalidMLXContextWindow)
     }
-
-    do {
-      _ = try HexCodexCompatibilitySettings(
-        executableURL: URL(string: "https://example.com/codex")
-      )
-      Issue.record("Expected a non-file Codex executable URL to be rejected.")
-    } catch let error as HexInferenceBackendSettingsError {
-      #expect(error == .invalidCodexExecutable)
-    }
   }
 
   @Test
   func validatesDecodedSettingsBeforeTheyCanEnterTheStore() throws {
     let data = Data(
-      #"{"codex":{"executableURL":null,"workingDirectoryURL":null},"mlx":{"contextWindow":null,"directory":null,"displayName":"","maximumOutputTokens":2048,"modelID":"","supportsParallelToolCalling":false,"supportsToolCalling":false},"openAI":{"modelID":""},"schemaVersion":1,"selectedBackend":"openai-responses"}"#
+      #"{"mlx":{"contextWindow":null,"directory":null,"displayName":"","maximumOutputTokens":2048,"modelID":"","supportsParallelToolCalling":false,"supportsToolCalling":false},"openAI":{"authenticationMethod":"api-key","modelID":""},"schemaVersion":2,"selectedBackend":"openai-responses"}"#
         .utf8
     )
 
@@ -88,5 +77,32 @@ struct HexInferenceBackendSettingsTests {
     } catch let error as HexInferenceBackendSettingsError {
       #expect(error == .invalidOpenAIModelID)
     }
+  }
+
+  @Test
+  func migratesLegacyCodexSelectionIntoOpenAIChatGPTAuthentication() throws {
+    let data = Data(
+      #"{"codex":{"executableURL":null,"workingDirectoryURL":null},"mlx":{"contextWindow":null,"directory":null,"displayName":"","maximumOutputTokens":2048,"modelID":"","supportsParallelToolCalling":false,"supportsToolCalling":false},"openAI":{"modelID":"gpt-5.2"},"schemaVersion":1,"selectedBackend":"codex-compatibility"}"#
+        .utf8
+    )
+
+    let decoded = try JSONDecoder().decode(HexInferenceBackendSettings.self, from: data)
+
+    #expect(decoded.schemaVersion == HexInferenceBackendSettings.currentSchemaVersion)
+    #expect(decoded.selectedBackend == .openAIResponses)
+    #expect(decoded.openAI.authenticationMethod == .chatGPT)
+    #expect(decoded.openAI.modelID == "gpt-5.2")
+  }
+
+  @Test
+  func defaultsLegacyOpenAISettingsToAPIKeyAuthentication() throws {
+    let data = Data(
+      #"{"mlx":{"contextWindow":null,"directory":null,"displayName":"","maximumOutputTokens":2048,"modelID":"","supportsParallelToolCalling":false,"supportsToolCalling":false},"openAI":{"modelID":"gpt-5.2"},"schemaVersion":1,"selectedBackend":"openai-responses"}"#
+        .utf8
+    )
+
+    let decoded = try JSONDecoder().decode(HexInferenceBackendSettings.self, from: data)
+
+    #expect(decoded.openAI.authenticationMethod == .apiKey)
   }
 }

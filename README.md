@@ -32,12 +32,12 @@ user previously registered.
 Settings contains **Resident**, **Inference**, **Heartbeats**, and **Personality** tabs. **Agent
 Tools** is a section inside Resident.
 
-1. Open **Inference**, select **OpenAI Responses API**, enter the OpenAI API key and model
-   identifier, and choose **Save**. The backend and model are persisted in protected settings; the
-   key is stored in Keychain. This is the operational resident inference path.
+1. Open **Inference** and select **OpenAI** or **Local MLX**. For OpenAI, choose either **ChatGPT /
+   Codex subscription** and complete sign-in, or **OpenAI API key** and enter a Platform key. Set
+   the model identifier and choose **Save**. Non-secret settings and credentials are stored
+   separately.
 2. Open **Resident**, enter a non-empty model identifier (keep it aligned with Inference), choose
-   the workspace folder Hex may operate in, and save. The API-key field may be left blank after a
-   key is already stored.
+   the workspace folder Hex may operate in, and save.
 3. In Resident → **Agent Tools**, enable Playwright, Peekaboo, or Xcode when their integrations are
    installed and available. Add any extra MCP server under **Additional MCP Servers**, using HTTPS
    or a literal loopback HTTP endpoint, then save again.
@@ -49,20 +49,21 @@ Tools** is a section inside Resident.
 
 ## Inference backends
 
-OpenAI Responses settings are now wired end to end for the resident path: the resident gateway
-loads the persisted backend/model selection and obtains the API key from the shared data-protection
-Keychain immediately before inference.
+Hex exposes two inference backends while retaining the same Hex-owned agent runtime:
 
-The Inference tab also exposes two deliberately separate integration seams:
-
-- **Codex compatibility / app-server** can use an existing Codex executable and working directory
-  for redacted account status plus the explicit browser or device-code sign-in, completion,
-  cancellation, and sign-out flows. It is account/app-server compatibility, not raw inference from
-  a ChatGPT subscription, and Hex does not read Codex credential files.
-- **Local MLX model** settings, the concrete provider builder, the package dependency, and resident
+- **OpenAI** has two authentication choices. **ChatGPT / Codex subscription** uses an explicit
+  device sign-in, keeps the OAuth bundle in the shared data-protection Keychain, refreshes it at
+  request time, and sends Hex-built Responses requests to the ChatGPT Codex endpoint. **OpenAI API
+  key** sends the same provider-neutral request through the published Platform Responses API and
+  usage-based billing. Hex never launches or nests the Codex agent runtime in either mode.
+- **Local MLX** settings, the concrete provider builder, the package dependency, and resident
   `HexGateway` injection are complete in the integrated build, including an existing model
   directory, context/output limits, and tool-calling flags. Selecting MLX requires the user to
   supply an existing compatible local model; Hex does not download model files.
+
+The direct ChatGPT subscription transport is a compatibility path modeled on Goose and Hermes. Its
+backend is not a published third-party OpenAI API and can change independently; API-key mode is the
+stable documented integration. See the [OpenAI authentication boundary](docs/architecture/openai-authentication.md).
 
 ## Resident lifecycle and durable state
 
@@ -135,9 +136,9 @@ MCP calls are journaled and bounded.
   in Hex. Screen Recording and Accessibility are TCC permissions controlled by macOS; enabling
   Peekaboo never grants them automatically. Secure text fields are not writable through the native
   Accessibility tool, and Hex does not claim full desktop control.
-- The OpenAI API key is stored only in the data-protection Keychain with the resident access group,
-  `AfterFirstUnlockThisDeviceOnly`; it is absent from JSON settings and LaunchAgent plists. Codex
-  owns its own account credentials and login protocol.
+- The OpenAI API key and ChatGPT OAuth bundle are separate data-protection Keychain items under the
+  resident access group, `AfterFirstUnlockThisDeviceOnly`. Neither appears in JSON settings or a
+  LaunchAgent plist. Hex does not read or share the Codex CLI/Desktop credential store.
 - Local MCP executables cross a bounded, no-follow snapshot/process boundary before tools are
   published. Untrusted server descriptions, schemas, content, stderr, and errors are treated as
   data, not policy.
@@ -149,7 +150,7 @@ developer variables, uses the OpenAI adapter, and cannot register the resident L
 ## Testing and release status
 
 The repository contains SwiftPM and app tests for the runtime loop, XPC and authorization lifecycle,
-durable persistence, OpenAI and Codex protocol boundaries, MLX provider components, MCP framing and
+durable persistence, both OpenAI authorization routes, MLX provider components, MCP framing and
 managed-tool validation, workspace/process/web/Mac tools, personality/memory, and heartbeats. The
 UI tests currently provide launch/smoke coverage; they do not prove an end-to-end live inference,
 TCC, launchd, or distribution flow. External managed-tool integration is opt-in and uses explicitly
@@ -159,8 +160,9 @@ provided binaries.
 needs its nested-helper packaging and entitlements, signing, notarization, login-item registration,
 and real macOS permission validation deliberately completed and tested. Release currently uses the
 App Sandbox and blocks the Debug resident setup composition. No local test or unsigned build proves
-those distribution checks, live OpenAI/Codex access, or production readiness.
+those distribution checks, live OpenAI API/subscription access, or production readiness.
 
 For architecture and ownership boundaries, see the [source layout](docs/architecture/source-layout.md),
-[gateway runtime](docs/architecture/gateway-runtime.md), [Codex app-server boundary](docs/architecture/codex-app-server.md),
-[MCP boundary](docs/architecture/mcp.md), and [contribution rules](CONTRIBUTING.md).
+[gateway runtime](docs/architecture/gateway-runtime.md),
+[OpenAI authentication boundary](docs/architecture/openai-authentication.md), [MCP boundary](docs/architecture/mcp.md),
+and [contribution rules](CONTRIBUTING.md).

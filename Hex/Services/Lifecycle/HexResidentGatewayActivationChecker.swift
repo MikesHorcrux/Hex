@@ -59,10 +59,28 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
           "Inference backend settings could not be loaded. Check Inference in Settings."
         )
       }
-      if inferenceSettings?.selectedBackend != .mlxLocal, !(await hasCredential()) {
-        return Self.blocked("Resident setup is missing an OpenAI API key. Add one in Settings.")
+      let resolvedInferenceSettings: HexInferenceBackendSettings
+      do {
+        resolvedInferenceSettings =
+          try inferenceSettings
+          ?? HexInferenceBackendSettings.migrationDefault(
+            legacyOpenAIModelID: settings.modelID
+          )
+      } catch {
+        return Self.blocked(
+          "Inference backend settings could not be loaded. Check Inference in Settings."
+        )
       }
-    } else if !(await hasCredential()) {
+      if resolvedInferenceSettings.selectedBackend == .openAIResponses,
+        !(await hasAuthorization(for: resolvedInferenceSettings.openAI.authenticationMethod))
+      {
+        return Self.blocked(
+          Self.missingAuthorizationMessage(
+            for: resolvedInferenceSettings.openAI.authenticationMethod
+          )
+        )
+      }
+    } else if !(await hasAuthorization(for: .apiKey)) {
       return Self.blocked("Resident setup is missing an OpenAI API key. Add one in Settings.")
     }
 
@@ -93,11 +111,23 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
     return .ready
   }
 
-  private func hasCredential() async -> Bool {
+  private func hasAuthorization(for method: HexOpenAIAuthenticationMethod) async -> Bool {
+    let key: HexSecretKey = method == .chatGPT ? .openAIChatGPTOAuth : .openAIAPIKey
     do {
-      return try await secretStore.exists(.openAIAPIKey)
+      return try await secretStore.exists(key)
     } catch {
       return false
+    }
+  }
+
+  private static func missingAuthorizationMessage(
+    for method: HexOpenAIAuthenticationMethod
+  ) -> String {
+    switch method {
+    case .chatGPT:
+      "Resident setup needs ChatGPT sign-in. Open Inference in Settings and sign in."
+    case .apiKey:
+      "Resident setup is missing an OpenAI API key. Add one in Settings."
     }
   }
 

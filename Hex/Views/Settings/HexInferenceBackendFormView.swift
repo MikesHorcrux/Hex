@@ -4,20 +4,11 @@ import SwiftUI
 
 struct HexInferenceBackendFormView: View {
   @Bindable var model: HexInferenceBackendSettingsModel
-  let includesCodexCompatibility: Bool
-
-  init(
-    model: HexInferenceBackendSettingsModel,
-    includesCodexCompatibility: Bool = true
-  ) {
-    _model = Bindable(model)
-    self.includesCodexCompatibility = includesCodexCompatibility
-  }
 
   var body: some View {
     Section {
       Picker("Backend", selection: $model.selectedBackend) {
-        ForEach(availableBackends) { backend in
+        ForEach(HexInferenceBackendKind.allCases) { backend in
           Text(backend.displayName)
             .tag(backend)
         }
@@ -34,13 +25,6 @@ struct HexInferenceBackendFormView: View {
       HexOpenAIBackendSettingsView(model: model)
     case .mlxLocal:
       HexMLXBackendSettingsView(model: model)
-    case .codexCompatibility:
-      if includesCodexCompatibility {
-        HexCodexCompatibilitySettingsView(model: model)
-      } else {
-        Text("Choose OpenAI Responses or Local MLX to continue setup.")
-          .foregroundStyle(.secondary)
-      }
     }
 
     if let statusMessage = model.statusMessage {
@@ -57,11 +41,4 @@ struct HexInferenceBackendFormView: View {
     }
   }
 
-  private var availableBackends: [HexInferenceBackendKind] {
-    if includesCodexCompatibility {
-      HexInferenceBackendKind.allCases
-    } else {
-      [.openAIResponses, .mlxLocal]
-    }
-  }
 }

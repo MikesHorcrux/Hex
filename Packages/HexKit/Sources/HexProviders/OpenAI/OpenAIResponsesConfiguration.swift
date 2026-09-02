@@ -2,9 +2,10 @@ import Foundation
 import HexCore
 
 public struct OpenAIResponsesConfiguration: Equatable, Sendable {
-  /// The canonical OpenAI Platform Responses endpoint. Custom hosts and paths are rejected so an
-  /// OpenAI API key cannot be redirected to a proxy or unrelated origin.
+  /// The endpoint is derived from `service`. Custom hosts and paths are rejected so neither API
+  /// keys nor ChatGPT OAuth tokens can be redirected to an unrelated origin.
   public let endpoint: URL
+  public let service: OpenAIResponsesService
   public let providerID: ProviderID
   public let displayName: String
   public let models: [ModelDescriptor]
@@ -33,13 +34,16 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
   public let maximumLocalStates: Int
   public let maximumLocalStateBytes: Int
   public let maximumLocalCacheBytes: Int
+  public let userAgent: String
+  public let originator: String
 
   public init(
+    service: OpenAIResponsesService = .platformAPI,
     endpoint: URL? = nil,
     providerID: ProviderID = ProviderID(rawValue: "openai"),
-    displayName: String = "OpenAI Responses API",
+    displayName: String? = nil,
     models: [ModelDescriptor],
-    privacyMode: OpenAIResponsesPrivacyMode = .serverManagedContinuation,
+    privacyMode: OpenAIResponsesPrivacyMode? = nil,
     requestTimeout: TimeInterval = 120,
     requestReasoningSummaries: Bool = true,
     maximumMessages: Int = 4_096,
@@ -63,34 +67,40 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
     maximumServerCacheBytes: Int = 64 * 1_024 * 1_024,
     maximumLocalStates: Int = 16,
     maximumLocalStateBytes: Int = 16 * 1_024 * 1_024,
-    maximumLocalCacheBytes: Int = 64 * 1_024 * 1_024
+    maximumLocalCacheBytes: Int = 64 * 1_024 * 1_024,
+    userAgent: String = "Hex/1.0",
+    originator: String = "hex"
   ) throws {
-    let resolvedEndpoint: URL
-    if let endpoint {
-      resolvedEndpoint = endpoint
-    } else if let defaultEndpoint = URL(string: "https://api.openai.com/v1/responses") {
-      resolvedEndpoint = defaultEndpoint
-    } else {
+    guard let serviceEndpoint = service.endpoint else {
       throw OpenAIResponsesProviderError.invalidConfiguration
     }
+    let resolvedEndpoint = endpoint ?? serviceEndpoint
+    let resolvedDisplayName = displayName ?? service.displayName
+    let resolvedPrivacyMode = privacyMode ?? service.defaultPrivacyMode
     let endpointComponents = URLComponents(
       url: resolvedEndpoint,
       resolvingAgainstBaseURL: false
     )
+    let serviceEndpointComponents = URLComponents(
+      url: serviceEndpoint,
+      resolvingAgainstBaseURL: false
+    )
 
     guard
-      resolvedEndpoint.scheme?.lowercased() == "https",
-      resolvedEndpoint.host?.lowercased() == "api.openai.com",
+      endpointComponents?.scheme?.lowercased() == "https",
+      endpointComponents?.host?.lowercased() == serviceEndpointComponents?.host?.lowercased(),
       resolvedEndpoint.port == nil || resolvedEndpoint.port == 443,
-      endpointComponents?.percentEncodedPath == "/v1/responses",
+      endpointComponents?.percentEncodedPath == serviceEndpointComponents?.percentEncodedPath,
       resolvedEndpoint.user == nil,
       resolvedEndpoint.password == nil,
       resolvedEndpoint.query == nil,
       resolvedEndpoint.fragment == nil,
       !providerID.rawValue.isEmpty,
       providerID.rawValue.utf8.count <= 128,
-      !displayName.isEmpty,
-      displayName.utf8.count <= 256,
+      !resolvedDisplayName.isEmpty,
+      resolvedDisplayName.utf8.count <= 256,
+      Self.isPrintableASCII(userAgent, maximumBytes: 256),
+      Self.isPrintableASCII(originator, maximumBytes: 128),
       !models.isEmpty,
       models.count <= 256,
       requestTimeout.isFinite,
@@ -144,10 +154,11 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
     }
 
     self.endpoint = resolvedEndpoint
+    self.service = service
     self.providerID = providerID
-    self.displayName = displayName
+    self.displayName = resolvedDisplayName
     self.models = models
-    self.privacyMode = privacyMode
+    self.privacyMode = resolvedPrivacyMode
     self.requestTimeout = requestTimeout
     self.requestReasoningSummaries = requestReasoningSummaries
     self.maximumMessages = maximumMessages
@@ -172,5 +183,13 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
     self.maximumLocalStates = maximumLocalStates
     self.maximumLocalStateBytes = maximumLocalStateBytes
     self.maximumLocalCacheBytes = maximumLocalCacheBytes
+    self.userAgent = userAgent
+    self.originator = originator
+  }
+
+  private static func isPrintableASCII(_ value: String, maximumBytes: Int) -> Bool {
+    let bytes = value.utf8
+    guard !bytes.isEmpty, bytes.count <= maximumBytes else { return false }
+    return bytes.allSatisfy { (0x21...0x7E).contains($0) }
   }
 }

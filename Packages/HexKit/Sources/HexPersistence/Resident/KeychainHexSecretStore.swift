@@ -216,12 +216,14 @@ public actor KeychainHexSecretStore: HexSecretStore {
     switch key {
     case .openAIAPIKey:
       configuredAccount
+    case .openAIChatGPTOAuth:
+      "\(configuredAccount).chatgpt-oauth"
     }
   }
 
   private nonisolated static func isPrintableASCII(_ value: String) -> Bool {
     let bytes = value.utf8
-    guard !bytes.isEmpty, bytes.count <= 4_096 else {
+    guard !bytes.isEmpty, bytes.count <= 64 * 1_024 else {
       return false
     }
     return bytes.allSatisfy { byte in

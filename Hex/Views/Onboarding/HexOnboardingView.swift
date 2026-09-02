@@ -126,7 +126,6 @@ struct HexOnboardingView: View {
     switch step {
     case .inference:
       inference.canSave && !inference.effectiveModelID.isEmpty
-        && inference.selectedBackend != .codexCompatibility
     case .workspace:
       residentSetup.hasValidCoreSettings
     case .permissions:

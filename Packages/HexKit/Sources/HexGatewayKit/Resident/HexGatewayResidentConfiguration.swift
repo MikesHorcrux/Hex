@@ -60,7 +60,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let personalMemoryScope: PersonalMemoryScope
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
   public let authorizationMode: HexAuthorizationMode
-  public let credentialProvider: any OpenAICredentialProvider
+  public let openAIAuthorizationProvider: any OpenAIResponsesAuthorizationProvider
   public let inferenceBackendSettings: HexInferenceBackendSettings
   public let inferenceProviderFactory: HexGatewayInferenceProviderFactory
   public let mcpClientSessions: [any MCPClientSession]
@@ -162,15 +162,15 @@ public struct HexGatewayResidentConfiguration: Sendable {
     )
   }
 
-  /// Creates a configuration around a caller-owned credential provider. The provider is queried
-  /// only by the inference provider immediately before a request, so this initializer never needs
-  /// to receive or encode a secret value.
+  /// Creates a configuration around a caller-owned OpenAI authorization provider. The provider is
+  /// queried only immediately before a request, so this initializer never receives or encodes a
+  /// secret value.
   public init(
     machServiceName: String,
     modelID: String,
     workspaceRoot: URL,
     databaseURL: URL,
-    credentialProvider: any OpenAICredentialProvider,
+    authorizationProvider: any OpenAIResponsesAuthorizationProvider,
     heartbeatStoreURL: URL? = nil,
     personalityProfileURL: URL? = nil,
     personalMemoryURL: URL? = nil,
@@ -262,7 +262,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.personalMemoryScope = personalMemoryScope ?? Self.defaultPersonalityScope()
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.authorizationMode = authorizationMode
-    self.credentialProvider = credentialProvider
+    self.openAIAuthorizationProvider = authorizationProvider
     self.inferenceBackendSettings = resolvedInferenceBackendSettings
     self.inferenceProviderFactory = inferenceProviderFactory
     self.mcpClientSessions = mcpClientSessions.sorted { $0.serverID < $1.serverID }
@@ -295,7 +295,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       modelID: modelID,
       workspaceRoot: workspaceRoot,
       databaseURL: databaseURL,
-      credentialProvider: HexGatewayMemoryCredentialProvider(apiKey: apiKey),
+      authorizationProvider: HexGatewayMemoryCredentialProvider(apiKey: apiKey),
       heartbeatStoreURL: heartbeatStoreURL,
       personalityProfileURL: personalityProfileURL,
       personalMemoryURL: personalMemoryURL,
@@ -308,10 +308,9 @@ public struct HexGatewayResidentConfiguration: Sendable {
     )
   }
 
-  /// Loads non-secret settings from the durable store and injects a generic secret store adapter.
-  /// The API key is not read during startup; only item existence is checked so a missing credential
-  /// fails deterministically before the resident host begins serving requests. Actual credential
-  /// decoding and format validation remain deferred to provider use.
+  /// Loads non-secret settings and injects the selected request-time authorization adapter. Secret
+  /// values are not read during startup; only Keychain item existence is checked so missing auth
+  /// fails before the resident host serves requests.
   public static func loadPersisted(
     paths: HexResidentDataPaths? = nil,
     settingsStore: (any HexResidentRuntimeSettingsStore)? = nil,
@@ -389,8 +388,12 @@ public struct HexGatewayResidentConfiguration: Sendable {
 
     let resolvedSecretStore: any HexSecretStore = secretStore ?? KeychainHexSecretStore()
     if inferenceBackendSettings.selectedBackend == .openAIResponses {
+      let requiredSecret: HexSecretKey =
+        inferenceBackendSettings.openAI.authenticationMethod == .chatGPT
+        ? .openAIChatGPTOAuth
+        : .openAIAPIKey
       do {
-        guard try await resolvedSecretStore.exists(.openAIAPIKey) else {
+        guard try await resolvedSecretStore.exists(requiredSecret) else {
           throw ConfigurationError.credentialsUnavailable
         }
       } catch is CancellationError {
@@ -416,12 +419,17 @@ public struct HexGatewayResidentConfiguration: Sendable {
       throw ConfigurationError.mcpConfigurationUnavailable
     }
 
+    let authorizationProvider: any OpenAIResponsesAuthorizationProvider =
+      inferenceBackendSettings.openAI.authenticationMethod == .chatGPT
+      ? ChatGPTCodexOAuthSession(secretStore: resolvedSecretStore)
+      : HexSecretStoreOpenAICredentialProvider(store: resolvedSecretStore)
+
     return try Self(
       machServiceName: HexGatewayServiceIdentity.machServiceName,
       modelID: Self.modelID(for: inferenceBackendSettings, fallback: settings.modelID),
       workspaceRoot: settings.workspaceRoot,
       databaseURL: resolvedPaths.databaseURL,
-      credentialProvider: HexSecretStoreOpenAICredentialProvider(store: resolvedSecretStore),
+      authorizationProvider: authorizationProvider,
       heartbeatStoreURL: resolvedPaths.heartbeatStoreURL,
       personalityProfileURL: resolvedPaths.personalityProfileURL,
       personalMemoryURL: resolvedPaths.personalMemoryURL,
@@ -450,8 +458,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
     ].contains { environment[$0] != nil }
   }
 
-  public func makeCredentialProvider() -> any OpenAICredentialProvider {
-    credentialProvider
+  public func makeAuthorizationProvider() -> any OpenAIResponsesAuthorizationProvider {
+    openAIAuthorizationProvider
   }
 
   private static func modelID(
@@ -463,8 +471,6 @@ public struct HexGatewayResidentConfiguration: Sendable {
       settings.openAI.modelID
     case .mlxLocal:
       settings.mlx.modelID.isEmpty ? fallback : settings.mlx.modelID
-    case .codexCompatibility:
-      fallback
     }
   }
 

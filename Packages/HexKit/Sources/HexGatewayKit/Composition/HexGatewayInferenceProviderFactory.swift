@@ -3,43 +3,34 @@ import HexProviders
 
 /// Dependency-injected provider factory for resident inference selection.
 ///
-/// The MLX and Codex builders are optional on purpose: this target does not link `HexMLXProvider`,
-/// and Codex compatibility remains an app-server adapter seam rather than raw subscription
-/// inference. A missing builder is a typed fail-closed configuration error, never an OpenAI
-/// fallback.
+/// The MLX builder is optional because this target does not link `HexMLXProvider`. OpenAI API-key
+/// and ChatGPT/Codex subscription inference share Hex's Responses provider and differ only in
+/// authorization and their security-pinned first-party endpoint.
 public struct HexGatewayInferenceProviderFactory: Sendable {
   public typealias OpenAIProviderBuilder =
     @Sendable (
       HexOpenAIBackendSettings,
-      any OpenAICredentialProvider
+      any OpenAIResponsesAuthorizationProvider
     ) throws -> any InferenceProvider
   public typealias MLXProviderBuilder =
     @Sendable (
       HexMLXBackendSettings
     ) throws -> any InferenceProvider
-  public typealias CodexCompatibilityProviderBuilder =
-    @Sendable (
-      HexCodexCompatibilitySettings
-    ) throws -> any InferenceProvider
-
   private let makeOpenAIProvider: OpenAIProviderBuilder
   private let makeMLXProvider: MLXProviderBuilder?
-  private let makeCodexCompatibilityProvider: CodexCompatibilityProviderBuilder?
 
   public init(
     makeOpenAIProvider: OpenAIProviderBuilder? = nil,
-    makeMLXProvider: MLXProviderBuilder? = nil,
-    makeCodexCompatibilityProvider: CodexCompatibilityProviderBuilder? = nil
+    makeMLXProvider: MLXProviderBuilder? = nil
   ) {
     self.makeOpenAIProvider = makeOpenAIProvider ?? Self.makeDefaultOpenAIProvider
     self.makeMLXProvider = makeMLXProvider
-    self.makeCodexCompatibilityProvider = makeCodexCompatibilityProvider
   }
 
   /// Creates the provider for exactly the persisted selection.
   public func makeInferenceProvider(
     for settings: HexInferenceBackendSettings,
-    credentialProvider: any OpenAICredentialProvider
+    authorizationProvider: any OpenAIResponsesAuthorizationProvider
   ) throws -> any InferenceProvider {
     switch settings.selectedBackend {
     case .openAIResponses:
@@ -47,7 +38,7 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
         throw HexGatewayInferenceProviderFactoryError.backendNotConfigured(.openAIResponses)
       }
       do {
-        return try makeOpenAIProvider(settings.openAI, credentialProvider)
+        return try makeOpenAIProvider(settings.openAI, authorizationProvider)
       } catch {
         throw HexGatewayInferenceProviderFactoryError.providerInitializationFailed(
           .openAIResponses
@@ -67,40 +58,38 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
         throw HexGatewayInferenceProviderFactoryError.providerInitializationFailed(.mlxLocal)
       }
 
-    case .codexCompatibility:
-      guard settings.codex.isConfigured else {
-        throw HexGatewayInferenceProviderFactoryError.backendNotConfigured(.codexCompatibility)
-      }
-      guard let makeCodexCompatibilityProvider else {
-        throw HexGatewayInferenceProviderFactoryError.providerUnavailable(
-          .codexCompatibility
-        )
-      }
-      do {
-        return try makeCodexCompatibilityProvider(settings.codex)
-      } catch {
-        throw HexGatewayInferenceProviderFactoryError.providerInitializationFailed(
-          .codexCompatibility
-        )
-      }
     }
   }
 
   private static func makeDefaultOpenAIProvider(
     settings: HexOpenAIBackendSettings,
-    credentialProvider: any OpenAICredentialProvider
+    authorizationProvider: any OpenAIResponsesAuthorizationProvider
   ) throws -> any InferenceProvider {
     let providerID = ProviderID(rawValue: "openai")
     let model = ModelDescriptor(
       id: ModelID(rawValue: settings.modelID),
       providerID: providerID,
       displayName: settings.modelID,
-      capabilities: [.textInput, .streaming, .toolCalling]
+      capabilities: [
+        .textInput,
+        .imageInput,
+        .streaming,
+        .toolCalling,
+        .parallelToolCalling,
+        .reasoningSummary,
+      ]
     )
-    let configuration = try OpenAIResponsesConfiguration(models: [model])
+    let service: OpenAIResponsesService =
+      settings.authenticationMethod == .chatGPT
+      ? .chatGPTCodexSubscription
+      : .platformAPI
+    let configuration = try OpenAIResponsesConfiguration(
+      service: service,
+      models: [model]
+    )
     return OpenAIResponsesProvider(
       configuration: configuration,
-      credentialProvider: credentialProvider
+      authorizationProvider: authorizationProvider
     )
   }
 }

@@ -2,4 +2,5 @@
 /// value through settings, persistence metadata, or diagnostics.
 public enum HexSecretKey: String, Codable, Equatable, Sendable {
   case openAIAPIKey = "openai-api-key"
+  case openAIChatGPTOAuth = "openai-chatgpt-oauth"
 }

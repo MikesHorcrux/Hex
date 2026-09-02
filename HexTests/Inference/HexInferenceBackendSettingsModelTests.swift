@@ -8,166 +8,155 @@ import Testing
 @Suite("Inference backend settings model")
 struct HexInferenceBackendSettingsModelTests {
   @Test @MainActor
-  func codexStatusIsReadOnlyOnExplicitRefresh() async {
-    let provider = TrackingStatusProvider()
+  func loadsIndependentAPIKeyAndChatGPTAuthorizationState() async {
+    let manager = TrackingChatGPTAuthorizationManager(status: .signedIn)
+    let secretStore = RecordingSecretStore(apiKey: "stored-api-key")
     let model = HexInferenceBackendSettingsModel(
       settingsStore: EmptySettingsStore(),
-      secretStore: EmptySecretStore(),
-      makeCodexStatusProvider: { _ in provider }
+      secretStore: secretStore,
+      chatGPTAuthorizationManager: manager
     )
 
     await model.load()
-    #expect(await provider.statusCallCount == 0)
 
-    model.codexExecutableURL = URL(fileURLWithPath: "/Users/test/bin/codex")
-    model.refreshCodexAccountStatus()
-    await waitForStatusRead(provider)
-
-    #expect(await provider.statusCallCount == 1)
-    #expect(model.codexAccountStatus == .signedOut)
+    #expect(model.hasStoredOpenAIAPIKey)
+    #expect(model.chatGPTAccountStatus == .signedIn)
+    #expect(await manager.accountStatusCallCount == 1)
+    #expect(await secretStore.requestedSecretValueCount == 0)
   }
 
   @Test @MainActor
-  func codexLoginStartsOnlyAfterUserActionAndHidesCompletionData() async {
-    let provider = TrackingStatusProvider()
+  func chatGPTLoginRequiresExplicitStartAndCompletionActions() async throws {
+    let manager = TrackingChatGPTAuthorizationManager()
     let model = HexInferenceBackendSettingsModel(
       settingsStore: EmptySettingsStore(),
-      secretStore: EmptySecretStore(),
-      makeCodexStatusProvider: { _ in provider }
+      secretStore: RecordingSecretStore(),
+      chatGPTAuthorizationManager: manager
     )
 
     await model.load()
-    #expect(await provider.startLoginCallCount == 0)
+    #expect(await manager.startCallCount == 0)
 
-    model.codexExecutableURL = URL(fileURLWithPath: "/Users/test/bin/codex")
-    model.codexLoginMode = .deviceCode
-    model.startCodexLogin()
+    model.startChatGPTLogin()
     await waitForLoginChallenge(model)
 
-    #expect(await provider.startLoginCallCount == 1)
-    if case .deviceCode(_, let userCode, _) = model.codexLoginChallenge {
-      #expect(userCode == "ABCD-EFGH")
-    } else {
-      Issue.record("Expected the device-code login challenge.")
-    }
-    #expect(
-      model.statusMessage
-        == "Open the Codex verification page, enter the code, then check for completion."
-    )
-    #expect(model.errorMessage == nil)
+    #expect(await manager.startCallCount == 1)
+    #expect(model.chatGPTLoginChallenge?.userCode == "ABCD-EFGH")
+    #expect(await manager.completeCallCount == 0)
 
-    model.completeCodexLogin()
-    await waitForLoginCompletion(model, provider: provider)
+    model.completeChatGPTLogin()
+    await waitForLoginCompletion(model, manager: manager)
 
-    #expect(await provider.completeLoginCallCount == 1)
-    #expect(await provider.shutdownCallCount >= 1)
-    #expect(model.codexLoginChallenge == nil)
-    #expect(
-      model.statusMessage
-        == "Codex sign-in completed. Refresh to read the redacted account status."
-    )
+    #expect(await manager.completeCallCount == 1)
+    #expect(model.chatGPTLoginChallenge == nil)
+    #expect(model.chatGPTAccountStatus == .signedIn)
+    #expect(model.statusMessage == "Signed in. Hex will use ChatGPT only for model inference.")
   }
 
   @Test @MainActor
-  func codexLoginCancellationAndLogoutAreExplicitAndTerminal() async {
-    let provider = TrackingStatusProvider(status: .signedIn(account: .apiKey))
+  func chatGPTLogoutIsExplicitAndRedactsCredentialsFromTheModel() async {
+    let manager = TrackingChatGPTAuthorizationManager(status: .signedIn)
     let model = HexInferenceBackendSettingsModel(
       settingsStore: EmptySettingsStore(),
-      secretStore: EmptySecretStore(),
-      makeCodexStatusProvider: { _ in provider }
+      secretStore: RecordingSecretStore(),
+      chatGPTAuthorizationManager: manager
     )
 
     await model.load()
-    model.codexExecutableURL = URL(fileURLWithPath: "/Users/test/bin/codex")
-    model.startCodexLogin()
-    await waitForLoginChallenge(model)
+    model.signOutChatGPT()
+    await waitForLogout(model, manager: manager)
 
-    model.cancelCodexLogin()
-    await waitForLoginCancellation(model, provider: provider)
-    #expect(await provider.cancelLoginCallCount == 1)
-    #expect(model.codexLoginChallenge == nil)
-
-    model.refreshCodexAccountStatus()
-    await waitForStatusRead(provider, expectedCount: 1)
-    #expect(model.codexAccountStatus == .signedIn(account: .apiKey))
-
-    model.logoutCodexAccount()
-    await waitForLogout(model, provider: provider)
-    #expect(await provider.logoutCallCount == 1)
-    #expect(await provider.shutdownCallCount >= 2)
-    #expect(model.codexAccountStatus == .signedOut)
+    #expect(await manager.signOutCallCount == 1)
+    #expect(model.chatGPTAccountStatus == .signedOut)
+    #expect(model.statusMessage == "Signed out of ChatGPT.")
   }
 
-  @MainActor
-  private func waitForStatusRead(_ provider: TrackingStatusProvider) async {
-    await waitForStatusRead(provider, expectedCount: 1)
+  @Test @MainActor
+  func chatGPTSelectionCannotSaveBeforeSignIn() async {
+    let settingsStore = RecordingSettingsStore()
+    let model = HexInferenceBackendSettingsModel(
+      settingsStore: settingsStore,
+      secretStore: RecordingSecretStore(),
+      chatGPTAuthorizationManager: TrackingChatGPTAuthorizationManager()
+    )
+
+    await model.load()
+    model.openAIAuthenticationMethod = .chatGPT
+    model.save()
+
+    #expect(model.errorMessage == "Sign in with ChatGPT before saving subscription inference.")
+    #expect(await settingsStore.savedSettings == nil)
   }
 
-  @MainActor
-  private func waitForStatusRead(
-    _ provider: TrackingStatusProvider,
-    expectedCount: Int
-  ) async {
-    for _ in 0..<100 {
-      if await provider.statusCallCount >= expectedCount {
-        return
-      }
-      try? await Task.sleep(for: .milliseconds(10))
-    }
-    Issue.record("Codex status refresh did not complete within the test budget.")
+  @Test @MainActor
+  func apiKeySavePersistsCredentialSeparatelyAndClearsEditBuffer() async {
+    let settingsStore = RecordingSettingsStore()
+    let secretStore = RecordingSecretStore()
+    let model = HexInferenceBackendSettingsModel(
+      settingsStore: settingsStore,
+      secretStore: secretStore,
+      chatGPTAuthorizationManager: TrackingChatGPTAuthorizationManager()
+    )
+
+    await model.load()
+    model.openAIAuthenticationMethod = .apiKey
+    model.openAIAPIKey = "platform-api-key"
+    model.save()
+    await waitForSave(model)
+
+    #expect(await settingsStore.savedSettings?.openAI.authenticationMethod == .apiKey)
+    #expect(await secretStore.storedAPIKey == "platform-api-key")
+    #expect(model.openAIAPIKey.isEmpty)
   }
 
   @MainActor
   private func waitForLoginChallenge(_ model: HexInferenceBackendSettingsModel) async {
     for _ in 0..<100 {
-      if model.codexLoginChallenge != nil {
+      if model.chatGPTLoginChallenge != nil {
         return
       }
       try? await Task.sleep(for: .milliseconds(10))
     }
-    Issue.record("Codex login challenge did not arrive within the test budget.")
+    Issue.record("ChatGPT login challenge did not arrive within the test budget.")
   }
 
   @MainActor
   private func waitForLoginCompletion(
     _ model: HexInferenceBackendSettingsModel,
-    provider: TrackingStatusProvider
+    manager: TrackingChatGPTAuthorizationManager
   ) async {
     for _ in 0..<100 {
-      if await provider.completeLoginCallCount > 0 && model.codexLoginChallenge == nil {
+      if await manager.completeCallCount > 0, model.chatGPTAccountStatus == .signedIn {
         return
       }
       try? await Task.sleep(for: .milliseconds(10))
     }
-    Issue.record("Codex login completion did not settle within the test budget.")
-  }
-
-  @MainActor
-  private func waitForLoginCancellation(
-    _ model: HexInferenceBackendSettingsModel,
-    provider: TrackingStatusProvider
-  ) async {
-    for _ in 0..<100 {
-      if await provider.cancelLoginCallCount > 0 && model.codexLoginChallenge == nil {
-        return
-      }
-      try? await Task.sleep(for: .milliseconds(10))
-    }
-    Issue.record("Codex login cancellation did not settle within the test budget.")
+    Issue.record("ChatGPT login completion did not settle within the test budget.")
   }
 
   @MainActor
   private func waitForLogout(
     _ model: HexInferenceBackendSettingsModel,
-    provider: TrackingStatusProvider
+    manager: TrackingChatGPTAuthorizationManager
   ) async {
     for _ in 0..<100 {
-      if await provider.logoutCallCount > 0 && !model.isCodexLogoutInProgress {
+      if await manager.signOutCallCount > 0, !model.isChatGPTLogoutInProgress {
         return
       }
       try? await Task.sleep(for: .milliseconds(10))
     }
-    Issue.record("Codex logout did not settle within the test budget.")
+    Issue.record("ChatGPT logout did not settle within the test budget.")
+  }
+
+  @MainActor
+  private func waitForSave(_ model: HexInferenceBackendSettingsModel) async {
+    for _ in 0..<100 {
+      if model.saveGeneration > 0 {
+        return
+      }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Inference settings save did not settle within the test budget.")
   }
 
   private actor EmptySettingsStore: HexInferenceBackendSettingsStore {
@@ -175,79 +164,91 @@ struct HexInferenceBackendSettingsModelTests {
       nil
     }
 
-    func save(_ settings: HexInferenceBackendSettings) async throws {}
+    func save(_ settings: HexInferenceBackendSettings) async throws {
+      _ = settings
+    }
   }
 
-  private actor EmptySecretStore: HexSecretStore {
+  private actor RecordingSettingsStore: HexInferenceBackendSettingsStore {
+    private(set) var savedSettings: HexInferenceBackendSettings?
+
+    func load() async throws -> HexInferenceBackendSettings? {
+      nil
+    }
+
+    func save(_ settings: HexInferenceBackendSettings) async throws {
+      savedSettings = settings
+    }
+  }
+
+  private actor RecordingSecretStore: HexSecretStore {
+    private(set) var storedAPIKey: String?
+    private(set) var requestedSecretValueCount = 0
+
+    init(apiKey: String? = nil) {
+      storedAPIKey = apiKey
+    }
+
     func secret(for key: HexSecretKey) async throws -> String {
-      throw TestError.missingSecret
+      requestedSecretValueCount += 1
+      guard key == .openAIAPIKey, let storedAPIKey else {
+        throw TestError.missingSecret
+      }
+      return storedAPIKey
     }
 
     func exists(_ key: HexSecretKey) async throws -> Bool {
-      false
+      key == .openAIAPIKey && storedAPIKey != nil
     }
 
-    func save(_ secret: String, for key: HexSecretKey) async throws {}
+    func save(_ secret: String, for key: HexSecretKey) async throws {
+      guard key == .openAIAPIKey else { return }
+      storedAPIKey = secret
+    }
 
-    func delete(_ key: HexSecretKey) async throws {}
+    func delete(_ key: HexSecretKey) async throws {
+      _ = key
+    }
   }
 
-  private actor TrackingStatusProvider:
-    CodexCompatibilityAccountStatusProviding,
-    CodexCompatibilityAccountManaging
-  {
-    private let configuredStatus: CodexCompatibilityAccountStatus
-    private(set) var statusCallCount = 0
-    private(set) var startLoginCallCount = 0
-    private(set) var completeLoginCallCount = 0
-    private(set) var cancelLoginCallCount = 0
-    private(set) var logoutCallCount = 0
-    private(set) var shutdownCallCount = 0
+  private actor TrackingChatGPTAuthorizationManager: ChatGPTCodexOAuthManaging {
+    private var status: ChatGPTCodexOAuthAccountStatus
+    private(set) var accountStatusCallCount = 0
+    private(set) var startCallCount = 0
+    private(set) var completeCallCount = 0
+    private(set) var signOutCallCount = 0
 
-    init(status: CodexCompatibilityAccountStatus = .signedOut) {
-      configuredStatus = status
+    init(status: ChatGPTCodexOAuthAccountStatus = .signedOut) {
+      self.status = status
     }
 
-    func status() async -> CodexCompatibilityAccountStatus {
-      statusCallCount += 1
-      return configuredStatus
+    func accountStatus() async -> ChatGPTCodexOAuthAccountStatus {
+      accountStatusCallCount += 1
+      return status
     }
 
-    func startLogin(
-      _ mode: CodexChatGPTLoginMode
-    ) async throws -> CodexCompatibilityLoginChallenge {
-      startLoginCallCount += 1
-      let loginID = try CodexLoginID(rawValue: "test-login")
-      switch mode {
-      case .browser:
-        return .browser(
-          loginID: loginID,
-          authorizationURL: try #require(URL(string: "https://auth.openai.com/authorize"))
-        )
-      case .deviceCode:
-        return .deviceCode(
-          loginID: loginID,
-          userCode: "ABCD-EFGH",
-          verificationURL: try #require(URL(string: "https://auth.openai.com/device"))
-        )
-      }
+    func startDeviceAuthorization() async throws -> ChatGPTCodexDeviceAuthorizationChallenge {
+      startCallCount += 1
+      return ChatGPTCodexDeviceAuthorizationChallenge(
+        userCode: "ABCD-EFGH",
+        verificationURL: try #require(URL(string: "https://auth.openai.com/codex/device")),
+        deviceAuthorizationID: "device-authorization-test",
+        pollInterval: 5,
+        expiresAt: Date().addingTimeInterval(900)
+      )
     }
 
-    func completeLogin(_ loginID: CodexLoginID) async throws {
-      completeLoginCallCount += 1
+    func completeDeviceAuthorization(
+      _ challenge: ChatGPTCodexDeviceAuthorizationChallenge
+    ) async throws {
+      _ = challenge
+      completeCallCount += 1
+      status = .signedIn
     }
 
-    func cancelLogin(_ loginID: CodexLoginID) async throws -> CodexLoginCancellationStatus {
-      cancelLoginCallCount += 1
-      return .cancelled
-    }
-
-    func logout() async throws {
-      logoutCallCount += 1
-    }
-
-    func shutdown() async {
-      shutdownCallCount += 1
+    func signOut() async throws {
+      signOutCallCount += 1
+      status = .signedOut
     }
   }
 

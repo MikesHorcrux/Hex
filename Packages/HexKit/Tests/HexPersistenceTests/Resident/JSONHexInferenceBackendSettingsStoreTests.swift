@@ -16,12 +16,10 @@ struct JSONHexInferenceBackendSettingsStoreTests {
     let fileURL = root.appendingPathComponent("inference-backends.json", isDirectory: false)
     let store = try JSONHexInferenceBackendSettingsStore(fileURL: fileURL)
     let settings = try HexInferenceBackendSettings(
-      selectedBackend: .codexCompatibility,
+      selectedBackend: .openAIResponses,
       openAIModelID: "gpt-test",
-      mlx: try HexMLXBackendSettings(),
-      codex: try HexCodexCompatibilitySettings(
-        executableURL: URL(fileURLWithPath: "/Users/test/bin/codex")
-      )
+      openAIAuthenticationMethod: .chatGPT,
+      mlx: try HexMLXBackendSettings()
     )
 
     try await store.save(settings)

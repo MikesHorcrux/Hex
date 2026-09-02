@@ -56,6 +56,60 @@ struct HexResidentGatewayActivationCheckerTests {
   }
 
   @Test
+  func chatGPTSelectionRequiresOAuthInsteadOfAnAPIKey() async throws {
+    let workspace = try makeWorkspace()
+    let bundle = try makeBundle()
+    defer {
+      try? FileManager.default.removeItem(at: workspace)
+      try? FileManager.default.removeItem(at: bundle)
+    }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "subscription-model",
+      workspaceRoot: workspace
+    )
+    let inferenceSettings = try HexInferenceBackendSettings(
+      openAIModelID: "subscription-model",
+      openAIAuthenticationMethod: .chatGPT
+    )
+    let checker = HexResidentGatewayActivationChecker(
+      settingsStore: FakeSettingsStore(settings: settings),
+      secretStore: FakeSecretStore(value: "stored-api-key"),
+      appBundleURL: bundle,
+      inferenceSettingsStore: FakeInferenceSettingsStore(settings: inferenceSettings)
+    )
+
+    let readiness = await checker.check()
+
+    #expect(!readiness.isReady)
+    #expect(readiness.message.contains("needs ChatGPT sign-in"))
+  }
+
+  @Test
+  func absentInferenceDocumentPreservesLegacyAPIKeyRequirement() async throws {
+    let workspace = try makeWorkspace()
+    let bundle = try makeBundle()
+    defer {
+      try? FileManager.default.removeItem(at: workspace)
+      try? FileManager.default.removeItem(at: bundle)
+    }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "legacy-model",
+      workspaceRoot: workspace
+    )
+    let checker = HexResidentGatewayActivationChecker(
+      settingsStore: FakeSettingsStore(settings: settings),
+      secretStore: FakeSecretStore(),
+      appBundleURL: bundle,
+      inferenceSettingsStore: FakeInferenceSettingsStore(settings: nil)
+    )
+
+    let readiness = await checker.check()
+
+    #expect(!readiness.isReady)
+    #expect(readiness.message.contains("missing an OpenAI API key"))
+  }
+
+  @Test
   func localMLXDoesNotRequireAnOpenAICredential() async throws {
     let workspace = try makeWorkspace()
     let bundle = try makeBundle()
@@ -228,18 +282,20 @@ struct HexResidentGatewayActivationCheckerTests {
 
   private actor FakeSecretStore: HexSecretStore {
     let value: String?
+    let availableKey: HexSecretKey
 
-    init(value: String? = nil) {
+    init(value: String? = nil, availableKey: HexSecretKey = .openAIAPIKey) {
       self.value = value
+      self.availableKey = availableKey
     }
 
     func secret(for key: HexSecretKey) async throws -> String {
-      guard let value else { throw FixtureError.missingSecret }
+      guard key == availableKey, let value else { throw FixtureError.missingSecret }
       return value
     }
 
     func exists(_ key: HexSecretKey) async throws -> Bool {
-      value != nil
+      key == availableKey && value != nil
     }
 
     func save(_ secret: String, for key: HexSecretKey) async throws {}

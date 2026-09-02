@@ -4,23 +4,15 @@ import HexPersistence
 import HexProviders
 
 /// App-composition dependencies for inference-backend settings.
-///
-/// The optional factory is intentionally injected: the settings model does not construct process
-/// channels or read account credentials. A live factory only launches an existing executable when
-/// the user explicitly asks to refresh Codex compatibility status.
 nonisolated struct HexInferenceBackendSettingsDependencies: Sendable {
   let settingsStore: (any HexInferenceBackendSettingsStore)?
   let secretStore: (any HexSecretStore)?
-  let makeCodexStatusProvider:
-    (
-      @Sendable (HexCodexCompatibilitySettings) throws
-        -> any CodexCompatibilityAccountStatusProviding
-    )?
+  let chatGPTAuthorizationManager: (any ChatGPTCodexOAuthManaging)?
 
   static let blocked = Self(
     settingsStore: nil,
     secretStore: nil,
-    makeCodexStatusProvider: nil
+    chatGPTAuthorizationManager: nil
   )
 
   /// Creates the production settings boundary beneath the user's Application Support directory.
@@ -45,31 +37,10 @@ nonisolated struct HexInferenceBackendSettingsDependencies: Sendable {
     }
 
     let secretStore = KeychainHexSecretStore()
-    let clientVersion =
-      (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
-      ?? "production"
-    let makeCodexStatusProvider:
-      @Sendable (HexCodexCompatibilitySettings) throws
-        -> any CodexCompatibilityAccountStatusProviding = { settings in
-          guard let executableURL = settings.executableURL else {
-            throw CodexStdioAppServerChannelError.invalidConfiguration
-          }
-          let channel = try CodexStdioAppServerChannel(
-            executableURL: executableURL,
-            workingDirectoryURL: settings.workingDirectoryURL
-          )
-          let configuration = try CodexAppServerConnectionConfiguration(
-            clientVersion: clientVersion
-          )
-          return CodexAppServerCompatibilityAccountStatusProvider(
-            configuration: configuration,
-            channel: channel
-          )
-        }
     return Self(
       settingsStore: settingsStore,
       secretStore: secretStore,
-      makeCodexStatusProvider: makeCodexStatusProvider
+      chatGPTAuthorizationManager: ChatGPTCodexOAuthSession(secretStore: secretStore)
     )
   }
 }

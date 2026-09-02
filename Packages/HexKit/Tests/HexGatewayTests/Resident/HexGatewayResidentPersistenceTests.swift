@@ -46,7 +46,10 @@ struct HexGatewayResidentPersistenceTests {
     #expect(configuration.mcpClientSessions.map(\.serverID) == ["docs"])
     #expect(configuration.authorizationMode == .fullAccess)
     #expect(await secretStore.didReadValue() == false)
-    #expect(try await configuration.makeCredentialProvider().apiKey() == "sk-persisted-secret")
+    #expect(
+      try await configuration.makeAuthorizationProvider().authorization().bearerToken
+        == "sk-persisted-secret"
+    )
     #expect(await secretStore.didReadValue())
   }
 

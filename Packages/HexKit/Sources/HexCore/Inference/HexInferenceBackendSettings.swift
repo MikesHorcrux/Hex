@@ -1,22 +1,20 @@
 /// Persisted, non-secret inference-backend selection and setup.
 ///
 /// This value is safe to encode as JSON. In particular, it has no OpenAI API-key field and no
-/// ChatGPT/Codex token field. Codex account credentials remain owned by the Codex app-server.
+/// ChatGPT OAuth token field.
 public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
-  public static let currentSchemaVersion = 1
-  public static let defaultOpenAIModelID = "gpt-5.2"
+  public static let currentSchemaVersion = 2
+  public static let defaultOpenAIModelID = "gpt-5.6-luna"
 
   public let schemaVersion: Int
   public let selectedBackend: HexInferenceBackendKind
   public let openAI: HexOpenAIBackendSettings
   public let mlx: HexMLXBackendSettings
-  public let codex: HexCodexCompatibilitySettings
 
   public init(
     selectedBackend: HexInferenceBackendKind,
     openAI: HexOpenAIBackendSettings,
     mlx: HexMLXBackendSettings,
-    codex: HexCodexCompatibilitySettings,
     schemaVersion: Int = Self.currentSchemaVersion
   ) throws {
     guard schemaVersion == Self.currentSchemaVersion else {
@@ -26,20 +24,21 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
     self.selectedBackend = selectedBackend
     self.openAI = openAI
     self.mlx = mlx
-    self.codex = codex
   }
 
   public init(
     selectedBackend: HexInferenceBackendKind = .openAIResponses,
     openAIModelID: String = Self.defaultOpenAIModelID,
-    mlx: HexMLXBackendSettings? = nil,
-    codex: HexCodexCompatibilitySettings? = nil
+    openAIAuthenticationMethod: HexOpenAIAuthenticationMethod = .apiKey,
+    mlx: HexMLXBackendSettings? = nil
   ) throws {
     try self.init(
       selectedBackend: selectedBackend,
-      openAI: HexOpenAIBackendSettings(modelID: openAIModelID),
-      mlx: mlx ?? HexMLXBackendSettings(),
-      codex: codex ?? HexCodexCompatibilitySettings()
+      openAI: HexOpenAIBackendSettings(
+        modelID: openAIModelID,
+        authenticationMethod: openAIAuthenticationMethod
+      ),
+      mlx: mlx ?? HexMLXBackendSettings()
     )
   }
 
@@ -59,8 +58,6 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
       true
     case .mlxLocal:
       mlx.isConfigured
-    case .codexCompatibility:
-      codex.isConfigured
     }
   }
 
@@ -69,17 +66,39 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
     case selectedBackend
     case openAI
     case mlx
-    case codex
   }
 
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
+    let decodedSchemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+    guard decodedSchemaVersion == 1 || decodedSchemaVersion == Self.currentSchemaVersion else {
+      throw HexInferenceBackendSettingsError.unsupportedSchemaVersion(decodedSchemaVersion)
+    }
+    let rawSelectedBackend = try container.decode(String.self, forKey: .selectedBackend)
+    let decodedOpenAI = try container.decode(HexOpenAIBackendSettings.self, forKey: .openAI)
+    let selectedBackend: HexInferenceBackendKind
+    let openAI: HexOpenAIBackendSettings
+    if rawSelectedBackend == "codex-compatibility" {
+      selectedBackend = .openAIResponses
+      openAI = try HexOpenAIBackendSettings(
+        modelID: decodedOpenAI.modelID,
+        authenticationMethod: .chatGPT
+      )
+    } else if let backend = HexInferenceBackendKind(rawValue: rawSelectedBackend) {
+      selectedBackend = backend
+      openAI = decodedOpenAI
+    } else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .selectedBackend,
+        in: container,
+        debugDescription: "Unknown inference backend."
+      )
+    }
     try self.init(
-      selectedBackend: container.decode(HexInferenceBackendKind.self, forKey: .selectedBackend),
-      openAI: container.decode(HexOpenAIBackendSettings.self, forKey: .openAI),
+      selectedBackend: selectedBackend,
+      openAI: openAI,
       mlx: container.decode(HexMLXBackendSettings.self, forKey: .mlx),
-      codex: container.decode(HexCodexCompatibilitySettings.self, forKey: .codex),
-      schemaVersion: container.decode(Int.self, forKey: .schemaVersion)
+      schemaVersion: Self.currentSchemaVersion
     )
   }
 }

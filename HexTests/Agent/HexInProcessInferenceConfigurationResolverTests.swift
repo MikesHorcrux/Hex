@@ -8,7 +8,7 @@ import Testing
 @Suite("In-process inference configuration resolver")
 struct HexInProcessInferenceConfigurationResolverTests {
   @Test
-  func usesSavedOpenAIModelAndSecretStoreCredentialProvider() async throws {
+  func usesSavedOpenAIModelAndAPIKeyAuthorizationProvider() async throws {
     let settings = try HexInferenceBackendSettings(openAIModelID: "saved-openai-model")
     let secretStore = SecretStore(value: "saved-secret")
     let resolver = HexInProcessInferenceConfigurationResolver(
@@ -18,9 +18,10 @@ struct HexInProcessInferenceConfigurationResolverTests {
 
     let resolution = try await resolver.resolve()
     switch resolution {
-    case .openAI(let modelID, let credentialProvider):
-      #expect(modelID == "saved-openai-model")
-      #expect(try await credentialProvider.apiKey() == "saved-secret")
+    case .openAI(let settings, let authorizationProvider):
+      #expect(settings.modelID == "saved-openai-model")
+      #expect(settings.authenticationMethod == .apiKey)
+      #expect(try await authorizationProvider.authorization().bearerToken == "saved-secret")
     }
     #expect(await secretStore.didCheckExistence())
   }
@@ -36,27 +37,50 @@ struct HexInProcessInferenceConfigurationResolverTests {
 
     let resolution = try await resolver.resolve()
     switch resolution {
-    case .openAI(let modelID, _):
-      #expect(modelID == "explicit-default-model")
+    case .openAI(let settings, _):
+      #expect(settings.modelID == "explicit-default-model")
+      #expect(settings.authenticationMethod == .apiKey)
     }
   }
 
   @Test
-  func failsClosedForUnsupportedSelectedBackends() async throws {
-    for backend in [HexInferenceBackendKind.mlxLocal, .codexCompatibility] {
-      let settings = try HexInferenceBackendSettings(selectedBackend: backend)
-      let resolver = HexInProcessInferenceConfigurationResolver(
-        settingsStore: SettingsStore(value: settings),
-        secretStore: SecretStore(value: "unused")
-      )
+  func chatGPTSelectionChecksOAuthBundleInsteadOfAPIKey() async throws {
+    let settings = try HexInferenceBackendSettings(
+      openAIModelID: "subscription-model",
+      openAIAuthenticationMethod: .chatGPT
+    )
+    let secretStore = SecretStore(
+      value: "redacted-oauth-bundle",
+      availableKey: .openAIChatGPTOAuth
+    )
+    let resolver = HexInProcessInferenceConfigurationResolver(
+      settingsStore: SettingsStore(value: settings),
+      secretStore: secretStore
+    )
 
-      do {
-        _ = try await resolver.resolve()
-        Issue.record("Expected \(backend.rawValue) to fail closed without an adapter.")
-      } catch let error as HexInProcessInferenceConfigurationResolver.ResolutionError {
-        #expect(error == .unsupportedBackend(backend))
-        #expect(!error.localizedDescription.contains("fallback"))
-      }
+    let resolution = try await resolver.resolve()
+    switch resolution {
+    case .openAI(let resolvedSettings, _):
+      #expect(resolvedSettings.authenticationMethod == .chatGPT)
+    }
+    #expect(await secretStore.lastCheckedKey() == .openAIChatGPTOAuth)
+  }
+
+  @Test
+  func failsClosedForUnsupportedSelectedBackend() async throws {
+    let backend = HexInferenceBackendKind.mlxLocal
+    let settings = try HexInferenceBackendSettings(selectedBackend: backend)
+    let resolver = HexInProcessInferenceConfigurationResolver(
+      settingsStore: SettingsStore(value: settings),
+      secretStore: SecretStore(value: "unused")
+    )
+
+    do {
+      _ = try await resolver.resolve()
+      Issue.record("Expected \(backend.rawValue) to fail closed without an adapter.")
+    } catch let error as HexInProcessInferenceConfigurationResolver.ResolutionError {
+      #expect(error == .unsupportedBackend(backend))
+      #expect(!error.localizedDescription.contains("fallback"))
     }
   }
 
@@ -78,14 +102,17 @@ struct HexInProcessInferenceConfigurationResolverTests {
 
   private actor SecretStore: HexSecretStore {
     private let value: String?
+    private let availableKey: HexSecretKey
     private var checkedExistence = false
+    private var checkedKey: HexSecretKey?
 
-    init(value: String?) {
+    init(value: String?, availableKey: HexSecretKey = .openAIAPIKey) {
       self.value = value
+      self.availableKey = availableKey
     }
 
     func secret(for key: HexSecretKey) async throws -> String {
-      guard key == .openAIAPIKey, let value else {
+      guard key == availableKey, let value else {
         throw TestError.missingSecret
       }
       return value
@@ -93,7 +120,8 @@ struct HexInProcessInferenceConfigurationResolverTests {
 
     func exists(_ key: HexSecretKey) async throws -> Bool {
       checkedExistence = true
-      return key == .openAIAPIKey && value != nil
+      checkedKey = key
+      return key == availableKey && value != nil
     }
 
     func save(_ secret: String, for key: HexSecretKey) async throws {
@@ -106,6 +134,10 @@ struct HexInProcessInferenceConfigurationResolverTests {
 
     func didCheckExistence() -> Bool {
       checkedExistence
+    }
+
+    func lastCheckedKey() -> HexSecretKey? {
+      checkedKey
     }
   }
 

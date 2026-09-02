@@ -51,8 +51,9 @@ may awaken a service that the user previously registered; `--verify` makes no re
 ## Registration and distribution boundary
 
 The staged Debug app exposes resident registration only after a read-only preflight confirms the
-persisted model and workspace, the presence (not the value) of the OpenAI credential, the executable
-helper, and the LaunchAgent identity and service contract. Registration and unregistration happen
+persisted model and workspace, the presence (not the value) of the selected OpenAI API-key or
+ChatGPT OAuth credential when OpenAI is selected, the executable helper, and the LaunchAgent
+identity and service contract. Registration and unregistration happen
 only when the user presses the corresponding menu-bar control. If macOS requires approval, Hex links
 the user to Login Items settings. A registered helper can always be disabled even if its configuration
 later becomes invalid.
@@ -60,7 +61,8 @@ later becomes invalid.
 Non-secret settings are versioned JSON beneath the user's Application Support directory. The store
 uses bounded reads, owner-only files, no-follow descriptors, an OS lock, atomic replacement, and
 durable flushes. The API key is a separate data-protection Keychain item shared only by the signed app
-and helper. It is available after the user's first unlock for background work and is device-only.
+and helper. The ChatGPT OAuth bundle uses a different item under the same access group. Both are
+available after the user's first unlock for background work and are device-only.
 
 The in-process route remains an explicit developer fallback selected with
 `HEX_GATEWAY_MODE=in-process` together with `HEX_ALLOW_IN_PROCESS_FALLBACK=true` (and the required

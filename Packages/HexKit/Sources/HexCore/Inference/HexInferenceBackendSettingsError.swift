@@ -9,8 +9,6 @@ public enum HexInferenceBackendSettingsError: Error, Equatable, LocalizedError, 
   case invalidMLXDirectory
   case invalidMLXOutputTokens
   case invalidMLXContextWindow
-  case invalidCodexExecutable
-  case invalidCodexWorkingDirectory
 
   public var errorDescription: String? {
     switch self {
@@ -28,10 +26,6 @@ public enum HexInferenceBackendSettingsError: Error, Equatable, LocalizedError, 
       "The MLX output-token limit is invalid."
     case .invalidMLXContextWindow:
       "The MLX context window is invalid."
-    case .invalidCodexExecutable:
-      "The Codex executable path is invalid."
-    case .invalidCodexWorkingDirectory:
-      "The Codex working-directory path is invalid."
     }
   }
 }
