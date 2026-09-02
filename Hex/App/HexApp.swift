@@ -1,4 +1,6 @@
 import AppKit
+import HexPersistence
+import HexPersonality
 import SwiftUI
 
 @main
@@ -8,6 +10,7 @@ struct HexApp: App {
   @State private var startAtLogin: HexStartAtLoginModel
   @State private var residentSetup: HexResidentSetupModel
   @State private var heartbeatManagement: HexHeartbeatManagementModel
+  @State private var personalitySettings: HexPersonalitySettingsModel
   private let route: HexGatewayRoute
   private let isVerificationOnlyLaunch: Bool
 
@@ -44,6 +47,8 @@ struct HexApp: App {
       HexUnavailableResidentGatewayController(),
     setupDependencies: HexResidentSetupDependencies = .blocked,
     heartbeatService: (any HexHeartbeatManaging)? = nil,
+    personalityService: (any HexPersonalityServicing)? = nil,
+    personalityMemoryScope: PersonalMemoryScope = .hex,
     lifecycleController: any HexGatewayLifecycleControlling =
       HexSMAppServiceLifecycleController(),
     isVerificationOnlyLaunch: Bool = false
@@ -78,6 +83,13 @@ struct HexApp: App {
     }
     _heartbeatManagement = State(
       initialValue: HexHeartbeatManagementModel(service: resolvedHeartbeatService)
+    )
+    let resolvedPersonalityService = personalityService ?? Self.livePersonalityService()
+    _personalitySettings = State(
+      initialValue: HexPersonalitySettingsModel(
+        service: resolvedPersonalityService,
+        scope: personalityMemoryScope
+      )
     )
   }
 
@@ -119,6 +131,11 @@ struct HexApp: App {
           .tabItem {
             Label("Heartbeats", systemImage: "calendar.badge.clock")
           }
+
+        HexPersonalitySettingsView(model: personalitySettings)
+          .tabItem {
+            Label("Personality", systemImage: "person.crop.circle")
+          }
       }
     }
 
@@ -157,5 +174,21 @@ struct HexApp: App {
 
   nonisolated static func isVerificationOnlyLaunch(arguments: [String]) -> Bool {
     arguments.contains("--hex-verify-no-connect")
+  }
+
+  private static func livePersonalityService() -> any HexPersonalityServicing {
+    guard let paths = try? HexResidentDataPaths.live(),
+      let profileStore = try? JSONPersonalityProfileStore(
+        fileURL: paths.personalityProfileURL
+      ),
+      let memoryStore = try? JSONPersonalMemoryStore(fileURL: paths.personalMemoryURL),
+      let service = try? HexPersonalityService(
+        profileStore: profileStore,
+        memoryStore: memoryStore
+      )
+    else {
+      return HexUnavailablePersonalityService()
+    }
+    return service
   }
 }

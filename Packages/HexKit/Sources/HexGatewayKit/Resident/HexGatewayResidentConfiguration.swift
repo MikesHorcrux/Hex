@@ -46,7 +46,6 @@ public struct HexGatewayResidentConfiguration: Sendable {
   private static let heartbeatDatabaseVariable = "HEX_HEARTBEAT_DATABASE_URL"
   private static let xcodeMCPVariable = "HEX_XCODE_MCP_ENABLED"
   private static let personalityScopeVariable = "HEX_PERSONALITY_SCOPE"
-  private static let defaultPersonalityScopeValue = "hex"
 
   public let machServiceName: String
   public let modelID: String
@@ -120,7 +119,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
         throw ConfigurationError.invalidVariable(Self.personalityScopeVariable)
       }
     } else {
-      personalMemoryScope = try Self.defaultPersonalityScope()
+      personalMemoryScope = Self.defaultPersonalityScope()
     }
     let mcpClientSessions: [any MCPClientSession]
     if let rawXcodeMCP = Self.value(named: Self.xcodeMCPVariable, in: environment) {
@@ -240,7 +239,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.heartbeatStoreURL = standardizedHeartbeatStoreURL
     self.personalityProfileURL = standardizedPersonalityProfileURL
     self.personalMemoryURL = standardizedPersonalMemoryURL
-    self.personalMemoryScope = try (personalMemoryScope ?? Self.defaultPersonalityScope())
+    self.personalMemoryScope = personalMemoryScope ?? Self.defaultPersonalityScope()
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.credentialProvider = credentialProvider
     self.mcpClientSessions = mcpClientSessions.sorted { $0.serverID < $1.serverID }
@@ -383,8 +382,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
     credentialProvider
   }
 
-  private static func defaultPersonalityScope() throws -> PersonalMemoryScope {
-    try PersonalMemoryScope(rawValue: Self.defaultPersonalityScopeValue)
+  private static func defaultPersonalityScope() -> PersonalMemoryScope {
+    PersonalMemoryScope.hex
   }
 
   private static func makeMCPClientSessions(
