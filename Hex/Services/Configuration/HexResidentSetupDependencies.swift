@@ -1,16 +1,19 @@
 import Foundation
 import HexCore
+import HexMCP
 import HexPersistence
 
 /// App-composition dependencies for resident setup and activation checks.
 nonisolated struct HexResidentSetupDependencies: Sendable {
   let settingsStore: (any HexResidentRuntimeSettingsStore)?
   let secretStore: (any HexSecretStore)?
+  let managedToolLayout: MCPManagedToolLayout?
   let readinessChecker: any HexGatewayActivationReadinessChecking
 
   static let blocked = Self(
     settingsStore: nil,
     secretStore: nil,
+    managedToolLayout: nil,
     readinessChecker: HexBlockedGatewayActivationChecker()
   )
 
@@ -26,15 +29,24 @@ nonisolated struct HexResidentSetupDependencies: Sendable {
       else {
         return .blocked
       }
+      guard
+        let managedToolLayout = try? MCPManagedToolLayout(
+          rootURL: paths.directoryURL.appendingPathComponent("Tools", isDirectory: true)
+        )
+      else {
+        return .blocked
+      }
       let secretStore = KeychainHexSecretStore()
       let readinessChecker = HexResidentGatewayActivationChecker(
         settingsStore: settingsStore,
         secretStore: secretStore,
-        appBundleURL: Bundle.main.bundleURL
+        appBundleURL: Bundle.main.bundleURL,
+        managedToolLayout: managedToolLayout
       )
       return Self(
         settingsStore: settingsStore,
         secretStore: secretStore,
+        managedToolLayout: managedToolLayout,
         readinessChecker: readinessChecker
       )
     }

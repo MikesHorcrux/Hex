@@ -1,5 +1,6 @@
 import Foundation
 import HexCore
+import HexMCP
 import Observation
 
 @MainActor
@@ -8,28 +9,36 @@ final class HexResidentSetupModel {
   var apiKey = ""
   var modelID: String
   var workspaceRoot: URL?
+  var peekabooMCPEnabled = false
+  var playwrightMCPEnabled = false
   var xcodeMCPEnabled = false
+  private(set) var httpMCPServers: [HexHTTPMCPServer] = []
 
   private(set) var isLoading = false
   private(set) var isSaving = false
   private(set) var hasStoredAPIKey = false
+  private(set) var peekabooAvailability = MCPManagedToolAvailability.unavailable
+  private(set) var playwrightAvailability = MCPManagedToolAvailability.unavailable
   private(set) var statusMessage: String?
   private(set) var errorMessage: String?
   private(set) var saveGeneration = 0
 
   private let settingsStore: (any HexResidentRuntimeSettingsStore)?
   private let secretStore: (any HexSecretStore)?
+  private let managedToolLayout: MCPManagedToolLayout?
   private var hasLoaded = false
   private var loadedMCPServers: [HexResidentMCPServerSettings] = []
 
   init(
     initialModelID: String = "",
     settingsStore: (any HexResidentRuntimeSettingsStore)? = nil,
-    secretStore: (any HexSecretStore)? = nil
+    secretStore: (any HexSecretStore)? = nil,
+    managedToolLayout: MCPManagedToolLayout? = nil
   ) {
     modelID = initialModelID
     self.settingsStore = settingsStore
     self.secretStore = secretStore
+    self.managedToolLayout = managedToolLayout
   }
 
   var workspaceDisplayName: String {
@@ -46,6 +55,11 @@ final class HexResidentSetupModel {
     isLoading = true
     defer { isLoading = false }
 
+    if let managedToolLayout {
+      peekabooAvailability = managedToolLayout.availability(for: .peekaboo)
+      playwrightAvailability = managedToolLayout.availability(for: .playwright)
+    }
+
     guard let settingsStore, let secretStore else {
       statusMessage = nil
       errorMessage = "Resident setup is unavailable in this build."
@@ -57,6 +71,22 @@ final class HexResidentSetupModel {
         modelID = settings.modelID
         workspaceRoot = settings.workspaceRoot
         loadedMCPServers = settings.mcpServers
+        httpMCPServers = settings.mcpServers.compactMap { setting in
+          guard setting.transport == .streamableHTTP, let endpointURL = setting.endpointURL else {
+            return nil
+          }
+          return HexHTTPMCPServer(
+            serverID: setting.serverID,
+            endpointURL: endpointURL,
+            isEnabled: setting.isEnabled
+          )
+        }
+        peekabooMCPEnabled = settings.mcpServers.contains {
+          $0.serverID == "peekaboo" && $0.transport == .peekaboo && $0.isEnabled
+        }
+        playwrightMCPEnabled = settings.mcpServers.contains {
+          $0.serverID == "playwright" && $0.transport == .playwright && $0.isEnabled
+        }
         xcodeMCPEnabled = settings.mcpServers.contains {
           $0.serverID == "xcode" && $0.transport == .xcode && $0.isEnabled
         }
@@ -88,6 +118,54 @@ final class HexResidentSetupModel {
     statusMessage = nil
   }
 
+  func addHTTPMCPServer(serverID: String, endpoint: String) -> Bool {
+    let normalizedServerID = serverID.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalizedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+    let reservedServerIDs: Set<String> = ["peekaboo", "playwright", "xcode"]
+    guard
+      !reservedServerIDs.contains(normalizedServerID),
+      !httpMCPServers.contains(where: { $0.serverID == normalizedServerID }),
+      let endpointURL = URL(string: normalizedEndpoint),
+      let setting = try? HexResidentMCPServerSettings(
+        serverID: normalizedServerID,
+        transport: .streamableHTTP,
+        endpointURL: endpointURL
+      ),
+      let validatedEndpointURL = setting.endpointURL
+    else {
+      errorMessage =
+        "Enter a unique lowercase server ID and an HTTPS or localhost HTTP MCP endpoint."
+      statusMessage = nil
+      return false
+    }
+    httpMCPServers.append(
+      HexHTTPMCPServer(
+        serverID: setting.serverID,
+        endpointURL: validatedEndpointURL,
+        isEnabled: true
+      )
+    )
+    httpMCPServers.sort { $0.serverID < $1.serverID }
+    errorMessage = nil
+    statusMessage = nil
+    return true
+  }
+
+  func setHTTPMCPServerEnabled(_ serverID: String, isEnabled: Bool) {
+    guard let index = httpMCPServers.firstIndex(where: { $0.serverID == serverID }) else {
+      return
+    }
+    httpMCPServers[index].isEnabled = isEnabled
+    errorMessage = nil
+    statusMessage = nil
+  }
+
+  func removeHTTPMCPServer(_ serverID: String) {
+    httpMCPServers.removeAll { $0.serverID == serverID }
+    errorMessage = nil
+    statusMessage = nil
+  }
+
   func save() {
     guard !isSaving else { return }
     errorMessage = nil
@@ -112,10 +190,37 @@ final class HexResidentSetupModel {
       errorMessage = "Resident setup is unavailable in this build."
       return
     }
+    guard !playwrightMCPEnabled || playwrightAvailability == .ready else {
+      errorMessage = "The managed Playwright MCP runtime is missing or incomplete."
+      return
+    }
+    guard !peekabooMCPEnabled || peekabooAvailability == .ready else {
+      errorMessage = "The managed Peekaboo runtime is missing or incomplete."
+      return
+    }
 
     let settings: HexResidentRuntimeSettings
     do {
-      var mcpServers = loadedMCPServers.filter { $0.serverID != "xcode" }
+      let builtInServerIDs: Set<String> = ["peekaboo", "playwright", "xcode"]
+      var mcpServers = loadedMCPServers.filter {
+        !builtInServerIDs.contains($0.serverID) && $0.transport != .streamableHTTP
+      }
+      mcpServers.append(
+        contentsOf: try httpMCPServers.map { server in
+          try HexResidentMCPServerSettings(
+            serverID: server.serverID,
+            transport: .streamableHTTP,
+            endpointURL: server.endpointURL,
+            isEnabled: server.isEnabled
+          )
+        }
+      )
+      if peekabooMCPEnabled {
+        mcpServers.append(try .peekaboo())
+      }
+      if playwrightMCPEnabled {
+        mcpServers.append(try .playwright())
+      }
       if xcodeMCPEnabled {
         mcpServers.append(try .xcode())
       }

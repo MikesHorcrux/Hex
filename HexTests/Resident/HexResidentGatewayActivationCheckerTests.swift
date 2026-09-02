@@ -1,6 +1,7 @@
 import Foundation
 import HexCore
 import HexGatewayKit
+import HexMCP
 import Testing
 
 @testable import Hex
@@ -52,6 +53,36 @@ struct HexResidentGatewayActivationCheckerTests {
     let readiness = await checker.check()
 
     #expect(readiness == .ready)
+  }
+
+  @Test
+  func enabledManagedToolMustHaveAValidatedInstallation() async throws {
+    let workspace = try makeWorkspace()
+    let bundle = try makeBundle()
+    let toolsRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "HexActivationTools-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer {
+      try? FileManager.default.removeItem(at: workspace)
+      try? FileManager.default.removeItem(at: bundle)
+    }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "gpt-5-codex",
+      workspaceRoot: workspace,
+      mcpServers: [try .playwright()]
+    )
+    let checker = HexResidentGatewayActivationChecker(
+      settingsStore: FakeSettingsStore(settings: settings),
+      secretStore: FakeSecretStore(value: "stored-secret"),
+      appBundleURL: bundle,
+      managedToolLayout: try MCPManagedToolLayout(rootURL: toolsRoot)
+    )
+
+    let readiness = await checker.check()
+
+    #expect(!readiness.isReady)
+    #expect(readiness.message.contains("managed MCP tool is missing or incomplete"))
   }
 
   @Test

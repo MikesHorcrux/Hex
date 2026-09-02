@@ -7,12 +7,13 @@ struct HexComputerAccessView: View {
     Section {
       Label("App discovery and activation", systemImage: "macwindow")
       Label("Semantic control through macOS Accessibility", systemImage: "accessibility")
-      Label("Public HTTPS search, fetch, and browser opening", systemImage: "globe")
+      Label("Structured browser automation through Playwright", systemImage: "globe")
+      Label("Screen observation and native interaction through Peekaboo", systemImage: "eye")
 
       Text(
-        "Hex asks for approval before every new capability scope. Accessibility permission is "
-          + "requested only after you approve a Mac-control action. The process running the agent "
-          + "(normally HexGateway) must be enabled in Privacy & Security."
+        "Hex asks for approval before every new capability scope. Screen Recording and "
+          + "Accessibility remain macOS-controlled permissions; enabling an integration does not "
+          + "grant either permission automatically."
       )
       .font(.caption)
       .foregroundStyle(.secondary)

@@ -20,6 +20,14 @@ public struct HexResidentMCPServerSettings: Codable, Equatable, Sendable {
       throw HexResidentRuntimeSettingsError.invalidMCPServers
     }
     switch transport {
+    case .peekaboo:
+      guard serverID == "peekaboo", endpointURL == nil else {
+        throw HexResidentRuntimeSettingsError.invalidMCPServers
+      }
+    case .playwright:
+      guard serverID == "playwright", endpointURL == nil else {
+        throw HexResidentRuntimeSettingsError.invalidMCPServers
+      }
     case .xcode:
       guard serverID == "xcode", endpointURL == nil else {
         throw HexResidentRuntimeSettingsError.invalidMCPServers
@@ -37,6 +45,14 @@ public struct HexResidentMCPServerSettings: Codable, Equatable, Sendable {
 
   public static func xcode(isEnabled: Bool = true) throws -> Self {
     try Self(serverID: "xcode", transport: .xcode, isEnabled: isEnabled)
+  }
+
+  public static func playwright(isEnabled: Bool = true) throws -> Self {
+    try Self(serverID: "playwright", transport: .playwright, isEnabled: isEnabled)
+  }
+
+  public static func peekaboo(isEnabled: Bool = true) throws -> Self {
+    try Self(serverID: "peekaboo", transport: .peekaboo, isEnabled: isEnabled)
   }
 
   private enum CodingKeys: String, CodingKey {

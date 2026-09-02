@@ -285,7 +285,14 @@ public struct HexGatewayResidentConfiguration: Sendable {
 
     let mcpClientSessions: [any MCPClientSession]
     do {
-      mcpClientSessions = try Self.makeMCPClientSessions(from: settings.mcpServers)
+      let managedToolLayout = try MCPManagedToolLayout(
+        rootURL: resolvedPaths.directoryURL.appendingPathComponent("Tools", isDirectory: true)
+      )
+      mcpClientSessions = try Self.makeMCPClientSessions(
+        from: settings.mcpServers,
+        managedToolLayout: managedToolLayout,
+        workspaceRoot: settings.workspaceRoot
+      )
     } catch {
       throw ConfigurationError.mcpConfigurationUnavailable
     }
@@ -323,10 +330,26 @@ public struct HexGatewayResidentConfiguration: Sendable {
   }
 
   private static func makeMCPClientSessions(
-    from settings: [HexResidentMCPServerSettings]
+    from settings: [HexResidentMCPServerSettings],
+    managedToolLayout: MCPManagedToolLayout,
+    workspaceRoot: URL
   ) throws -> [any MCPClientSession] {
     try settings.filter(\.isEnabled).map { setting in
       switch setting.transport {
+      case .peekaboo:
+        return LocalMCPClientSession(
+          configuration: try MCPServerConfiguration.peekaboo(
+            layout: managedToolLayout,
+            workspaceRoot: workspaceRoot
+          )
+        )
+      case .playwright:
+        return LocalMCPClientSession(
+          configuration: try MCPServerConfiguration.playwright(
+            layout: managedToolLayout,
+            workspaceRoot: workspaceRoot
+          )
+        )
       case .xcode:
         return LocalMCPClientSession(configuration: try MCPServerConfiguration.xcode())
       case .streamableHTTP:

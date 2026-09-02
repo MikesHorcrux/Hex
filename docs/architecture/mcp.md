@@ -27,6 +27,38 @@ catalog. MCP calls still pass through Hex-owned authorization and ordinary runti
 resident host exposes each wrapper's disconnected, connecting, ready, or unavailable state and
 closes all MCP sessions during ordered shutdown.
 
+## Managed browser and Mac adapters
+
+Hex treats Playwright and Peekaboo as replaceable tool adapters. Neither owns inference, prompts,
+memory, planning, the agent loop, authorization, or the durable journal. The data flow remains:
+
+```text
+model -> Hex agent loop -> Hex authorization -> MCP adapter -> browser or macOS -> tool result
+                                      ^                                  |
+                                      +------ Hex journal and bounds <---+
+```
+
+The managed layout is rooted at `~/Library/Application Support/Hex/Tools` and currently pins Node
+`24.20.0`, `@playwright/mcp` `0.0.80`, its Chromium revision `1243`, and Peekaboo `4.2.2`. Hex
+validates the expected version metadata, ownership, link count, write permissions, and executable
+locations before it will enable a managed adapter. Installation and upgrades remain explicit user
+operations; the app does not silently fetch or replace these runtimes.
+
+The Playwright adapter launches the official MCP CLI through the pinned Node executable with an
+explicit environment, an isolated browser profile, no Playwright code generation, and a 50 MiB
+artifact limit. It gives Hex structured navigation, page inspection, form, and browser interaction
+tools without placing a JavaScript agent runtime inside Hex.
+
+The Peekaboo adapter launches `peekaboo mcp serve --input-strategy actionFirst`. Hex deliberately
+does not invoke Peekaboo's separate agent mode. Peekaboo contributes observation and native Mac
+interaction tools, while every resulting `mcp.peekaboo.*` call still receives a Hex-owned
+authorization request. macOS continues to control Screen Recording and Accessibility; saving or
+enabling the adapter cannot grant those permissions.
+
+Xcode remains a built-in local stdio adapter, and additional servers can be saved as HTTPS or
+literal-loopback HTTP endpoints. Secrets for HTTP authentication are process-only and are not
+written into resident settings.
+
 ## Boundary rules
 
 - Open the configured executable without following symbolic links and require its descriptor to

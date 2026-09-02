@@ -12,6 +12,8 @@ struct HexResidentRuntimeSettingsTests {
       workspaceRoot: URL(fileURLWithPath: "/tmp/hex-workspace"),
       mcpServers: [
         try .xcode(),
+        try .playwright(),
+        try .peekaboo(),
         try HexResidentMCPServerSettings(
           serverID: "local_docs",
           transport: .streamableHTTP,
@@ -25,7 +27,10 @@ struct HexResidentRuntimeSettingsTests {
     #expect(settings == decoded)
     #expect(settings.schemaVersion == HexResidentRuntimeSettings.currentSchemaVersion)
     #expect(!String(decoding: data, as: UTF8.self).contains("apiKey"))
-    #expect(decoded.mcpServers.map(\.serverID) == ["local_docs", "xcode"])
+    #expect(
+      decoded.mcpServers.map(\.serverID)
+        == ["local_docs", "peekaboo", "playwright", "xcode"]
+    )
   }
 
   @Test
@@ -84,6 +89,19 @@ struct HexResidentRuntimeSettingsTests {
         serverID: "remote",
         transport: .streamableHTTP,
         endpointURL: URL(string: "http://example.com/mcp")
+      )
+    }
+    #expect(throws: HexResidentRuntimeSettingsError.invalidMCPServers) {
+      _ = try HexResidentMCPServerSettings(
+        serverID: "not-playwright",
+        transport: .playwright
+      )
+    }
+    #expect(throws: HexResidentRuntimeSettingsError.invalidMCPServers) {
+      _ = try HexResidentMCPServerSettings(
+        serverID: "peekaboo",
+        transport: .peekaboo,
+        endpointURL: URL(string: "http://localhost:8765/mcp")
       )
     }
   }

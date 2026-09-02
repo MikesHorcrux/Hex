@@ -11,6 +11,7 @@ public enum MCPProcessEnvironment {
     "MCP_XCODE_PID",
     "MCP_XCODE_SESSION_ID",
     "PATH",
+    "PLAYWRIGHT_BROWSERS_PATH",
     "SHELL",
     "TMPDIR",
     "TOOLCHAINS",

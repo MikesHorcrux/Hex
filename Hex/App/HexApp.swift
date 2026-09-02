@@ -62,7 +62,8 @@ struct HexApp: App {
       initialValue: HexResidentSetupModel(
         initialModelID: modelID,
         settingsStore: setupDependencies.settingsStore,
-        secretStore: setupDependencies.secretStore
+        secretStore: setupDependencies.secretStore,
+        managedToolLayout: setupDependencies.managedToolLayout
       )
     )
   }
