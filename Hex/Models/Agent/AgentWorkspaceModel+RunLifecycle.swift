@@ -6,13 +6,13 @@ extension AgentWorkspaceModel {
   func startRun(
     prompt: String,
     modelID: String,
+    initialMessages: [Message],
     runID: AgentRunID
   ) async {
-    let message = Message(role: .user, content: [.text(prompt)])
     let request = GatewayStartRunRequest(
       runID: runID,
       modelID: ModelID(rawValue: modelID),
-      initialMessages: [message]
+      initialMessages: initialMessages
     )
 
     do {

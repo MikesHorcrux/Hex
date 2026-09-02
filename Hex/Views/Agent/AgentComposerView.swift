@@ -25,7 +25,7 @@ struct AgentComposerView: View {
         Text(
           isRunning
             ? "Hex is working. Tool requests will pause for your approval."
-            : "Prompts stay local to this session until you send them."
+            : "Conversations are saved locally on this Mac."
         )
         .font(.caption)
         .foregroundStyle(.secondary)

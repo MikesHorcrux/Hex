@@ -49,6 +49,78 @@ struct AgentSidebarView: View {
       Divider()
 
       VStack(alignment: .leading, spacing: 9) {
+        HStack {
+          Label("Conversations", systemImage: "bubble.left.and.bubble.right")
+            .font(.headline)
+          Spacer()
+          Button {
+            model.newConversation()
+          } label: {
+            Image(systemName: "plus")
+              .accessibilityLabel("New conversation")
+          }
+          .buttonStyle(.hexSecondaryAction)
+          .controlSize(.small)
+        }
+
+        if model.isRestoringConversations {
+          HStack(spacing: 7) {
+            ProgressView()
+              .controlSize(.small)
+            Text("Restoring local history…")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        } else if model.orderedConversations.isEmpty {
+          Text("Your conversations will appear here after the first prompt.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
+              ForEach(model.orderedConversations) { conversation in
+                Button {
+                  model.selectConversation(conversation.id)
+                } label: {
+                  HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "bubble.left")
+                      .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                      Text(conversation.title)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                      Text(conversation.updatedAt, style: .relative)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                  }
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 6)
+                  .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(
+                  conversation.id == model.selectedConversationID
+                    ? Color.accentColor.opacity(0.14)
+                    : Color.clear,
+                  in: RoundedRectangle(cornerRadius: 7)
+                )
+                .accessibilityLabel(conversation.title)
+                .accessibilityAddTraits(
+                  conversation.id == model.selectedConversationID ? .isSelected : []
+                )
+              }
+            }
+          }
+          .frame(maxHeight: 150)
+        }
+      }
+
+      Divider()
+
+      VStack(alignment: .leading, spacing: 9) {
         Label("Model", systemImage: "cpu")
           .font(.headline)
         TextField("Model ID", text: $model.modelID)

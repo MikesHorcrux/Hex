@@ -7,6 +7,9 @@ import Observation
 @Observable
 final class AgentWorkspaceModel {
   var transcript: [ConversationItem] = []
+  var conversations: [AgentConversation] = []
+  var selectedConversationID: UUID?
+  var isRestoringConversations = false
   var draft = ""
   var modelID: String
   private(set) var connectionState: AgentConnectionState = .disconnected
@@ -16,16 +19,34 @@ final class AgentWorkspaceModel {
   var errorMessage: String?
   var activity = "Connect to a gateway to begin."
   private(set) var gatewaySummary = "No gateway session"
-  private(set) var currentRunID: AgentRunID?
+  var currentRunID: AgentRunID?
 
   let client: any HexAgentClient
+  @ObservationIgnored let conversationStore: AgentConversationStore?
   @ObservationIgnored var runTask: Task<Void, Never>?
+  @ObservationIgnored var conversationPersistenceTask: Task<Void, Never>?
   @ObservationIgnored var currentInvocationID: GatewayRunInvocationID?
   @ObservationIgnored var streamingAssistantItemID: UUID?
+  @ObservationIgnored var pendingInitialMessageIDs: Set<MessageID> = []
+  @ObservationIgnored var didRestoreConversations = false
 
-  init(client: any HexAgentClient, modelID: String = "preview") {
+  init(
+    client: any HexAgentClient,
+    modelID: String = "preview",
+    conversationStore: AgentConversationStore? = AgentConversationStore.live()
+  ) {
     self.client = client
     self.modelID = modelID
+    self.conversationStore = conversationStore
+  }
+
+  var orderedConversations: [AgentConversation] {
+    conversations.sorted {
+      if $0.updatedAt == $1.updatedAt {
+        return $0.id.uuidString < $1.id.uuidString
+      }
+      return $0.updatedAt > $1.updatedAt
+    }
   }
 
   var isRunActive: Bool {
@@ -50,6 +71,13 @@ final class AgentWorkspaceModel {
     }
     let shortID = String(currentRunID.rawValue.uuidString.prefix(8))
     return "\(runState.label) · \(shortID)"
+  }
+
+  var selectedConversationTitle: String? {
+    guard let selectedConversationID else {
+      return nil
+    }
+    return conversations.first(where: { $0.id == selectedConversationID })?.title
   }
 
   func connect() async {
@@ -142,11 +170,24 @@ final class AgentWorkspaceModel {
       errorMessage = "Enter a prompt before sending it to Hex."
       return
     }
+    guard prompt.utf8.count <= AgentConversation.maximumPromptBytes else {
+      errorMessage =
+        "That prompt is too long. Keep it under \(AgentConversation.maximumPromptBytes) bytes."
+      return
+    }
     let selectedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !selectedModelID.isEmpty else {
       errorMessage = "Configure a model in Resident setup before sending a prompt."
       return
     }
+
+    let conversation = ensureCurrentConversation()
+    let priorMessages = conversation.boundedContextMessages()
+    let initialMessages =
+      priorMessages + [
+        Message(role: .user, content: [.text(prompt)])
+      ]
+    pendingInitialMessageIDs = Set(initialMessages.map(\.id))
 
     draft = ""
     errorMessage = nil
@@ -163,6 +204,8 @@ final class AgentWorkspaceModel {
         text: prompt
       )
     )
+    updateCurrentConversation(withPrompt: prompt)
+    persistConversationArchive()
 
     let runID = currentRunID
     guard let runID else {
@@ -175,6 +218,7 @@ final class AgentWorkspaceModel {
       await self?.startRun(
         prompt: prompt,
         modelID: selectedModelID,
+        initialMessages: initialMessages,
         runID: runID
       )
     }
