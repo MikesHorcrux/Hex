@@ -86,7 +86,7 @@ let package = Package(
     ),
     .executableTarget(
       name: "HexGateway",
-      dependencies: ["HexGatewayKit"],
+      dependencies: ["HexGatewayKit", "HexMLXProvider"],
       path: "Sources/HexGatewayCommand"
     ),
     .testTarget(
