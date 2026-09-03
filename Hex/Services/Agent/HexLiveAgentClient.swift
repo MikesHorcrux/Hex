@@ -38,6 +38,7 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
   private var composition: HexGatewayComposition?
   private var adapter: HexGatewayClientAdapter?
   private var connectionResult: GatewayConnectionResult?
+  private var connectionResultAttemptID: UUID?
   private var connectionAttempt:
     (
       id: UUID,
@@ -80,13 +81,13 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
   func disconnect() async throws {
     let pendingConnectionTask = connectionAttempt?.task
     connectionAttempt = nil
+    connectionResult = nil
+    connectionResultAttemptID = nil
     pendingConnectionTask?.cancel()
 
     guard let adapter else {
-      connectionResult = nil
       return
     }
-    connectionResult = nil
     try await adapter.disconnect()
   }
 
@@ -182,6 +183,7 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
       || failure.code == .disconnected
     {
       connectionResult = nil
+      connectionResultAttemptID = nil
       return .unavailable
     } catch {
       clearConnectionIfUnavailable(error)
@@ -331,24 +333,30 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
       attempt = createdAttempt
     }
 
+    try Task.checkCancellation()
+    let result: GatewayConnectionResult
     do {
-      let result = try await attempt.task.value
-      if connectionAttempt?.id == attempt.id {
-        connectionResult = result
-        connectionAttempt = nil
-        return result
-      }
-      if let connectionResult {
-        return connectionResult
-      }
-      throw CancellationError()
+      result = try await attempt.task.value
     } catch {
       if connectionAttempt?.id == attempt.id {
         connectionAttempt = nil
         connectionResult = nil
+        connectionResultAttemptID = nil
       }
       throw error
     }
+    try Task.checkCancellation()
+
+    if connectionAttempt?.id == attempt.id {
+      connectionResult = result
+      connectionResultAttemptID = attempt.id
+      connectionAttempt = nil
+      return result
+    }
+    if connectionResultAttemptID == attempt.id, let connectionResult {
+      return connectionResult
+    }
+    throw CancellationError()
   }
 
   private func clearConnectionIfUnavailable(_ error: any Error) {
@@ -358,6 +366,7 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     switch failure.code {
     case .notConnected, .transportUnavailable, .disconnected:
       connectionResult = nil
+      connectionResultAttemptID = nil
     default:
       break
     }
