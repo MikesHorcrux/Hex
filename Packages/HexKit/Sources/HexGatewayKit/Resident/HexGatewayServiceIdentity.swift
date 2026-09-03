@@ -6,5 +6,6 @@ import Foundation
 public enum HexGatewayServiceIdentity {
   public static let machServiceName = "com.lunarmothstudios.hex.gateway"
   public static let launchAgentLabel = "com.lunarmothstudios.hex.gateway"
-  public static let bundledExecutablePath = "Contents/Resources/HexGateway"
+  public static let bundledExecutablePath =
+    "Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway"
 }

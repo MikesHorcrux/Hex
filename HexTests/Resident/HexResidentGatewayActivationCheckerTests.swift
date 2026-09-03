@@ -216,7 +216,10 @@ struct HexResidentGatewayActivationCheckerTests {
       "HexActivationBundle-\(UUID().uuidString).app",
       isDirectory: true
     )
-    let helperURL = bundle.appendingPathComponent("Contents/Resources/HexGateway")
+    let helperURL = bundle.appendingPathComponent(
+      HexGatewayServiceIdentity.bundledExecutablePath,
+      isDirectory: false
+    )
     let plistURL = bundle.appendingPathComponent(
       "Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist"
     )

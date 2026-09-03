@@ -14,10 +14,15 @@ readonly PROJECT_PATH="$ROOT_DIR/Hex.xcodeproj"
 readonly DERIVED_DATA_PATH="$ROOT_DIR/.build/DerivedData"
 readonly GATEWAY_BUILD_PATH="$ROOT_DIR/.build/HexGateway"
 readonly BUILD_APP="$DERIVED_DATA_PATH/Build/Products/Debug/$APP_NAME.app"
+readonly APP_PROVISIONING_PROFILE="$BUILD_APP/Contents/embedded.provisionprofile"
 readonly DIST_DIR="$ROOT_DIR/dist"
 readonly APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 readonly APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
-readonly GATEWAY_BUNDLE_BINARY="$APP_BUNDLE/Contents/Resources/HexGateway"
+readonly GATEWAY_APP_BUNDLE="$APP_BUNDLE/Contents/Resources/HexGateway.app"
+readonly GATEWAY_BUNDLE_BINARY="$GATEWAY_APP_BUNDLE/Contents/MacOS/HexGateway"
+readonly GATEWAY_APP_INFO_PLIST="$GATEWAY_APP_BUNDLE/Contents/Info.plist"
+readonly GATEWAY_APP_PROFILE="$GATEWAY_APP_BUNDLE/Contents/embedded.provisionprofile"
+readonly GATEWAY_BUNDLE_PROGRAM="Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway"
 readonly BUNDLED_LAUNCH_AGENT="$APP_BUNDLE/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist"
 readonly LAUNCH_AGENT_SOURCE="$ROOT_DIR/Resources/LaunchAgent/com.lunarmothstudios.hex.gateway.plist"
 readonly APP_ENTITLEMENTS_SOURCE="$ROOT_DIR/Config/Hex.Debug.entitlements"
@@ -29,6 +34,7 @@ app_entitlements_path=""
 app_entitlements_after_path=""
 helper_entitlements_path=""
 helper_entitlements_after_path=""
+helper_info_plist_path=""
 signing_identity=""
 
 usage() {
@@ -91,14 +97,18 @@ validate_single_keychain_group() {
 }
 
 write_helper_entitlements() {
-    /bin/cat > "$helper_entitlements_path" <<'EOF'
+    /bin/cat > "$helper_entitlements_path" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>com.apple.application-identifier</key>
+    <string>${EXPECTED_TEAM_ID}.${HELPER_BUNDLE_ID}</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>${EXPECTED_TEAM_ID}</string>
     <key>keychain-access-groups</key>
     <array>
-        <string>5V5PZUN2HG.com.lunarmothstudios.Hex.resident</string>
+        <string>${RESIDENT_KEYCHAIN_GROUP}</string>
     </array>
 </dict>
 </plist>
@@ -107,6 +117,91 @@ EOF
         fail "generated helper entitlements are not a valid plist"
     fi
     validate_single_keychain_group "$helper_entitlements_path" "$RESIDENT_KEYCHAIN_GROUP"
+}
+
+write_helper_info_plist() {
+    /bin/cat > "$helper_info_plist_path" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>HexGateway</string>
+    <key>CFBundleIdentifier</key>
+    <string>${HELPER_BUNDLE_ID}</string>
+    <key>CFBundleName</key>
+    <string>HexGateway</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>
+EOF
+    if ! /usr/bin/plutil -lint "$helper_info_plist_path" >/dev/null; then
+        fail "generated helper Info.plist is not valid"
+    fi
+}
+
+validate_helper_entitlements() {
+    local entitlements="$1"
+    local actual_application_identifier
+    local actual_team_identifier
+
+    actual_application_identifier="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.application-identifier' "$entitlements" 2>/dev/null)" \
+        || fail "missing application identifier in $entitlements"
+    if [[ "$actual_application_identifier" != "${EXPECTED_TEAM_ID}.${HELPER_BUNDLE_ID}" ]]; then
+        fail "unexpected helper application identifier in $entitlements: $actual_application_identifier"
+    fi
+    actual_team_identifier="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$entitlements" 2>/dev/null)" \
+        || fail "missing team identifier in $entitlements"
+    if [[ "$actual_team_identifier" != "$EXPECTED_TEAM_ID" ]]; then
+        fail "unexpected helper team identifier in $entitlements: $actual_team_identifier"
+    fi
+    validate_single_keychain_group "$entitlements" "$RESIDENT_KEYCHAIN_GROUP"
+}
+
+validate_helper_profile() {
+    local profile="$1"
+    local profile_payload="$signing_material_dir/helper-profile.plist"
+    local profile_application_identifier
+    local profile_keychain_group
+    local profile_team_identifier
+
+    if [[ ! -f "$profile" ]]; then
+        fail "the automatically signed app has no provisioning profile at $profile"
+    fi
+    if ! /usr/bin/security cms -D -i "$profile" -o "$profile_payload" >/dev/null 2>&1; then
+        fail "could not decode the Debug provisioning profile"
+    fi
+    if ! /usr/bin/plutil -lint "$profile_payload" >/dev/null; then
+        fail "the decoded Debug provisioning profile is not valid"
+    fi
+    profile_application_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$profile_payload" 2>/dev/null)" \
+        || fail "Debug provisioning profile has no application identifier"
+    case "$profile_application_identifier" in
+        "${EXPECTED_TEAM_ID}.*" | "${EXPECTED_TEAM_ID}.${HELPER_BUNDLE_ID}")
+            ;;
+        *)
+            fail "Debug provisioning profile does not authorize the helper application identifier"
+            ;;
+    esac
+    profile_keychain_group="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:keychain-access-groups:0' "$profile_payload" 2>/dev/null)" \
+        || fail "Debug provisioning profile has no keychain access group"
+    case "$profile_keychain_group" in
+        "${EXPECTED_TEAM_ID}.*" | "$RESIDENT_KEYCHAIN_GROUP")
+            ;;
+        *)
+            fail "Debug provisioning profile does not authorize the resident keychain group"
+            ;;
+    esac
+    profile_team_identifier="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$profile_payload" 2>/dev/null)" \
+        || fail "Debug provisioning profile has no team identifier"
+    if [[ "$profile_team_identifier" != "$EXPECTED_TEAM_ID" ]]; then
+        fail "unexpected team identifier in the Debug provisioning profile: $profile_team_identifier"
+    fi
 }
 
 verify_signed_artifact() {
@@ -309,6 +404,7 @@ app_entitlements_path="$signing_material_dir/app-before.entitlements"
 app_entitlements_after_path="$signing_material_dir/app-after.entitlements"
 helper_entitlements_path="$signing_material_dir/helper.entitlements"
 helper_entitlements_after_path="$signing_material_dir/helper-after.entitlements"
+helper_info_plist_path="$signing_material_dir/helper-Info.plist"
 
 if ! /usr/bin/plutil -lint "$APP_ENTITLEMENTS_SOURCE" >/dev/null; then
     fail "Debug app entitlements are not a valid plist at $APP_ENTITLEMENTS_SOURCE"
@@ -333,7 +429,10 @@ if [[ -z "$signing_identity" ]]; then
 fi
 extract_entitlements "$BUILD_APP" "$app_entitlements_path"
 validate_single_keychain_group "$app_entitlements_path" "$RESIDENT_KEYCHAIN_GROUP"
+validate_helper_profile "$APP_PROVISIONING_PROFILE"
 write_helper_entitlements
+validate_helper_entitlements "$helper_entitlements_path"
+write_helper_info_plist
 
 mkdir -p "$DIST_DIR"
 rm -rf "$APP_BUNDLE"
@@ -346,14 +445,41 @@ if [[ ! -f "$LAUNCH_AGENT_SOURCE" ]]; then
 fi
 
 mkdir -p "$(dirname "$GATEWAY_BUNDLE_BINARY")" "$(dirname "$BUNDLED_LAUNCH_AGENT")"
-/bin/cp "$gateway_bin_path/HexGateway" "$GATEWAY_BUNDLE_BINARY"
+/usr/bin/ditto "$gateway_bin_path/HexGateway" "$GATEWAY_BUNDLE_BINARY"
 /bin/chmod 0755 "$GATEWAY_BUNDLE_BINARY"
+/bin/cp "$helper_info_plist_path" "$GATEWAY_APP_INFO_PLIST"
+/bin/cp "$APP_PROVISIONING_PROFILE" "$GATEWAY_APP_PROFILE"
 /bin/cp "$LAUNCH_AGENT_SOURCE" "$BUNDLED_LAUNCH_AGENT"
 /bin/chmod 0644 "$BUNDLED_LAUNCH_AGENT"
 
 verify_gateway_bundle() {
+    if [[ ! -d "$GATEWAY_APP_BUNDLE" ]]; then
+        echo "packaged HexGateway app bundle is missing at $GATEWAY_APP_BUNDLE" >&2
+        return 1
+    fi
     if [[ ! -x "$GATEWAY_BUNDLE_BINARY" ]]; then
         echo "packaged HexGateway helper is not executable at $GATEWAY_BUNDLE_BINARY" >&2
+        return 1
+    fi
+    if [[ ! -f "$GATEWAY_APP_INFO_PLIST" ]]; then
+        echo "packaged HexGateway Info.plist is missing at $GATEWAY_APP_INFO_PLIST" >&2
+        return 1
+    fi
+    if [[ ! -f "$GATEWAY_APP_PROFILE" ]]; then
+        echo "packaged HexGateway provisioning profile is missing at $GATEWAY_APP_PROFILE" >&2
+        return 1
+    fi
+    /usr/bin/plutil -lint "$GATEWAY_APP_INFO_PLIST" >/dev/null
+    local helper_identifier
+    local helper_executable
+    helper_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$GATEWAY_APP_INFO_PLIST")"
+    if [[ "$helper_identifier" != "$HELPER_BUNDLE_ID" ]]; then
+        echo "HexGateway CFBundleIdentifier must be $HELPER_BUNDLE_ID" >&2
+        return 1
+    fi
+    helper_executable="$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$GATEWAY_APP_INFO_PLIST")"
+    if [[ "$helper_executable" != "HexGateway" ]]; then
+        echo "HexGateway CFBundleExecutable must be HexGateway" >&2
         return 1
     fi
     if [[ ! -f "$BUNDLED_LAUNCH_AGENT" ]]; then
@@ -370,8 +496,8 @@ verify_gateway_bundle() {
         return 1
     fi
     bundle_program="$(/usr/bin/plutil -extract BundleProgram raw -o - "$BUNDLED_LAUNCH_AGENT")"
-    if [[ "$bundle_program" != "Contents/Resources/HexGateway" ]]; then
-        echo "LaunchAgent BundleProgram must be Contents/Resources/HexGateway" >&2
+    if [[ "$bundle_program" != "$GATEWAY_BUNDLE_PROGRAM" ]]; then
+        echo "LaunchAgent BundleProgram must be $GATEWAY_BUNDLE_PROGRAM" >&2
         return 1
     fi
     mach_services="$(/usr/bin/plutil -extract MachServices json -o - "$BUNDLED_LAUNCH_AGENT")"
@@ -390,15 +516,18 @@ verify_gateway_bundle
     --options runtime \
     --identifier "$HELPER_BUNDLE_ID" \
     --entitlements "$helper_entitlements_path" \
-    "$GATEWAY_BUNDLE_BINARY"
+    "$GATEWAY_APP_BUNDLE"
 verify_signed_artifact \
-    "$GATEWAY_BUNDLE_BINARY" \
+    "$GATEWAY_APP_BUNDLE" \
     "$HELPER_BUNDLE_ID" \
     "$EXPECTED_TEAM_ID" \
     "$signing_identity" \
-    "HexGateway helper"
-extract_entitlements "$GATEWAY_BUNDLE_BINARY" "$helper_entitlements_after_path"
-validate_single_keychain_group "$helper_entitlements_after_path" "$RESIDENT_KEYCHAIN_GROUP"
+    "HexGateway helper app"
+if ! /usr/bin/codesign --verify --strict "$GATEWAY_BUNDLE_BINARY" >/dev/null; then
+    fail "the HexGateway executable did not pass strict verification"
+fi
+extract_entitlements "$GATEWAY_APP_BUNDLE" "$helper_entitlements_after_path"
+validate_helper_entitlements "$helper_entitlements_after_path"
 
 /usr/bin/codesign \
     --force \
@@ -428,6 +557,9 @@ verify_signed_artifact \
     "$signing_identity" \
     "staged Hex app" \
     "$APP_CODE_SIGNING_REQUIREMENT"
+if ! /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null; then
+    fail "the staged Hex app and nested helper signatures did not pass deep verification"
+fi
 
 open_app() {
     /usr/bin/open -n "$APP_BUNDLE"

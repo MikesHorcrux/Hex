@@ -85,7 +85,7 @@ nonisolated struct HexResidentGatewayActivationChecker: HexGatewayActivationRead
     }
 
     let helperURL = appBundleURL.appendingPathComponent(
-      "Contents/Resources/HexGateway",
+      HexGatewayServiceIdentity.bundledExecutablePath,
       isDirectory: false
     )
     guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {

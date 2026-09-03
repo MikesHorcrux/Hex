@@ -34,8 +34,8 @@ git diff --check
 ```
 
 The Codex Run action calls `./script/build_and_run.sh`. Its `--verify` mode builds and stages the
-unsigned app, validates the executable and property list, briefly launches that exact staged binary,
-and terminates the verified process.
+development-signed app and profiled helper bundle, validates the executable and property list,
+briefly launches that exact staged binary, and terminates the verified process.
 
 Use a conventional commit subject. Do not merge your own branch into `dev`; the integration owner
 reviews and merges completed feature commits.
