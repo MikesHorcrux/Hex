@@ -136,6 +136,8 @@ write_helper_info_plist() {
     <string>${HELPER_DISPLAY_NAME}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>LSBackgroundOnly</key>
+    <true/>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
     <key>CFBundleVersion</key>
@@ -476,6 +478,7 @@ verify_gateway_bundle() {
     local helper_identifier
     local helper_executable
     local helper_display_name
+    local helper_background_only
     helper_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$GATEWAY_APP_INFO_PLIST")"
     if [[ "$helper_identifier" != "$HELPER_BUNDLE_ID" ]]; then
         echo "HexGateway CFBundleIdentifier must be $HELPER_BUNDLE_ID" >&2
@@ -489,6 +492,11 @@ verify_gateway_bundle() {
     helper_display_name="$(/usr/bin/plutil -extract CFBundleDisplayName raw -o - "$GATEWAY_APP_INFO_PLIST")"
     if [[ "$helper_display_name" != "$HELPER_DISPLAY_NAME" ]]; then
         echo "HexGateway CFBundleDisplayName must be $HELPER_DISPLAY_NAME" >&2
+        return 1
+    fi
+    helper_background_only="$(/usr/bin/plutil -extract LSBackgroundOnly raw -o - "$GATEWAY_APP_INFO_PLIST")"
+    if [[ "$helper_background_only" != "true" ]]; then
+        echo "HexGateway LSBackgroundOnly must be true" >&2
         return 1
     fi
     if [[ ! -f "$BUNDLED_LAUNCH_AGENT" ]]; then
