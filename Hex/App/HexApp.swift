@@ -81,7 +81,8 @@ struct HexApp: App {
         initialModelID: modelID,
         settingsStore: setupDependencies.settingsStore,
         secretStore: setupDependencies.secretStore,
-        managedToolLayout: setupDependencies.managedToolLayout
+        managedToolLayout: setupDependencies.managedToolLayout,
+        managedToolInstaller: setupDependencies.managedToolInstaller
       )
     )
 

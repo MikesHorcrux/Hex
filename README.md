@@ -117,7 +117,9 @@ is `~/Library/Application Support/Hex/Tools` and currently pins Node `24.20.0`, 
 paths, versions/manifest, ownership, link count, permissions, and file shape before enabling an
 adapter. Playwright uses an isolated browser profile, disables code generation, and bounds artifacts
 to 50 MiB. Peekaboo runs `mcp serve --input-strategy actionFirst`; its separate agent mode is not
-used. The binaries must already be present: an installer and updater are not implemented.
+used. Enabling Browser control or Screen control downloads missing pinned components into a private
+staging directory, verifies published package integrity or release SHA-256, and installs them
+transactionally. Runtime and SDK names stay out of the normal capability UI.
 
 ## Permissions and security boundaries
 

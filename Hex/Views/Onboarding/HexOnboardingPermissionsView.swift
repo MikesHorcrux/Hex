@@ -16,6 +16,7 @@ struct HexOnboardingPermissionsView: View {
       }
       HexAuthorizationModePickerView(model: model)
       HexComputerAccessView(
+        model: model,
         accessibilityPermission: accessibilityPermission,
         startAtLogin: startAtLogin
       )
