@@ -38,13 +38,16 @@ The plist uses `BundleProgram=Contents/Resources/HexGateway.app/Contents/MacOS/H
 to be inside `Contents/Library/LaunchAgents`; placing a copy in `~/Library/LaunchAgents` is not the
 packaging contract.
 
-`./script/build_and_run.sh` builds the Debug app with Xcode's normal automatic Apple Development
-signing and builds the SwiftPM `HexGateway` product one at a time, then stages this layout under the
-ignored `dist/Hex.app`. The staging step wraps the helper in an app-like bundle, copies the app's
-development provisioning profile into that bundle, signs the helper first with the app's exact
-development identity and hardened runtime, then re-signs the outer app with its extracted
-entitlements after the helper and plist have been copied. Its `--verify` mode checks the helper's
-executable bit, validates
+Every signed Xcode Debug build invokes `script/stage_gateway.sh` before Xcode's final signing step.
+The phase builds the SwiftPM `HexGateway` product under a process lock, rejects an architecture
+mismatch, wraps the helper in an app-like bundle, copies the app's development provisioning profile,
+and signs the helper first with the app's exact development identity and hardened runtime. Xcode then
+signs the complete outer app, so pressing Run cannot produce a UI without its matching gateway.
+Unsigned and Release builds fail explicitly rather than silently emitting an unusable product.
+
+`./script/build_and_run.sh` copies that exact Xcode product to the ignored `dist/Hex.app`; it does not
+compile, restage, or re-sign a second helper. Its `--verify` mode checks app/helper version equality,
+the helper's executable bit, validates
 the plist identity, `MachServices`, and `BundleProgram` path, verifies the nested and outer signatures,
 and checks the outer app against the resident app's exact Apple code-signing requirement before
 launching only the staged UI. The UI must consume the dedicated `--hex-verify-no-connect` argument
