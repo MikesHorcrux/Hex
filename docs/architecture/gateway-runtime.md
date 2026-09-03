@@ -25,21 +25,26 @@ The supported developer staging layout is:
 
 ```text
 Hex.app/
-├── Contents/Resources/HexGateway
+├── Contents/Resources/HexGateway.app/
+│   ├── Contents/MacOS/HexGateway
+│   ├── Contents/Info.plist
+│   └── Contents/embedded.provisionprofile
 └── Contents/Library/LaunchAgents/
     └── com.lunarmothstudios.hex.gateway.plist
 ```
 
-The plist uses `BundleProgram=Contents/Resources/HexGateway` and advertises the
+The plist uses `BundleProgram=Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway` and advertises the
 `com.lunarmothstudios.hex.gateway` Mach service. `SMAppService.agent(plistName:)` requires the plist
 to be inside `Contents/Library/LaunchAgents`; placing a copy in `~/Library/LaunchAgents` is not the
 packaging contract.
 
 `./script/build_and_run.sh` builds the Debug app with Xcode's normal automatic Apple Development
 signing and builds the SwiftPM `HexGateway` product one at a time, then stages this layout under the
-ignored `dist/Hex.app`. The staging step signs the helper first with the app's exact development
-identity and hardened runtime, then re-signs the outer app with its extracted entitlements after the
-helper and plist have been copied. Its `--verify` mode checks the helper's executable bit, validates
+ignored `dist/Hex.app`. The staging step wraps the helper in an app-like bundle, copies the app's
+development provisioning profile into that bundle, signs the helper first with the app's exact
+development identity and hardened runtime, then re-signs the outer app with its extracted
+entitlements after the helper and plist have been copied. Its `--verify` mode checks the helper's
+executable bit, validates
 the plist identity, `MachServices`, and `BundleProgram` path, verifies the nested and outer signatures,
 and checks the outer app against the resident app's exact Apple code-signing requirement before
 launching only the staged UI. The UI must consume the dedicated `--hex-verify-no-connect` argument
@@ -71,9 +76,10 @@ resident LaunchAgent.
 
 The Debug app grants only the resident keychain access group through
 `Config/Hex.Debug.entitlements`. Staging generates matching helper entitlements with the concrete
-`5V5PZUN2HG.com.lunarmothstudios.Hex.resident` group, signs the helper with identifier
-`com.lunarmothstudios.hex.gateway`, and verifies both artifacts use team `5V5PZUN2HG`. This is a
-local development signing and credential-sharing boundary.
+`5V5PZUN2HG.com.lunarmothstudios.Hex.resident` group, embeds the development profile that
+authorizes the helper's application identifier and keychain group, signs the helper app-like bundle
+with identifier `com.lunarmothstudios.hex.gateway`, and verifies both artifacts use team
+`5V5PZUN2HG`. This is a local development signing and credential-sharing boundary.
 
 A distributable Release app still requires normal signing of the app and the nested helper, plus the
 separate distribution/notarization validation appropriate to the selected entitlements. This local

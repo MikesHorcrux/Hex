@@ -3,7 +3,8 @@
 `com.lunarmothstudios.hex.gateway.plist` is the bundle-ready LaunchAgent definition used by the
 `SMAppService` integration. Packaging must place it at
 `Hex.app/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist` and place the matching
-gateway executable at `Hex.app/Contents/Resources/HexGateway`.
+gateway executable in the profiled helper bundle at
+`Hex.app/Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway`.
 
 The job advertises the `com.lunarmothstudios.hex.gateway` Mach service, starts for the signed-in user,
 and restarts after an unsuccessful exit with launchd throttling. A clean exit is not restarted, which
