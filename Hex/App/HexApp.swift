@@ -12,6 +12,7 @@ struct HexApp: App {
   @State private var heartbeatManagement: HexHeartbeatManagementModel
   @State private var personalitySettings: HexPersonalitySettingsModel
   @State private var inferenceBackendSettings: HexInferenceBackendSettingsModel
+  @State private var accessibilityPermission: HexAccessibilityPermissionModel
   private let route: HexGatewayRoute
   private let isVerificationOnlyLaunch: Bool
   private let suppressOnboarding: Bool
@@ -56,6 +57,7 @@ struct HexApp: App {
     personalityService: (any HexPersonalityServicing)? = nil,
     personalityMemoryScope: PersonalMemoryScope = .hex,
     inferenceBackendDependencies: HexInferenceBackendSettingsDependencies = .blocked,
+    accessibilityPermissionService: (any HexAccessibilityPermissionServicing)? = nil,
     lifecycleController: any HexGatewayLifecycleControlling =
       HexSMAppServiceLifecycleController(),
     isVerificationOnlyLaunch: Bool = false,
@@ -111,6 +113,22 @@ struct HexApp: App {
           inferenceBackendDependencies.chatGPTAuthorizationManager
       )
     )
+
+    let resolvedAccessibilityPermissionService: any HexAccessibilityPermissionServicing
+    if let accessibilityPermissionService {
+      resolvedAccessibilityPermissionService = accessibilityPermissionService
+    } else if route.isResident,
+      let livePermissionService = client as? any HexAccessibilityPermissionServicing
+    {
+      resolvedAccessibilityPermissionService = livePermissionService
+    } else {
+      resolvedAccessibilityPermissionService = HexUnavailableAccessibilityPermissionService()
+    }
+    _accessibilityPermission = State(
+      initialValue: HexAccessibilityPermissionModel(
+        service: resolvedAccessibilityPermissionService
+      )
+    )
   }
 
   var body: some Scene {
@@ -121,6 +139,7 @@ struct HexApp: App {
         inference: inferenceBackendSettings,
         personality: personalitySettings,
         startAtLogin: startAtLogin,
+        accessibilityPermission: accessibilityPermission,
         suppressOnboarding: suppressOnboarding,
         suppressAutomaticConnection: isVerificationOnlyLaunch
       )
@@ -135,6 +154,7 @@ struct HexApp: App {
         heartbeat: heartbeatManagement,
         personality: personalitySettings,
         startAtLogin: startAtLogin,
+        accessibilityPermission: accessibilityPermission,
         route: route,
         suppressAutomaticRefresh: isVerificationOnlyLaunch
       )

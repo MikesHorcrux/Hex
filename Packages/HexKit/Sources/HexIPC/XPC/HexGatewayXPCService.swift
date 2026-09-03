@@ -18,6 +18,7 @@ public final class HexGatewayXPCService: NSObject {
         ) async throws -> Void
       )?
     private let residentControlHandlers: HexGatewayResidentControlHandlers
+    private let accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers
     private var activeLease: GatewayTransportConnectionLease?
     private var sessionID: GatewaySessionID?
     private var subscriptions: [GatewayXPCSubscriptionID: Task<Void, Never>] = [:]
@@ -34,12 +35,14 @@ public final class HexGatewayXPCService: NSObject {
             HexGatewayAuthorizationCommitGate
           ) async throws -> Void
         )?,
-      residentControlHandlers: HexGatewayResidentControlHandlers
+      residentControlHandlers: HexGatewayResidentControlHandlers,
+      accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers
     ) {
       self.service = service
       codec = GatewayWireCodec(configuration: configuration)
       self.authorizationDecisionHandler = authorizationDecisionHandler
       self.residentControlHandlers = residentControlHandlers
+      self.accessibilityPermissionHandlers = accessibilityPermissionHandlers
       authorizationCommitGate = HexGatewayAuthorizationCommitGate()
     }
 
@@ -194,6 +197,32 @@ public final class HexGatewayXPCService: NSObject {
           body: nil
         )
 
+      case .accessibilityPermissionStatus:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = accessibilityPermissionHandlers.status else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose Accessibility permission status."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .accessibilityPermissionStatus, value: status)
+
+      case .requestAccessibilityPermission:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = accessibilityPermissionHandlers.request else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose Accessibility permission requests."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .requestAccessibilityPermission, value: status)
+
       case .status:
         _ = try currentSession(for: envelope)
         try requireEmptyBody(for: envelope)
@@ -336,9 +365,10 @@ public final class HexGatewayXPCService: NSObject {
             message: "The XPC handshake envelope contains connection-only fields."
           )
         }
-      case .startRun, .cancelRun, .submitAuthorizationDecision, .status, .pauseHeartbeats,
-        .resumeHeartbeats, .listHeartbeats, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat,
-        .resumeHeartbeat, .disconnect:
+      case .startRun, .cancelRun, .submitAuthorizationDecision, .accessibilityPermissionStatus,
+        .requestAccessibilityPermission, .status, .pauseHeartbeats, .resumeHeartbeats,
+        .listHeartbeats, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat, .resumeHeartbeat,
+        .disconnect:
         guard envelope.sessionID != nil, envelope.subscriptionID == nil else {
           throw GatewayFailure(
             code: .malformedPayload,
@@ -463,13 +493,15 @@ public final class HexGatewayXPCService: NSObject {
   public init(
     service: HexGatewayService,
     configuration: GatewayConfiguration = .standard,
-    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable
+    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable,
+    accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers = .unavailable
   ) {
     state = State(
       service: service,
       configuration: configuration,
       authorizationDecisionHandler: nil,
-      residentControlHandlers: residentControlHandlers
+      residentControlHandlers: residentControlHandlers,
+      accessibilityPermissionHandlers: accessibilityPermissionHandlers
     )
     super.init()
   }
@@ -486,13 +518,15 @@ public final class HexGatewayXPCService: NSObject {
         GatewayAuthorizationDecisionChoice,
         HexGatewayAuthorizationCommitGate
       ) async throws -> Void,
-    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable
+    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable,
+    accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers = .unavailable
   ) {
     state = State(
       service: service,
       configuration: configuration,
       authorizationDecisionHandler: authorizationDecisionHandler,
-      residentControlHandlers: residentControlHandlers
+      residentControlHandlers: residentControlHandlers,
+      accessibilityPermissionHandlers: accessibilityPermissionHandlers
     )
     super.init()
   }

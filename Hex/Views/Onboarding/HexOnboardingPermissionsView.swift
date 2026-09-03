@@ -3,6 +3,8 @@ import SwiftUI
 
 struct HexOnboardingPermissionsView: View {
   @Bindable var model: HexResidentSetupModel
+  @Bindable var startAtLogin: HexStartAtLoginModel
+  @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
 
   var body: some View {
     Form {
@@ -13,7 +15,10 @@ struct HexOnboardingPermissionsView: View {
         .foregroundStyle(.secondary)
       }
       HexAuthorizationModePickerView(model: model)
-      HexComputerAccessView()
+      HexComputerAccessView(
+        accessibilityPermission: accessibilityPermission,
+        startAtLogin: startAtLogin
+      )
 
       if let errorMessage = model.errorMessage {
         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")

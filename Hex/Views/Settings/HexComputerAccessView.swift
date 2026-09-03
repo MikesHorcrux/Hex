@@ -1,59 +1,61 @@
+import Observation
 import SwiftUI
 
 struct HexComputerAccessView: View {
-  @Environment(\.openURL) private var openURL
+  @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
+  @Bindable var startAtLogin: HexStartAtLoginModel
+  let suppressAutomaticRefresh: Bool
+
+  @Environment(\.scenePhase) private var scenePhase
+
+  init(
+    accessibilityPermission: HexAccessibilityPermissionModel,
+    startAtLogin: HexStartAtLoginModel,
+    suppressAutomaticRefresh: Bool = false
+  ) {
+    self.accessibilityPermission = accessibilityPermission
+    self.startAtLogin = startAtLogin
+    self.suppressAutomaticRefresh = suppressAutomaticRefresh
+  }
 
   var body: some View {
     Section {
-      Label("App discovery and activation", systemImage: "macwindow")
-      Label("Semantic control through macOS Accessibility", systemImage: "accessibility")
-      Label("Protected folders through Full Disk Access", systemImage: "internaldrive")
-      Label("Structured browser automation through Playwright", systemImage: "globe")
-      Label("Screen observation and native interaction through Peekaboo", systemImage: "eye")
-
-      Text(
-        "Hex asks for approval before every new capability scope. Screen Recording and "
-          + "Accessibility remain macOS-controlled permissions; enabling an integration does not "
-          + "grant either permission automatically."
+      HexResidentAgentAccessView(
+        accessibilityPermission: accessibilityPermission,
+        startAtLogin: startAtLogin
       )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
 
-      Button("Open Accessibility Settings") {
-        guard
-          let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-          )
-        else {
-          return
-        }
-        openURL(url)
-      }
+      Divider()
 
-      Button("Open Screen Recording Settings") {
-        guard
-          let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-          )
-        else {
-          return
-        }
-        openURL(url)
-      }
-
-      Button("Open Full Disk Access Settings") {
-        guard
-          let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-          )
-        else {
-          return
-        }
-        openURL(url)
-      }
+      HexExternalComputerPermissionsView()
     } header: {
       Text("Computer & Web")
+    } footer: {
+      Text(
+        "Hex approvals and macOS privacy grants are separate. Requesting access never marks it granted; Hex verifies the resident agent again after you return."
+      )
     }
+    .task {
+      guard !suppressAutomaticRefresh else { return }
+      await refreshGatewayAndPermission()
+    }
+    .onChange(of: startAtLogin.status) { _, status in
+      guard !suppressAutomaticRefresh, status == .enabled else { return }
+      Task {
+        await accessibilityPermission.refresh()
+      }
+    }
+    .onChange(of: scenePhase) { _, phase in
+      guard !suppressAutomaticRefresh, phase == .active else { return }
+      Task {
+        await refreshGatewayAndPermission()
+      }
+    }
+  }
+
+  private func refreshGatewayAndPermission() async {
+    await startAtLogin.refresh()
+    guard startAtLogin.status == .enabled else { return }
+    await accessibilityPermission.refresh()
   }
 }

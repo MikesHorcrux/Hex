@@ -143,6 +143,7 @@ public final class HexGatewayResidentHost {
     let gatewayConfiguration = composition.gatewayConfiguration
     let broker = authorizationBroker
     let scheduler = heartbeatScheduler
+    let accessibilityController = SystemMacAccessibilityController()
     let statusHandler: @Sendable () async throws -> GatewayResidentStatus = {
       let snapshot = try await scheduler.snapshot()
       if snapshot.isPaused {
@@ -185,6 +186,14 @@ public final class HexGatewayResidentHost {
         return try await listHeartbeats()
       }
     )
+    let accessibilityPermissionHandlers = HexGatewayAccessibilityPermissionHandlers(
+      status: {
+        await accessibilityController.isTrusted(promptIfNeeded: false) ? .trusted : .notTrusted
+      },
+      request: {
+        await accessibilityController.isTrusted(promptIfNeeded: true) ? .trusted : .notTrusted
+      }
+    )
     listenerDelegate = HexGatewayXPCListenerDelegate(
       serviceFactory: {
         HexGatewayXPCService(
@@ -193,7 +202,8 @@ public final class HexGatewayResidentHost {
           authorizationDecisionHandler: { request, choice, gate in
             try await broker.submit(request, choice: choice, gate: gate)
           },
-          residentControlHandlers: residentControlHandlers
+          residentControlHandlers: residentControlHandlers,
+          accessibilityPermissionHandlers: accessibilityPermissionHandlers
         )
       },
       admissionPolicy: configuration.connectionAdmissionPolicy

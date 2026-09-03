@@ -3,11 +3,18 @@ import SwiftUI
 
 struct HexPermissionsSettingsView: View {
   @Bindable var model: HexResidentSetupModel
+  @Bindable var startAtLogin: HexStartAtLoginModel
+  @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
+  let suppressAutomaticRefresh: Bool
 
   var body: some View {
     Form {
       HexAuthorizationModePickerView(model: model)
-      HexComputerAccessView()
+      HexComputerAccessView(
+        accessibilityPermission: accessibilityPermission,
+        startAtLogin: startAtLogin,
+        suppressAutomaticRefresh: suppressAutomaticRefresh
+      )
 
       if let statusMessage = model.statusMessage {
         Text(statusMessage)

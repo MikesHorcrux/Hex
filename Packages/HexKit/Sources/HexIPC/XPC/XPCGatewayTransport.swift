@@ -5,7 +5,7 @@ import HexCore
 /// transport owns no gateway state: the connection factory and the Data-only XPC endpoint are
 /// injected, which keeps lifecycle tests independent of launchd and Mach-service registration.
 public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDecisionTransport,
-  HexGatewayResidentControlTransport
+  HexGatewayResidentControlTransport, HexGatewayAccessibilityPermissionTransport
 {
   private struct ConnectionState: Sendable {
     let generation: UUID
@@ -193,6 +193,24 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
     lease: GatewayTransportConnectionLease
   ) async throws -> GatewayResidentStatus {
     try await residentControlResponse(operation: .status, lease: lease)
+  }
+
+  public func accessibilityPermissionStatus(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayAccessibilityPermissionStatus {
+    try await accessibilityPermissionResponse(
+      operation: .accessibilityPermissionStatus,
+      lease: lease
+    )
+  }
+
+  public func requestAccessibilityPermission(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayAccessibilityPermissionStatus {
+    try await accessibilityPermissionResponse(
+      operation: .requestAccessibilityPermission,
+      lease: lease
+    )
   }
 
   public func pauseHeartbeats(
@@ -465,6 +483,33 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
         rawResponse,
         operation: operation,
         as: GatewayResidentStatus.self
+      )
+    } catch {
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  private func accessibilityPermissionResponse(
+    operation: GatewayXPCOperation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayAccessibilityPermissionStatus {
+    let state = try requireConnected(lease: lease)
+    do {
+      try Task.checkCancellation()
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: operation,
+          lease: lease,
+          sessionID: state.sessionID,
+          body: Data()
+        )
+      )
+      let rawResponse = try await state.connection.request(envelope)
+      try requireCurrentConnection(state)
+      return try decodeResponse(
+        rawResponse,
+        operation: operation,
+        as: GatewayAccessibilityPermissionStatus.self
       )
     } catch {
       throw codec.canonicalFailure(from: error)

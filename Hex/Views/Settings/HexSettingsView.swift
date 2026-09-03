@@ -8,6 +8,7 @@ struct HexSettingsView: View {
   @Bindable var heartbeat: HexHeartbeatManagementModel
   @Bindable var personality: HexPersonalitySettingsModel
   @Bindable var startAtLogin: HexStartAtLoginModel
+  @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
   let route: HexGatewayRoute
   let suppressAutomaticRefresh: Bool
 
@@ -50,7 +51,12 @@ struct HexSettingsView: View {
     case .tools:
       HexToolsSettingsView(model: residentSetup)
     case .permissions:
-      HexPermissionsSettingsView(model: residentSetup)
+      HexPermissionsSettingsView(
+        model: residentSetup,
+        startAtLogin: startAtLogin,
+        accessibilityPermission: accessibilityPermission,
+        suppressAutomaticRefresh: suppressAutomaticRefresh
+      )
     case .personality:
       HexPersonalitySettingsView(model: personality)
     case .heartbeats:

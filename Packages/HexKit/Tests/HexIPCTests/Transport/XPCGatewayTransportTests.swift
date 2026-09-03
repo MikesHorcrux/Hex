@@ -187,6 +187,8 @@ struct XPCGatewayTransportTests {
     _ = try await transport.handshake(GatewayTestValues.handshakeRequest(190), lease: lease)
 
     #expect(try await transport.status(lease: lease) == .unavailable)
+    #expect(try await transport.accessibilityPermissionStatus(lease: lease) == .notTrusted)
+    #expect(try await transport.requestAccessibilityPermission(lease: lease) == .notTrusted)
     #expect(try await transport.pauseHeartbeats(lease: lease) == .unavailable)
     #expect(try await transport.resumeHeartbeats(lease: lease) == .unavailable)
     #expect(try await transport.listHeartbeats(lease: lease) == GatewayHeartbeatScheduleList())
@@ -219,6 +221,8 @@ struct XPCGatewayTransportTests {
         == [
           .handshake,
           .status,
+          .accessibilityPermissionStatus,
+          .requestAccessibilityPermission,
           .pauseHeartbeats,
           .resumeHeartbeats,
           .listHeartbeats,
@@ -538,6 +542,11 @@ struct XPCGatewayTransportTests {
         return try response(
           operation: envelope.operation,
           value: GatewayResidentStatus.unavailable
+        )
+      case .accessibilityPermissionStatus, .requestAccessibilityPermission:
+        return try response(
+          operation: envelope.operation,
+          value: GatewayAccessibilityPermissionStatus.notTrusted
         )
       case .listHeartbeats, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat, .resumeHeartbeat:
         return try response(

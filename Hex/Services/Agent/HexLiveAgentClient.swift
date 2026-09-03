@@ -9,7 +9,9 @@ import HexProviders
 /// Lazily selects the resident XPC gateway first. The in-process composition is retained only as an
 /// explicit developer fallback, so a missing or unavailable resident service never becomes a
 /// silently privileged app-local agent.
-actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHeartbeatManaging {
+actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHeartbeatManaging,
+  HexAccessibilityPermissionServicing
+{
   enum ClientError: Error, Equatable, LocalizedError, Sendable {
     case applicationSupportUnavailable
     case workspaceUnavailable
@@ -258,6 +260,26 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     }
   }
 
+  func accessibilityPermissionStatus() async throws -> GatewayAccessibilityPermissionStatus {
+    try requireResidentPermissionRoute()
+    do {
+      return try await connectedGatewayAdapter().accessibilityPermissionStatus()
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func requestAccessibilityPermission() async throws -> GatewayAccessibilityPermissionStatus {
+    try requireResidentPermissionRoute()
+    do {
+      return try await connectedGatewayAdapter().requestAccessibilityPermission()
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
   private func connectedGatewayAdapter() async throws -> HexGatewayClientAdapter {
     let adapter = try await gatewayAdapter()
     guard route.kind == .residentXPC else {
@@ -265,6 +287,15 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     }
     _ = try await ensureConnected(using: adapter)
     return adapter
+  }
+
+  private func requireResidentPermissionRoute() throws {
+    guard route.kind == .residentXPC else {
+      throw GatewayFailure(
+        code: .transportUnavailable,
+        message: "Accessibility must be checked by the resident Hex Agent."
+      )
+    }
   }
 
   private func ensureConnected() async throws -> GatewayConnectionResult {
