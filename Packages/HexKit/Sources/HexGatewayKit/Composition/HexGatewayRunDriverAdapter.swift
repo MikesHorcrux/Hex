@@ -10,6 +10,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
   public let runtime: AgentRuntime
 
   private let journal: HexGatewayEventJournal
+  private let operatingContractMessage: Message
   private let personalityMessages: [Message]
   private let personalityContextService: PersonalityContextService?
   private let personalityMemoryQuery: PersonalMemoryQuery?
@@ -37,6 +38,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       journal: eventJournal,
       configuration: runtimeConfiguration
     )
+    operatingContractMessage = HexAgentOperatingContract().message
     personalityMessages = personalityContext?.messages ?? []
     self.personalityContextService = personalityContextService
     self.personalityMemoryQuery = personalityMemoryQuery
@@ -59,9 +61,9 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
         let context = try await personalityContextService.assemble(
           query: personalityMemoryQuery
         )
-        contextMessages = context.messages
+        contextMessages = [operatingContractMessage] + context.messages
       } else {
-        contextMessages = personalityMessages
+        contextMessages = [operatingContractMessage] + personalityMessages
       }
 
       let agentRequest = AgentRunRequest(
