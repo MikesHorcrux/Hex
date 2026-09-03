@@ -6,6 +6,7 @@ readonly APP_NAME="Hex"
 readonly BUNDLE_ID="com.lunarmothstudios.Hex"
 readonly EXPECTED_TEAM_ID="5V5PZUN2HG"
 readonly HELPER_BUNDLE_ID="com.lunarmothstudios.hex.gateway"
+readonly HELPER_DISPLAY_NAME="Hex Agent"
 readonly RESIDENT_KEYCHAIN_GROUP="5V5PZUN2HG.com.lunarmothstudios.Hex.resident"
 readonly APP_CODE_SIGNING_REQUIREMENT='anchor apple generic and identifier "com.lunarmothstudios.Hex" and certificate leaf[subject.OU] = "5V5PZUN2HG"'
 readonly VERIFY_NO_CONNECT_ARGUMENT="--hex-verify-no-connect"
@@ -129,8 +130,10 @@ write_helper_info_plist() {
     <string>HexGateway</string>
     <key>CFBundleIdentifier</key>
     <string>${HELPER_BUNDLE_ID}</string>
+    <key>CFBundleDisplayName</key>
+    <string>${HELPER_DISPLAY_NAME}</string>
     <key>CFBundleName</key>
-    <string>HexGateway</string>
+    <string>${HELPER_DISPLAY_NAME}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -472,6 +475,7 @@ verify_gateway_bundle() {
     /usr/bin/plutil -lint "$GATEWAY_APP_INFO_PLIST" >/dev/null
     local helper_identifier
     local helper_executable
+    local helper_display_name
     helper_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$GATEWAY_APP_INFO_PLIST")"
     if [[ "$helper_identifier" != "$HELPER_BUNDLE_ID" ]]; then
         echo "HexGateway CFBundleIdentifier must be $HELPER_BUNDLE_ID" >&2
@@ -480,6 +484,11 @@ verify_gateway_bundle() {
     helper_executable="$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$GATEWAY_APP_INFO_PLIST")"
     if [[ "$helper_executable" != "HexGateway" ]]; then
         echo "HexGateway CFBundleExecutable must be HexGateway" >&2
+        return 1
+    fi
+    helper_display_name="$(/usr/bin/plutil -extract CFBundleDisplayName raw -o - "$GATEWAY_APP_INFO_PLIST")"
+    if [[ "$helper_display_name" != "$HELPER_DISPLAY_NAME" ]]; then
+        echo "HexGateway CFBundleDisplayName must be $HELPER_DISPLAY_NAME" >&2
         return 1
     fi
     if [[ ! -f "$BUNDLED_LAUNCH_AGENT" ]]; then
