@@ -19,9 +19,10 @@ From the repository root:
 ./script/build_and_run.sh
 ```
 
-The script builds the Debug app and the SwiftPM `HexGateway` product, stages them under the ignored
-`dist/Hex.app` bundle, signs the nested helper and app with the local Apple Development identity and
-hardened runtime, and opens the staged app. It does not install or register a LaunchAgent.
+The Xcode Debug target builds and embeds the matching SwiftPM `HexGateway` product, then signs the
+complete app with the local Apple Development identity and hardened runtime. The script copies that
+single completed build to the ignored `dist/Hex.app`, validates it, and opens the staged app. It does
+not install or register a LaunchAgent.
 
 Use `./script/build_and_run.sh --verify` to validate the staged bundle layout and signatures and
 launch the UI with resident-gateway contact suppressed. Normal runs may connect to a helper that the

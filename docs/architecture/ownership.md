@@ -53,18 +53,21 @@ concrete provider products are linked when their composition is enabled.
 `HexGateway` remains a SwiftPM executable instead of duplicating it as an Xcode native target. Xcode
 automatically exposes its `HexGateway` package scheme from the local package reference, while
 command-line and service builds use the Xcode-selected Swift toolchain to build the `HexGateway`
-product. The project-local `script/build_and_run.sh` builds that product serially and stages it inside
-the app-like bundle at
+product. The `Hex` target's Debug build invokes `script/stage_gateway.sh` after resources are copied;
+that finalizer builds the product serially and stages it inside the same app bundle that Xcode runs at
 `Hex.app/Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway`, with its development
 provisioning profile at
 `Hex.app/Contents/Resources/HexGateway.app/Contents/embedded.provisionprofile`, alongside
 `Hex.app/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist`. This keeps one source
-and build definition for the headless binary while giving `SMAppService.agent(plistName:)` the bundle
-layout it expects. For Debug staging, the script uses the app's automatic Apple Development
-signature, embeds the profile that authorizes the helper's restricted entitlements, signs the helper
-first with the same identity and hardened runtime, then re-signs the outer app after staging. The
-Debug app is limited to the resident keychain group declared in `Config/Hex.Debug.entitlements`; this
-does not alter Release signing, entitlements, or distribution packaging.
+and build definition for the headless binary while ensuring ordinary Xcode builds cannot silently
+omit it or retain a stale helper. The finalizer derives the helper's marketing and build versions from
+the outer target, embeds the profile that authorizes the helper's restricted entitlements, and signs
+the helper first with the same Apple Development identity and hardened runtime. Xcode then performs
+its final outer-app signing step. The project-local `script/build_and_run.sh` copies that already
+complete, signed Xcode product to `dist` and validates the layout, versions, signatures, entitlements,
+and LaunchAgent without rebuilding or re-signing a second gateway. Debug is limited to the resident
+keychain group declared in `Config/Hex.Debug.entitlements`; Release staging remains fail-closed until
+its distribution signing and helper provisioning are deliberately designed.
 
 ## Conflict-file ownership
 

@@ -29,12 +29,14 @@ Run the following before committing:
 (cd Packages/HexKit && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcrun swift test)
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild build -project Hex.xcodeproj -scheme Hex -destination 'platform=macOS' \
-  -derivedDataPath .build/DerivedData CODE_SIGNING_ALLOWED=NO
+  -derivedDataPath .build/DerivedData -jobs 1
 git diff --check
 ```
 
-The Codex Run action calls `./script/build_and_run.sh`. Its `--verify` mode builds and stages the
-development-signed app and profiled helper bundle, validates the executable and property list,
+The app build is intentionally signed: a usable resident gateway needs the shared credential access
+group, so an unsigned Xcode build fails instead of silently creating an incomplete app. The Codex Run
+action calls `./script/build_and_run.sh`. Its `--verify` mode copies the complete Xcode product to
+`dist`, validates the development-signed app and profiled helper bundle, executable, and property list,
 briefly launches that exact staged binary, and terminates the verified process.
 
 Use a conventional commit subject. Do not merge your own branch into `dev`; the integration owner
