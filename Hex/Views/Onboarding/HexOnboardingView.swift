@@ -7,6 +7,7 @@ struct HexOnboardingView: View {
   @Bindable var residentSetup: HexResidentSetupModel
   @Bindable var personality: HexPersonalitySettingsModel
   @Bindable var startAtLogin: HexStartAtLoginModel
+  @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
   let onFinish: () -> Void
 
   @State private var step = HexOnboardingStep.welcome
@@ -80,7 +81,7 @@ struct HexOnboardingView: View {
       Task {
         await startAtLogin.refresh()
       }
-      step = .personality
+      step = .permissions
     }
   }
 
@@ -96,7 +97,11 @@ struct HexOnboardingView: View {
     case .tools:
       HexOnboardingToolsView(model: residentSetup)
     case .permissions:
-      HexOnboardingPermissionsView(model: residentSetup)
+      HexOnboardingPermissionsView(
+        model: residentSetup,
+        startAtLogin: startAtLogin,
+        accessibilityPermission: accessibilityPermission
+      )
     case .personality:
       HexOnboardingPersonalityView(model: personality)
     case .ready:
@@ -111,9 +116,11 @@ struct HexOnboardingView: View {
     switch step {
     case .welcome:
       "Get Started"
-    case .inference, .permissions:
+    case .inference:
       "Save & Continue"
-    case .workspace, .tools:
+    case .tools:
+      "Save & Continue"
+    case .workspace, .permissions:
       "Continue"
     case .personality:
       personality.profile.hasDraftContent ? "Save & Continue" : "Skip for Now"
@@ -128,11 +135,13 @@ struct HexOnboardingView: View {
       inference.canSave && !inference.effectiveModelID.isEmpty
     case .workspace:
       residentSetup.hasValidCoreSettings
-    case .permissions:
+    case .tools:
       residentSetup.canSave
+    case .permissions:
+      startAtLogin.status == .enabled && accessibilityPermission.hasVerifiedGateway
     case .personality:
       !personality.profile.hasDraftContent || personality.profile.canSave
-    case .welcome, .tools, .ready:
+    case .welcome, .ready:
       true
     }
   }
@@ -157,13 +166,13 @@ struct HexOnboardingView: View {
       residentSetup.modelID = inference.effectiveModelID
       step = .tools
     case .tools:
-      step = .permissions
-    case .permissions:
       isWaitingForResidentSave = true
       residentSetup.save()
       if !residentSetup.isSaving {
         isWaitingForResidentSave = false
       }
+    case .permissions:
+      step = .personality
     case .personality:
       guard personality.profile.hasDraftContent else {
         step = .ready

@@ -1,8 +1,8 @@
 public struct GatewayProtocolVersion: Codable, Comparable, Sendable {
-  /// Version 1.2 binds every streamed event to its server-issued run invocation. The gateway cannot
-  /// safely serve earlier clients because a bare record can be reclassified after run-ID reuse.
-  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 2)
-  public static let current = GatewayProtocolVersion(major: 1, minor: 2)
+  /// Version 1.3 adds authenticated, resident-process Accessibility permission operations. The app
+  /// cannot safely infer those results from a 1.2 gateway, so older peers fail during negotiation.
+  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 3)
+  public static let current = GatewayProtocolVersion(major: 1, minor: 3)
 
   public let major: UInt16
   public let minor: UInt16

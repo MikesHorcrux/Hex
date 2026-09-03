@@ -7,6 +7,7 @@ struct HexRootView: View {
   @Bindable var inference: HexInferenceBackendSettingsModel
   @Bindable var personality: HexPersonalitySettingsModel
   @Bindable var startAtLogin: HexStartAtLoginModel
+  @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
   let suppressOnboarding: Bool
   let suppressAutomaticConnection: Bool
 
@@ -23,6 +24,7 @@ struct HexRootView: View {
           residentSetup: residentSetup,
           personality: personality,
           startAtLogin: startAtLogin,
+          accessibilityPermission: accessibilityPermission,
           onFinish: {
             hasCompletedOnboarding = true
           }
