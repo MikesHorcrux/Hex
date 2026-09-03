@@ -5,7 +5,7 @@ import HexCore
 /// the existing `HexGatewayService` API and owns the connection's lease, session, and subscriptions.
 /// A listener should create one instance per accepted NSXPCConnection and call `invalidate()` from
 /// that connection's invalidation handler.
-public final class HexGatewayXPCService: NSObject {
+public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol {
   private actor State {
     private let service: HexGatewayService
     private let codec: GatewayWireCodec
