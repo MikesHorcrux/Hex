@@ -27,6 +27,28 @@ struct HexLiveAgentClientTests {
     #expect(await transport.handshakeCallCount == 1)
   }
 
+  @Test
+  func concurrentStatusAndWorkspaceConnectShareOneHandshake() async throws {
+    let transport = CountingTransport(yieldsBeforeHandshakeResponse: true)
+    let gatewayClient = HexGatewayClient(transport: transport)
+    let adapter = HexGatewayClientAdapter(
+      client: gatewayClient,
+      authorizationTransport: NoopAuthorizationTransport()
+    )
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: adapter
+    )
+
+    async let status = client.status()
+    async let connection = client.connect()
+    let (resolvedStatus, _) = try await (status, connection)
+
+    #expect(resolvedStatus == .idle)
+    #expect(await transport.handshakeCallCount == 1)
+  }
+
   private struct NoopAuthorizationTransport: HexAuthorizationDecisionSubmitting {
     func submit(
       _ request: AuthorizationRequest,
@@ -37,12 +59,22 @@ struct HexLiveAgentClientTests {
   private actor CountingTransport: HexGatewayTransport, HexGatewayResidentControlTransport {
     private(set) var handshakeCallCount = 0
     private var connectedLease: GatewayTransportConnectionLease?
+    private let yieldsBeforeHandshakeResponse: Bool
+
+    init(yieldsBeforeHandshakeResponse: Bool = false) {
+      self.yieldsBeforeHandshakeResponse = yieldsBeforeHandshakeResponse
+    }
 
     func handshake(
       _ request: GatewayHandshakeRequest,
       lease: GatewayTransportConnectionLease
     ) async throws -> GatewayHandshakeResponse {
       handshakeCallCount += 1
+      if yieldsBeforeHandshakeResponse {
+        for _ in 0..<100 where handshakeCallCount < 2 {
+          await Task.yield()
+        }
+      }
       connectedLease = lease
       return GatewayHandshakeResponse(
         sessionID: GatewaySessionID(),

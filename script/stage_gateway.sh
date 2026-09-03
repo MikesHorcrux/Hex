@@ -24,6 +24,11 @@ readonly LAUNCH_AGENT_SOURCE="$ROOT_DIR/Resources/LaunchAgent/com.lunarmothstudi
 readonly BUNDLED_LAUNCH_AGENT="$APP_BUNDLE/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist"
 readonly XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 
+if [[ "${HEX_SKIP_GATEWAY_STAGING_FOR_TESTS:-NO}" == "YES" ]]; then
+    echo "skipping HexGateway staging for this explicit source-only test build"
+    exit 0
+fi
+
 temporary_directory=""
 helper_entitlements=""
 helper_signed_entitlements=""
