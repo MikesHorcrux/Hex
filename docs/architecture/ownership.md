@@ -63,9 +63,9 @@ and build definition for the headless binary while ensuring ordinary Xcode build
 omit it or retain a stale helper. The finalizer derives the helper's marketing and build versions from
 the outer target, embeds the profile that authorizes the helper's restricted entitlements, and signs
 the helper first with the same Apple Development identity and hardened runtime. Xcode then performs
-its final outer-app signing step. The project-local `script/build_and_run.sh` copies that already
-complete, signed Xcode product to `dist` and validates the layout, versions, signatures, entitlements,
-and LaunchAgent without rebuilding or re-signing a second gateway. Debug is limited to the resident
+its final outer-app signing step. The Debug target and project-local `script/build_and_run.sh` share
+the project's canonical Xcode DerivedData product; the script validates its layout, versions,
+signatures, entitlements, and LaunchAgent without copying or re-signing a second gateway. Debug is limited to the resident
 keychain group declared in `Config/Hex.Debug.entitlements`; Release staging remains fail-closed until
 its distribution signing and helper provisioning are deliberately designed.
 
@@ -91,9 +91,9 @@ do not merge into `dev`, modify `main`, or mix unrelated repairs into their feat
 ## Approval boundaries
 
 Source changes, local development signing, deterministic tests, and bundle-layout validation are in
-scope. The developer run script may build `HexGateway`, copy it and its plist into the local ignored
-`dist/Hex.app` staging directory, and validate the resulting nested and outer signatures. That copy
-is not an installation and does not contact launchd. The following require separate user approval:
+scope. The developer run script may build Xcode's canonical Debug product with its embedded
+`HexGateway` and LaunchAgent plist, then validate the nested and outer signatures. That build is not
+an installation and does not contact launchd. The following require separate user approval:
 pushing or creating remotes, merging to `main`, accessing live credentials, starting an OAuth login,
 downloading models, installing or registering a LaunchAgent, requesting macOS privacy/TCC
 permissions, changing distribution entitlements, distribution signing or notarizing, or contacting

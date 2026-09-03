@@ -45,12 +45,13 @@ and signs the helper first with the app's exact development identity and hardene
 signs the complete outer app, so pressing Run cannot produce a UI without its matching gateway.
 Unsigned and Release builds fail explicitly rather than silently emitting an unusable product.
 
-`./script/build_and_run.sh` copies that exact Xcode product to the ignored `dist/Hex.app`; it does not
-compile, restage, or re-sign a second helper. Its `--verify` mode checks app/helper version equality,
+`./script/build_and_run.sh` resolves, builds, and launches that exact Xcode product from the project's
+canonical DerivedData location. It does not create a second DerivedData tree or copy, restage, or
+re-sign a second helper. Its `--verify` mode checks app/helper version equality,
 the helper's executable bit, validates
 the plist identity, `MachServices`, and `BundleProgram` path, verifies the nested and outer signatures,
 and checks the outer app against the resident app's exact Apple code-signing requirement before
-launching only the staged UI. The UI must consume the dedicated `--hex-verify-no-connect` argument
+launching only the canonical Debug UI. The UI must consume the dedicated `--hex-verify-no-connect` argument
 passed by this mode and suppress its normal startup gateway connection; otherwise a registered
 resident service could be awakened during verification. The script never calls `SMAppService`,
 `launchctl`, or any installation command. Its normal run modes open Hex, whose ordinary XPC startup

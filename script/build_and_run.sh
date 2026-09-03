@@ -12,10 +12,20 @@ readonly APP_CODE_SIGNING_REQUIREMENT='anchor apple generic and identifier "com.
 readonly VERIFY_NO_CONNECT_ARGUMENT="--hex-verify-no-connect"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PROJECT_PATH="$ROOT_DIR/Hex.xcodeproj"
-readonly DERIVED_DATA_PATH="$ROOT_DIR/.build/DerivedData"
-readonly BUILD_APP="$DERIVED_DATA_PATH/Build/Products/Debug/$APP_NAME.app"
-readonly DIST_DIR="$ROOT_DIR/dist"
-readonly APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
+readonly XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+readonly CANONICAL_BUILD_DIR="$(
+    DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcodebuild \
+        -project "$PROJECT_PATH" \
+        -scheme "$APP_NAME" \
+        -configuration Debug \
+        -destination "platform=macOS" \
+        -showBuildSettings \
+        -json \
+        2>/dev/null \
+        | /usr/bin/plutil -extract 0.buildSettings.TARGET_BUILD_DIR raw -o - -
+)"
+readonly APP_BUNDLE="$CANONICAL_BUILD_DIR/$APP_NAME.app"
+readonly BUILD_APP="$APP_BUNDLE"
 readonly APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 readonly APP_INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 readonly GATEWAY_APP_BUNDLE="$APP_BUNDLE/Contents/Resources/HexGateway.app"
@@ -25,7 +35,6 @@ readonly GATEWAY_APP_PROFILE="$GATEWAY_APP_BUNDLE/Contents/embedded.provisionpro
 readonly GATEWAY_BUNDLE_PROGRAM="Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway"
 readonly BUNDLED_LAUNCH_AGENT="$APP_BUNDLE/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist"
 readonly LAUNCH_AGENT_SOURCE="$ROOT_DIR/Resources/LaunchAgent/com.lunarmothstudios.hex.gateway.plist"
-readonly XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 verified_app_pid=""
 signing_material_dir=""
 app_entitlements_path=""
@@ -164,7 +173,7 @@ is_staged_app_pid() {
 
     candidate_command="$(/bin/ps -p "$candidate_pid" -o command= 2>/dev/null || true)"
     case "$candidate_command" in
-        "$APP_BINARY" | "$APP_BINARY "*)
+        "$APP_BINARY" | "$APP_BINARY "* | */Hex.app/Contents/MacOS/Hex | */Hex.app/Contents/MacOS/Hex\ *)
             return 0
             ;;
         *)
@@ -273,7 +282,6 @@ DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcodebuild \
     -scheme "$APP_NAME" \
     -configuration Debug \
     -destination "platform=macOS" \
-    -derivedDataPath "$DERIVED_DATA_PATH" \
     -jobs 1
 
 if [[ ! -d "$BUILD_APP" ]]; then
@@ -301,10 +309,6 @@ signing_identity="$(apple_development_identity_for "$build_signature_details")"
 if [[ -z "$signing_identity" ]]; then
     fail "the Debug app was not signed with an Apple Development identity"
 fi
-
-/bin/mkdir -p "$DIST_DIR"
-/bin/rm -rf "$APP_BUNDLE"
-/usr/bin/ditto "$BUILD_APP" "$APP_BUNDLE"
 
 verify_gateway_bundle() {
     if [[ ! -f "$APP_INFO_PLIST" ]]; then
@@ -428,7 +432,7 @@ if ! /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null; then
 fi
 
 open_app() {
-    /usr/bin/open -n "$APP_BUNDLE"
+    /usr/bin/open "$APP_BUNDLE"
 }
 
 case "$MODE" in
@@ -451,7 +455,7 @@ case "$MODE" in
         /usr/bin/plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null
         verify_gateway_bundle
         verification_token="hex-verification-$$-$RANDOM"
-        /usr/bin/open -n "$APP_BUNDLE" --args "$VERIFY_NO_CONNECT_ARGUMENT" "$verification_token"
+        /usr/bin/open "$APP_BUNDLE" --args "$VERIFY_NO_CONNECT_ARGUMENT" "$verification_token"
 
         if ! verified_app_pid="$(wait_for_verified_app "$verification_token")"; then
             echo "staged $APP_NAME did not launch within five seconds" >&2
