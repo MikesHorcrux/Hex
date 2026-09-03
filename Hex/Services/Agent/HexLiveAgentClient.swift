@@ -38,6 +38,11 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
   private var composition: HexGatewayComposition?
   private var adapter: HexGatewayClientAdapter?
   private var connectionResult: GatewayConnectionResult?
+  private var connectionAttempt:
+    (
+      id: UUID,
+      task: Task<GatewayConnectionResult, any Error>
+    )?
   private var resolvedInProcessInferenceConfiguration:
     HexInProcessInferenceConfigurationResolver.Resolution?
 
@@ -73,6 +78,10 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
   }
 
   func disconnect() async throws {
+    let pendingConnectionTask = connectionAttempt?.task
+    connectionAttempt = nil
+    pendingConnectionTask?.cancel()
+
     guard let adapter else {
       connectionResult = nil
       return
@@ -310,12 +319,34 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
       return connectionResult
     }
 
+    let attempt: (id: UUID, task: Task<GatewayConnectionResult, any Error>)
+    if let connectionAttempt {
+      attempt = connectionAttempt
+    } else {
+      let createdAttempt = (
+        id: UUID(),
+        task: Task { try await adapter.connect() }
+      )
+      connectionAttempt = createdAttempt
+      attempt = createdAttempt
+    }
+
     do {
-      let result = try await adapter.connect()
-      connectionResult = result
-      return result
+      let result = try await attempt.task.value
+      if connectionAttempt?.id == attempt.id {
+        connectionResult = result
+        connectionAttempt = nil
+        return result
+      }
+      if let connectionResult {
+        return connectionResult
+      }
+      throw CancellationError()
     } catch {
-      connectionResult = nil
+      if connectionAttempt?.id == attempt.id {
+        connectionAttempt = nil
+        connectionResult = nil
+      }
       throw error
     }
   }

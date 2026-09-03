@@ -39,5 +39,9 @@ action calls `./script/build_and_run.sh`. Its `--verify` mode copies the complet
 `dist`, validates the development-signed app and profiled helper bundle, executable, and property list,
 briefly launches that exact staged binary, and terminates the verified process.
 
+A focused app-layer unit test that does not exercise the bundled resident process may pass
+`HEX_SKIP_GATEWAY_STAGING_FOR_TESTS=YES` to `xcodebuild test`. That explicit source-only test escape
+hatch avoids rebuilding MLX; its intermediate app is intentionally not a runnable Hex product.
+
 Use a conventional commit subject. Do not merge your own branch into `dev`; the integration owner
 reviews and merges completed feature commits.
