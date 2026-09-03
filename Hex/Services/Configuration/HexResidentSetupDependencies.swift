@@ -8,12 +8,14 @@ nonisolated struct HexResidentSetupDependencies: Sendable {
   let settingsStore: (any HexResidentRuntimeSettingsStore)?
   let secretStore: (any HexSecretStore)?
   let managedToolLayout: MCPManagedToolLayout?
+  let managedToolInstaller: (any HexManagedToolInstalling)?
   let readinessChecker: any HexGatewayActivationReadinessChecking
 
   static let blocked = Self(
     settingsStore: nil,
     secretStore: nil,
     managedToolLayout: nil,
+    managedToolInstaller: nil,
     readinessChecker: HexBlockedGatewayActivationChecker()
   )
 
@@ -42,6 +44,7 @@ nonisolated struct HexResidentSetupDependencies: Sendable {
       return .blocked
     }
     let secretStore = KeychainHexSecretStore()
+    let managedToolInstaller = HexManagedToolInstaller(layout: managedToolLayout)
     let readinessChecker = HexResidentGatewayActivationChecker(
       settingsStore: settingsStore,
       secretStore: secretStore,
@@ -53,6 +56,7 @@ nonisolated struct HexResidentSetupDependencies: Sendable {
       settingsStore: settingsStore,
       secretStore: secretStore,
       managedToolLayout: managedToolLayout,
+      managedToolInstaller: managedToolInstaller,
       readinessChecker: readinessChecker
     )
   }

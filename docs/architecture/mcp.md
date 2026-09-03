@@ -41,8 +41,10 @@ model -> Hex agent loop -> Hex authorization -> MCP adapter -> browser or macOS 
 The managed layout is rooted at `~/Library/Application Support/Hex/Tools` and currently pins Node
 `24.20.0`, `@playwright/mcp` `0.0.80`, its Chromium revision `1243`, and Peekaboo `4.2.2`. Hex
 validates the expected version metadata, ownership, link count, write permissions, and executable
-locations before it will enable a managed adapter. Installation and upgrades remain explicit user
-operations; the app does not silently fetch or replace these runtimes.
+locations before it will enable a managed adapter. Turning on a capability is the user-visible
+installation boundary: Hex downloads a missing pinned component over HTTPS, validates the Node and
+Peekaboo release SHA-256 values and npm lockfile integrity, rejects unsafe archive paths, stages with
+owner-only permissions, and transactionally replaces only that version's managed directory.
 
 The Playwright adapter launches the official MCP CLI through the pinned Node executable with an
 explicit environment, an isolated browser profile, no Playwright code generation, and a 50 MiB
@@ -53,7 +55,9 @@ The Peekaboo adapter launches `peekaboo mcp serve --input-strategy actionFirst`.
 does not invoke Peekaboo's separate agent mode. Peekaboo contributes observation and native Mac
 interaction tools, while every resulting `mcp.peekaboo.*` call still receives a Hex-owned
 authorization request. macOS continues to control Screen Recording and Accessibility; saving or
-enabling the adapter cannot grant those permissions.
+enabling the adapter cannot grant those permissions. Hex invokes the component's native permission
+requests and verifies both grants after the user returns. Full Disk Access has no public grant API;
+Hex reveals its exact resident agent bundle for the user to add in System Settings.
 
 Xcode remains a built-in local stdio adapter, and additional servers can be saved as HTTPS or
 literal-loopback HTTP endpoints. Secrets for HTTP authentication are process-only and are not

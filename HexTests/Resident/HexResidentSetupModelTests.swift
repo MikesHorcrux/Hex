@@ -122,6 +122,58 @@ struct HexResidentSetupModelTests {
   }
 
   @Test @MainActor
+  func enablingMissingBrowserControlInstallsItWithoutExposingRuntimeSetup() async throws {
+    let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "HexManagedTools-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    let layout = try MCPManagedToolLayout(rootURL: rootURL)
+    let installer = FakeManagedToolInstaller()
+    let model = HexResidentSetupModel(
+      settingsStore: FakeSettingsStore(),
+      secretStore: FakeSecretStore(),
+      managedToolLayout: layout,
+      managedToolInstaller: installer
+    )
+    await model.load()
+
+    model.setPlaywrightEnabled(true)
+    try await waitForManagedToolInstall(model)
+
+    #expect(model.playwrightMCPEnabled)
+    #expect(model.playwrightAvailability == .ready)
+    #expect(model.statusMessage == "Browser control is ready.")
+    #expect(await installer.installedTools == [.playwright])
+  }
+
+  @Test @MainActor
+  func screenControlRequestInstallsCapabilityAndUsesVerifiedResult() async throws {
+    let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "HexManagedTools-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    let installer = FakeManagedToolInstaller(screenRecordingGranted: true)
+    let model = HexResidentSetupModel(
+      settingsStore: FakeSettingsStore(),
+      secretStore: FakeSecretStore(),
+      managedToolLayout: try MCPManagedToolLayout(rootURL: rootURL),
+      managedToolInstaller: installer
+    )
+    await model.load()
+
+    model.requestScreenControlPermissions()
+    try await waitForScreenControlRequest(model)
+
+    #expect(model.peekabooMCPEnabled)
+    #expect(model.peekabooAvailability == .ready)
+    #expect(model.screenControlPermissionsGranted == true)
+    #expect(model.statusMessage == "Screen control permissions are ready.")
+    #expect(await installer.screenControlRequestCount == 1)
+  }
+
+  @Test @MainActor
   func loadAndSavePreserveHTTPServersWhileTogglingXcode() async throws {
     let workspace = try makeWorkspace()
     defer { try? FileManager.default.removeItem(at: workspace) }
@@ -296,6 +348,28 @@ struct HexResidentSetupModelTests {
     Issue.record("Resident setup save did not finish within the test budget.")
   }
 
+  @MainActor
+  private func waitForManagedToolInstall(_ model: HexResidentSetupModel) async throws {
+    for _ in 0..<100 {
+      if !model.isInstallingPlaywright {
+        return
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Browser control installation did not finish within the test budget.")
+  }
+
+  @MainActor
+  private func waitForScreenControlRequest(_ model: HexResidentSetupModel) async throws {
+    for _ in 0..<100 {
+      if !model.isRequestingScreenControl {
+        return
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Screen control request did not finish within the test budget.")
+  }
+
   private enum FakeStoreError: Error, Sendable {
     case missingSettings
     case missingSecret
@@ -345,6 +419,29 @@ struct HexResidentSetupModelTests {
 
     func delete(_ key: HexSecretKey) async throws {
       value = nil
+    }
+  }
+
+  private actor FakeManagedToolInstaller: HexManagedToolInstalling {
+    private(set) var installedTools: [MCPManagedTool] = []
+    private(set) var screenControlRequestCount = 0
+    private let screenRecordingGranted: Bool
+
+    init(screenRecordingGranted: Bool = false) {
+      self.screenRecordingGranted = screenRecordingGranted
+    }
+
+    func install(_ tool: MCPManagedTool) async throws {
+      installedTools.append(tool)
+    }
+
+    func screenControlPermissionStatus() async throws -> Bool {
+      screenRecordingGranted
+    }
+
+    func requestScreenControlPermission() async throws -> Bool {
+      screenControlRequestCount += 1
+      return screenRecordingGranted
     }
   }
 }

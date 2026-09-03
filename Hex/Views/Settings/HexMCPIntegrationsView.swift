@@ -7,45 +7,65 @@ struct HexMCPIntegrationsView: View {
 
   var body: some View {
     Section {
-      Toggle("Use Playwright browser tools", isOn: $model.playwrightMCPEnabled)
-        .accessibilityIdentifier("residentPlaywrightMCPToggle")
+      Toggle(
+        "Browser control",
+        isOn: Binding(
+          get: { model.playwrightMCPEnabled },
+          set: { model.setPlaywrightEnabled($0) }
+        )
+      )
+      .accessibilityIdentifier("residentPlaywrightMCPToggle")
+      .disabled(model.isInstallingPlaywright)
 
-      LabeledContent("Playwright \(MCPManagedToolLayout.playwrightVersion)") {
-        availabilityLabel(model.playwrightAvailability)
+      if model.isInstallingPlaywright {
+        Label("Downloading browser control…", systemImage: "arrow.down.circle")
+          .foregroundStyle(.secondary)
+      } else if model.playwrightAvailability == .ready {
+        Label("Browser control is ready", systemImage: "checkmark.circle.fill")
+          .foregroundStyle(.green)
       }
 
       Text(
-        "Microsoft Playwright runs in an isolated browser profile. Hex owns the agent loop and "
-          + "routes every MCP action through Hex authorization. Browser artifacts are bounded "
-          + "to 50 MB."
+        "Hex uses an isolated browser profile. If browser control is not installed, Hex downloads "
+          + "and verifies it automatically."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
 
       Divider()
 
-      Toggle("Use Peekaboo Mac tools", isOn: $model.peekabooMCPEnabled)
-        .accessibilityIdentifier("residentPeekabooMCPToggle")
+      Toggle(
+        "Screen control",
+        isOn: Binding(
+          get: { model.peekabooMCPEnabled },
+          set: { model.setPeekabooEnabled($0) }
+        )
+      )
+      .accessibilityIdentifier("residentPeekabooMCPToggle")
+      .disabled(model.isInstallingPeekaboo)
 
-      LabeledContent("Peekaboo \(MCPManagedToolLayout.peekabooVersion)") {
-        availabilityLabel(model.peekabooAvailability)
+      if model.isInstallingPeekaboo {
+        Label("Downloading screen control…", systemImage: "arrow.down.circle")
+          .foregroundStyle(.secondary)
+      } else if model.peekabooAvailability == .ready {
+        Label("Screen control is ready", systemImage: "checkmark.circle.fill")
+          .foregroundStyle(.green)
       }
 
       Text(
-        "Peekaboo supplies screen observation and native Mac actions. Its separate agent mode is "
-          + "not used; every tool remains routed through Hex authorization."
+        "Screen control lets Hex observe and operate Mac apps. Hex installs its private component "
+          + "automatically and still asks before protected actions."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
 
       Divider()
 
-      Toggle("Use Xcode MCP tools", isOn: $model.xcodeMCPEnabled)
+      Toggle("Xcode control", isOn: $model.xcodeMCPEnabled)
         .accessibilityIdentifier("residentXcodeMCPToggle")
 
       Text(
-        "When Xcode is open, Hex discovers its MCP tools through Xcode's local stdio bridge. "
-          + "Each bridge starts lazily when an agent run needs it."
+        "When Xcode is open, Hex can use its built-in automation connection."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -54,15 +74,4 @@ struct HexMCPIntegrationsView: View {
     }
   }
 
-  @ViewBuilder
-  private func availabilityLabel(_ availability: MCPManagedToolAvailability) -> some View {
-    switch availability {
-    case .ready:
-      Label("Installed", systemImage: "checkmark.circle.fill")
-        .foregroundStyle(.green)
-    case .unavailable:
-      Label("Missing", systemImage: "exclamationmark.triangle.fill")
-        .foregroundStyle(.orange)
-    }
-  }
 }

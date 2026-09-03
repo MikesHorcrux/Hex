@@ -20,6 +20,10 @@ final class HexResidentSetupModel {
   private(set) var hasStoredAPIKey = false
   private(set) var peekabooAvailability = MCPManagedToolAvailability.unavailable
   private(set) var playwrightAvailability = MCPManagedToolAvailability.unavailable
+  private(set) var isInstallingPeekaboo = false
+  private(set) var isInstallingPlaywright = false
+  private(set) var isRequestingScreenControl = false
+  private(set) var screenControlPermissionsGranted: Bool?
   private(set) var statusMessage: String?
   private(set) var errorMessage: String?
   private(set) var saveGeneration = 0
@@ -27,6 +31,7 @@ final class HexResidentSetupModel {
   private let settingsStore: (any HexResidentRuntimeSettingsStore)?
   private let secretStore: (any HexSecretStore)?
   private let managedToolLayout: MCPManagedToolLayout?
+  private let managedToolInstaller: (any HexManagedToolInstalling)?
   private var hasLoaded = false
   private var loadedMCPServers: [HexResidentMCPServerSettings] = []
 
@@ -34,12 +39,14 @@ final class HexResidentSetupModel {
     initialModelID: String = "",
     settingsStore: (any HexResidentRuntimeSettingsStore)? = nil,
     secretStore: (any HexSecretStore)? = nil,
-    managedToolLayout: MCPManagedToolLayout? = nil
+    managedToolLayout: MCPManagedToolLayout? = nil,
+    managedToolInstaller: (any HexManagedToolInstalling)? = nil
   ) {
     modelID = initialModelID
     self.settingsStore = settingsStore
     self.secretStore = secretStore
     self.managedToolLayout = managedToolLayout
+    self.managedToolInstaller = managedToolInstaller
   }
 
   var workspaceDisplayName: String {
@@ -125,6 +132,127 @@ final class HexResidentSetupModel {
     statusMessage = nil
   }
 
+  func setPlaywrightEnabled(_ isEnabled: Bool) {
+    guard isEnabled else {
+      playwrightMCPEnabled = false
+      return
+    }
+    installManagedTool(.playwright)
+  }
+
+  func setPeekabooEnabled(_ isEnabled: Bool) {
+    guard isEnabled else {
+      peekabooMCPEnabled = false
+      return
+    }
+    installManagedTool(.peekaboo)
+  }
+
+  func refreshScreenControlPermissions() async {
+    guard peekabooAvailability == .ready, let managedToolInstaller else {
+      screenControlPermissionsGranted = nil
+      return
+    }
+    do {
+      screenControlPermissionsGranted =
+        try await managedToolInstaller
+        .screenControlPermissionStatus()
+    } catch {
+      screenControlPermissionsGranted = nil
+    }
+  }
+
+  func requestScreenControlPermissions() {
+    guard !isRequestingScreenControl, let managedToolInstaller else {
+      errorMessage = "Screen control is unavailable in this build."
+      return
+    }
+    isRequestingScreenControl = true
+    errorMessage = nil
+    Task { [weak self] in
+      guard let self else { return }
+      do {
+        let isGranted = try await managedToolInstaller.requestScreenControlPermission()
+        peekabooAvailability = .ready
+        peekabooMCPEnabled = true
+        screenControlPermissionsGranted = isGranted
+        statusMessage =
+          isGranted
+          ? "Screen control permissions are ready."
+          : "Allow the requested Mac permissions in System Settings, then return to Hex."
+      } catch is CancellationError {
+        // The owning view disappeared; preserve the last verified state.
+      } catch {
+        errorMessage = Self.safeManagedToolMessage(error)
+        statusMessage = nil
+      }
+      isRequestingScreenControl = false
+    }
+  }
+
+  private func installManagedTool(_ tool: MCPManagedTool) {
+    let availability = managedToolLayout?.availability(for: tool) ?? .unavailable
+    if availability == .ready {
+      setManagedTool(tool, enabled: true, availability: .ready)
+      return
+    }
+    guard let managedToolInstaller else {
+      errorMessage = "This capability cannot be installed in the current build."
+      return
+    }
+    guard !isInstallingPeekaboo, !isInstallingPlaywright else { return }
+    setInstalling(tool, true)
+    errorMessage = nil
+    statusMessage = "Installing \(displayName(for: tool))…"
+    Task { [weak self] in
+      guard let self else { return }
+      do {
+        try await managedToolInstaller.install(tool)
+        setManagedTool(tool, enabled: true, availability: .ready)
+        statusMessage = "\(displayName(for: tool)) is ready."
+        errorMessage = nil
+      } catch is CancellationError {
+        // The owning view disappeared; do not convert cancellation into an installation failure.
+      } catch {
+        setManagedTool(tool, enabled: false, availability: .unavailable)
+        errorMessage = Self.safeManagedToolMessage(error)
+        statusMessage = nil
+      }
+      setInstalling(tool, false)
+    }
+  }
+
+  private func setManagedTool(
+    _ tool: MCPManagedTool,
+    enabled: Bool,
+    availability: MCPManagedToolAvailability
+  ) {
+    switch tool {
+    case .playwright:
+      playwrightMCPEnabled = enabled
+      playwrightAvailability = availability
+    case .peekaboo:
+      peekabooMCPEnabled = enabled
+      peekabooAvailability = availability
+    }
+  }
+
+  private func setInstalling(_ tool: MCPManagedTool, _ isInstalling: Bool) {
+    switch tool {
+    case .playwright:
+      isInstallingPlaywright = isInstalling
+    case .peekaboo:
+      isInstallingPeekaboo = isInstalling
+    }
+  }
+
+  private func displayName(for tool: MCPManagedTool) -> String {
+    switch tool {
+    case .playwright: "Browser control"
+    case .peekaboo: "Screen control"
+    }
+  }
+
   func addHTTPMCPServer(serverID: String, endpoint: String) -> Bool {
     let normalizedServerID = serverID.trimmingCharacters(in: .whitespacesAndNewlines)
     let normalizedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -194,11 +322,11 @@ final class HexResidentSetupModel {
       return
     }
     guard !playwrightMCPEnabled || playwrightAvailability == .ready else {
-      errorMessage = "The managed Playwright MCP runtime is missing or incomplete."
+      errorMessage = "Browser control is not ready yet."
       return
     }
     guard !peekabooMCPEnabled || peekabooAvailability == .ready else {
-      errorMessage = "The managed Peekaboo runtime is missing or incomplete."
+      errorMessage = "Screen control is not ready yet."
       return
     }
 
@@ -272,6 +400,19 @@ final class HexResidentSetupModel {
     return value.unicodeScalars.allSatisfy { scalar in
       scalar.value >= 0x21 && scalar.value <= 0x7E
     }
+  }
+
+  private static func safeManagedToolMessage(_ error: Error) -> String {
+    if error is CancellationError {
+      return "Capability installation was cancelled."
+    }
+    if let localizedError = error as? LocalizedError,
+      let message = localizedError.errorDescription,
+      !message.isEmpty
+    {
+      return message
+    }
+    return "Hex could not finish setting up this capability."
   }
 
   private static func isValidWorkspaceRoot(_ url: URL) -> Bool {

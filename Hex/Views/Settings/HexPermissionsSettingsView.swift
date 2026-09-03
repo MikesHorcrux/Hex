@@ -11,6 +11,7 @@ struct HexPermissionsSettingsView: View {
     Form {
       HexAuthorizationModePickerView(model: model)
       HexComputerAccessView(
+        model: model,
         accessibilityPermission: accessibilityPermission,
         startAtLogin: startAtLogin,
         suppressAutomaticRefresh: suppressAutomaticRefresh

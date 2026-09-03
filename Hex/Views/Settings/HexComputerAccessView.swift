@@ -2,6 +2,7 @@ import Observation
 import SwiftUI
 
 struct HexComputerAccessView: View {
+  @Bindable var model: HexResidentSetupModel
   @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
   @Bindable var startAtLogin: HexStartAtLoginModel
   let suppressAutomaticRefresh: Bool
@@ -9,10 +10,12 @@ struct HexComputerAccessView: View {
   @Environment(\.scenePhase) private var scenePhase
 
   init(
+    model: HexResidentSetupModel,
     accessibilityPermission: HexAccessibilityPermissionModel,
     startAtLogin: HexStartAtLoginModel,
     suppressAutomaticRefresh: Bool = false
   ) {
+    self.model = model
     self.accessibilityPermission = accessibilityPermission
     self.startAtLogin = startAtLogin
     self.suppressAutomaticRefresh = suppressAutomaticRefresh
@@ -27,7 +30,7 @@ struct HexComputerAccessView: View {
 
       Divider()
 
-      HexExternalComputerPermissionsView()
+      HexExternalComputerPermissionsView(model: model)
     } header: {
       Text("Computer & Web")
     } footer: {
@@ -55,6 +58,7 @@ struct HexComputerAccessView: View {
 
   private func refreshGatewayAndPermission() async {
     await startAtLogin.refresh()
+    await model.refreshScreenControlPermissions()
     guard startAtLogin.status == .enabled else { return }
     await accessibilityPermission.refresh()
   }
