@@ -36,7 +36,8 @@ extension AgentRuntime {
     executionContexts.reserveCapacity(calls.count)
 
     for call in calls {
-      let context = ToolExecutionContext(runID: runID, workingDirectory: workingDirectory)
+      let context = ToolExecutionContext(
+        runID: runID, workingDirectory: workingDirectory, artifacts: runArtifacts[runID] ?? [])
       let request: AuthorizationRequest
       do {
         request = try await toolExecutor.authorizationRequest(for: call, in: context)
@@ -110,13 +111,16 @@ extension AgentRuntime {
       let decision = decisions[index]
       let context = executionContexts[index]
       let result: ToolResult
+      let message: Message
       switch decision {
       case .allow:
-        try await append(.toolStarted(call), to: runID)
+        try recordToolStartAttempt(call.id, for: runID)
         runsWithStartedTools.insert(runID)
+        try await append(.toolStarted(call), to: runID)
         try Task.checkCancellation()
+        let executedResult: ToolResult
         do {
-          result = try await toolExecutor.execute(call, in: context)
+          executedResult = try await toolExecutor.execute(call, in: context)
         } catch is CancellationError {
           throw CancellationError()
         } catch {
@@ -128,14 +132,35 @@ extension AgentRuntime {
           )
         }
 
-        guard result.toolCallID == call.id else {
+        guard executedResult.toolCallID == call.id else {
           throw AgentRuntimeError.toolExecutionFailure(
             "Tool execution returned a mismatched call ID; its outcome is uncertain."
           )
         }
-        let resultByteCount = try serializedToolResultByteCount(result)
-        try await appendKnownOutcome(.toolFinished(result), to: runID)
+        guard executedResult.notExecutedReason == nil else {
+          throw AgentRuntimeError.toolExecutionFailure(
+            "A dispatched tool returned a host-only nonexecution claim; its outcome is uncertain."
+          )
+        }
+        result = try await persistLargeToolOutput(executedResult, runID: runID)
+        // A returned outcome belongs in durable history even when cancellation, artifact capacity,
+        // or a subsequent inference budget prevents this run from continuing. Persist both forms
+        // exactly once so a future conversation never sees this known tool call as unresolved.
+        message = try await persistKnownToolReceipt(result, for: runID)
         try Task.checkCancellation()
+        do {
+          try rememberArtifacts(result.artifacts, for: runID)
+        } catch {
+          throw AgentRuntimeError.toolExecutionFailure(
+            "Hex saved the tool result and its output references, but this run's preserved-output inventory cannot accept them because its capacity was exceeded or a reference conflicts. No references were discarded. Inspect the saved result before continuing; Hex will not repeat the action automatically."
+          )
+        }
+        if result.requiresUserAttention {
+          throw AgentRuntimeError.toolExecutionFailure(
+            "Hex stopped because preserving this tool's output requires your attention. The command may already have changed files or external state. Inspect the saved result and partial output before deciding what to do next; Hex will not repeat it automatically."
+          )
+        }
+        let resultByteCount = try serializedToolResultByteCount(result)
         totalSerializedToolResultBytes = try addingToolResultBytes(
           resultByteCount,
           to: totalSerializedToolResultBytes
@@ -144,16 +169,13 @@ extension AgentRuntime {
       case .deny(let reason):
         result = deniedToolResult(for: call, reason: reason)
         _ = try serializedToolResultByteCount(result)
+        message = try await persistKnownToolReceipt(result, for: runID)
+        try Task.checkCancellation()
       }
 
-      let message = Message(role: .tool, content: [.toolResult(result)])
       var conversationWithResult = admittedConversation
       conversationWithResult.append(message)
       try validateConversationSize(conversationWithResult)
-      if case .deny = decision {
-        try await append(.toolFinished(result), to: runID)
-      }
-      try await append(.messageAppended(message), to: runID)
       admittedConversation = conversationWithResult
       results.append(result)
       messages.append(message)
@@ -172,7 +194,8 @@ extension AgentRuntime {
     return ToolResult(
       toolCallID: call.id,
       status: .failure,
-      output: .object(output)
+      output: .object(output),
+      notExecutedReason: .authorizationDenied
     )
   }
 

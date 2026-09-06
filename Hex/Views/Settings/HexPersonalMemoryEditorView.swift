@@ -58,6 +58,7 @@ struct HexPersonalMemoryEditorView: View {
 
       HStack {
         Button("Cancel", action: model.cancelEditing)
+          .buttonStyle(.hexSecondaryAction)
           .accessibilityIdentifier("hexPersonalMemoryCancelButton")
           .disabled(model.isSaving)
 
@@ -72,6 +73,7 @@ struct HexPersonalMemoryEditorView: View {
             await model.saveDraft()
           }
         }
+        .buttonStyle(.hexPrimaryAction)
         .keyboardShortcut(.defaultAction)
         .accessibilityIdentifier("hexPersonalMemorySaveButton")
         .disabled(!model.canSaveDraft)

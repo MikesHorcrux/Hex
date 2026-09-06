@@ -11,23 +11,26 @@ struct AgentToolAuthorizationView: View {
       HStack(spacing: 9) {
         Image(systemName: "lock.shield.fill")
           .font(.title3)
-          .foregroundStyle(.orange)
+          .foregroundStyle(HexBrandPalette.accentInk)
         VStack(alignment: .leading, spacing: 2) {
           Text("Hex needs your approval")
             .font(.headline)
+            .foregroundStyle(HexBrandPalette.ink)
           Text("This exact operation is paused until you choose.")
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(HexBrandPalette.mutedInk)
         }
         Spacer()
         if isSubmitting {
           ProgressView()
             .controlSize(.small)
+            .tint(HexBrandPalette.coral)
         }
       }
 
       Text(request.explanation)
         .font(.callout)
+        .foregroundStyle(HexBrandPalette.ink)
         .fixedSize(horizontal: false, vertical: true)
 
       VStack(alignment: .leading, spacing: 6) {
@@ -43,8 +46,11 @@ struct AgentToolAuthorizationView: View {
         }
       }
       .padding(10)
-      .background(
-        Color(nsColor: .textBackgroundColor).opacity(0.66), in: RoundedRectangle(cornerRadius: 8))
+      .background(HexBrandPalette.raisedSurface, in: RoundedRectangle(cornerRadius: 10))
+      .overlay {
+        RoundedRectangle(cornerRadius: 10)
+          .strokeBorder(HexBrandPalette.hairline, lineWidth: 1)
+      }
 
       HStack {
         Button(AuthorizationDecisionChoice.deny.buttonTitle, role: .destructive) {
@@ -67,12 +73,13 @@ struct AgentToolAuthorizationView: View {
       }
       .disabled(isSubmitting)
     }
-    .padding(14)
-    .background(.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: 12))
-    .overlay {
-      RoundedRectangle(cornerRadius: 12)
-        .strokeBorder(.orange.opacity(0.32))
-    }
+    .padding(16)
+    .hexSurface(
+      cornerRadius: 18,
+      fill: HexBrandPalette.softApricot,
+      border: HexBrandPalette.apricot.opacity(0.36),
+      shadowRadius: 7
+    )
     .accessibilityIdentifier("toolAuthorizationRequest")
   }
 
@@ -81,10 +88,11 @@ struct AgentToolAuthorizationView: View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Text(label)
         .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(HexBrandPalette.mutedInk)
         .frame(width: 90, alignment: .leading)
       Text(value)
         .font(.caption.monospaced())
+        .foregroundStyle(HexBrandPalette.ink)
         .textSelection(.enabled)
     }
   }

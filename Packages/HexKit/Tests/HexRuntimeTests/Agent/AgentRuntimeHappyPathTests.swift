@@ -188,6 +188,8 @@ struct AgentRuntimeHappyPathTests {
     switch event {
     case .runStarted: .runStarted
     case .messageAppended: .messageAppended
+    case .contextCompactionStarted: .contextCompactionStarted
+    case .contextCompacted: .contextCompacted
     case .inferenceRequested: .inferenceRequested
     case .inferenceEvent(.started): .inferenceStarted
     case .inferenceEvent(.textDelta): .textDelta

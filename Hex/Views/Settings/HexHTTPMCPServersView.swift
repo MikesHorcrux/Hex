@@ -8,6 +8,14 @@ struct HexHTTPMCPServersView: View {
 
   var body: some View {
     Section {
+      if model.httpMCPServers.isEmpty {
+        Label(
+          "No extra tool servers connected",
+          systemImage: "point.3.connected.trianglepath.dotted"
+        )
+        .foregroundStyle(.secondary)
+      }
+
       ForEach(model.httpMCPServers) { server in
         HStack(alignment: .firstTextBaseline, spacing: 10) {
           Toggle(
@@ -37,30 +45,30 @@ struct HexHTTPMCPServersView: View {
         }
       }
 
-      TextField("Server ID (for example, local_docs)", text: $serverID)
+      TextField("Connection name (for example, local_docs)", text: $serverID)
         .accessibilityIdentifier("residentHTTPMCPServerIDField")
-      TextField("https://server.example/mcp or http://localhost:port/mcp", text: $endpoint)
+      TextField("Secure server address", text: $endpoint)
         .accessibilityIdentifier("residentHTTPMCPEndpointField")
 
       HStack {
         Spacer()
-        Button("Add MCP Server") {
+        Button("Add Server") {
           if model.addHTTPMCPServer(serverID: serverID, endpoint: endpoint) {
             serverID = ""
             endpoint = ""
           }
         }
+        .buttonStyle(.hexSecondaryAction)
         .disabled(serverID.isEmpty || endpoint.isEmpty)
       }
 
       Text(
-        "Only HTTPS endpoints and loopback HTTP endpoints are accepted. Authentication headers "
-          + "are never stored in resident settings."
+        "For advanced integrations. Hex accepts secure internet addresses and local addresses on this Mac. Sign-in headers are not stored here."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
     } header: {
-      Text("Additional MCP Servers")
+      Text("Extra tool servers")
     }
   }
 }

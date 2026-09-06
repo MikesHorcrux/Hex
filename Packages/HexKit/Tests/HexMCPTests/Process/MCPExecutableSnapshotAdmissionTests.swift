@@ -6,14 +6,339 @@ import Testing
 
 @Suite("MCP executable snapshot admission", .serialized)
 struct MCPExecutableSnapshotAdmissionTests {
-  @Test("Repeated EMFILE failures after mkdir stop at the fixed slot cap")
-  func repeatedPostMkdirEMFILEFailuresStopAtSlotCap() throws {
+  @Test("A released slot is reclaimed beyond the fixed slot cap")
+  func releasedSlotIsReclaimedBeyondCap() throws {
+    let policy = try makePolicy(maximumRetainedSlots: 1)
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+
+    for index in 0..<5 {
+      let directory = try MCPExecutableSnapshot.makePrivateDirectory(
+        policy: policy,
+        namespaceBasename: namespace
+      )
+      let existingNames = try FileManager.default.contentsOfDirectory(
+        atPath: directory.path
+      )
+      #expect(existingNames.isEmpty)
+      try Data("retired-\(index)".utf8).write(
+        to: URL(fileURLWithPath: directory.path).appendingPathComponent("executable"),
+        options: .withoutOverwriting
+      )
+      close(directory)
+    }
+  }
+
+  @Test("Stale slots over caller cleanup budgets do not hide a later safe slot")
+  func oversizedStaleSlotsDoNotAbortScan() throws {
+    let largerPolicy = try MCPExecutableSnapshotPolicy(
+      maximumRetainedSlots: 3,
+      maximumEntriesPerSlot: 8,
+      maximumPathMetadataBytesPerSlot: 4_096,
+      maximumCopiedBytesPerSlot: 4_096
+    )
+    let smallerPolicy = try MCPExecutableSnapshotPolicy(
+      maximumRetainedSlots: 3,
+      maximumEntriesPerSlot: 1,
+      maximumPathMetadataBytesPerSlot: 4_096,
+      maximumCopiedBytesPerSlot: 2
+    )
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+
+    let entryLimitedSlot = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: largerPolicy,
+      namespaceBasename: namespace
+    )
+    let entryLimitedURL = URL(fileURLWithPath: entryLimitedSlot.path, isDirectory: true)
+    try Data("one".utf8).write(
+      to: entryLimitedURL.appendingPathComponent("one"),
+      options: .withoutOverwriting
+    )
+    try Data("two".utf8).write(
+      to: entryLimitedURL.appendingPathComponent("two"),
+      options: .withoutOverwriting
+    )
+    let byteLimitedSlot = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: largerPolicy,
+      namespaceBasename: namespace
+    )
+    let byteLimitedURL = URL(fileURLWithPath: byteLimitedSlot.path, isDirectory: true)
+    try Data("three".utf8).write(
+      to: byteLimitedURL.appendingPathComponent("three"),
+      options: .withoutOverwriting
+    )
+    close(entryLimitedSlot)
+    close(byteLimitedSlot)
+
+    let claimed = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: smallerPolicy,
+      namespaceBasename: namespace
+    )
+    defer { close(claimed) }
+
+    #expect(claimed.basename == "slot-0002")
+    #expect(try FileManager.default.contentsOfDirectory(atPath: entryLimitedURL.path).count == 2)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: byteLimitedURL.path).count == 1)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: claimed.path).isEmpty)
+  }
+
+  @Test("Repeated slot scans use independent directory offsets")
+  func repeatedSlotScansDoNotReuseDirectoryOffset() throws {
+    let policy = try makePolicy(maximumRetainedSlots: 1)
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+    let directory = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    defer { close(directory) }
+    try Data("retired".utf8).write(
+      to: URL(fileURLWithPath: directory.path).appendingPathComponent("executable"),
+      options: .withoutOverwriting
+    )
+
+    #expect(try MCPExecutableSnapshot.directoryEntryNames(directory.descriptor) == ["executable"])
+    #expect(try MCPExecutableSnapshot.directoryEntryNames(directory.descriptor) == ["executable"])
+  }
+
+  @Test("A live slot lease prevents concurrent reclamation")
+  func liveSlotLeasePreventsReclamation() throws {
+    let policy = try makePolicy(maximumRetainedSlots: 1)
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+
+    let live = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    defer { close(live) }
+
+    let expectedUsage = MCPExecutableSnapshotNamespaceUsage(
+      namespacePath: namespaceURL.path,
+      retainedSlotCount: 1,
+      policy: policy
+    )
+    #expect(
+      throws: MCPExecutableSnapshotAdmissionError.namespaceExhausted(expectedUsage)
+    ) {
+      _ = try MCPExecutableSnapshot.makePrivateDirectory(
+        policy: policy,
+        namespaceBasename: namespace
+      )
+    }
+  }
+
+  @Test("A spawned MCP process keeps its slot lease if the gateway exits")
+  func spawnedProcessInheritsSlotLease() throws {
+    let policy = try MCPExecutableSnapshotPolicy(
+      maximumRetainedSlots: 1,
+      maximumEntriesPerSlot: 8,
+      maximumPathMetadataBytesPerSlot: 4_096,
+      maximumCopiedBytesPerSlot: 1 * 1_024 * 1_024
+    )
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+    let fixtureDirectory = URL(
+      fileURLWithPath: "/private/tmp/hex-mcp-lease-fixture.\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+    try FileManager.default.createDirectory(
+      at: fixtureDirectory,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let executableURL = fixtureDirectory.appendingPathComponent("server")
+    try compileWaitingFixture(at: executableURL)
+    let configuration = try MCPServerConfiguration(
+      serverID: "lease-fixture",
+      executableURL: executableURL,
+      arguments: [],
+      workingDirectory: fixtureDirectory,
+      environment: ["PATH": "/usr/bin:/bin"],
+      executableSnapshotPolicy: policy
+    )
+    var spawned: MCPSpawnedProcess? = try MCPStdioProcessSpawner.spawn(
+      configuration,
+      executableSnapshotNamespaceBasename: namespace
+    )
+    let processID = try #require(spawned?.processID)
+    let inputDescriptor = try #require(spawned?.inputDescriptor)
+    let outputDescriptor = try #require(spawned?.outputDescriptor)
+    let errorDescriptor = try #require(spawned?.errorDescriptor)
+    let snapshotExecutablePath = try #require(spawned?.executableSnapshot?.executablePath)
+    var processIsRunning = true
+    defer {
+      Darwin.close(inputDescriptor)
+      Darwin.close(outputDescriptor)
+      Darwin.close(errorDescriptor)
+      if processIsRunning {
+        MCPStdioProcessSpawner.terminateImmediately(processID)
+      }
+    }
+
+    spawned = nil
+    var liveSnapshotStatus = stat()
+    #expect(lstat(snapshotExecutablePath, &liveSnapshotStatus) == 0)
+    #expect(liveSnapshotStatus.st_size > 0)
+    #expect(liveSnapshotStatus.st_mode & 0o111 != 0)
+
+    let expectedUsage = MCPExecutableSnapshotNamespaceUsage(
+      namespacePath: namespaceURL.path,
+      retainedSlotCount: 1,
+      policy: policy
+    )
+    do {
+      let unexpected = try MCPExecutableSnapshot.makePrivateDirectory(
+        policy: policy,
+        namespaceBasename: namespace
+      )
+      close(unexpected)
+      Issue.record("The live child process did not retain the slot lease")
+    } catch {
+      #expect(error as? MCPExecutableSnapshotAdmissionError == .namespaceExhausted(expectedUsage))
+    }
+
+    MCPStdioProcessSpawner.terminateImmediately(processID)
+    processIsRunning = false
+    var retiredSnapshotStatus = stat()
+    #expect(lstat(snapshotExecutablePath, &retiredSnapshotStatus) == 0)
+    #expect(retiredSnapshotStatus.st_size > 0)
+    let reclaimed = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    close(reclaimed)
+  }
+
+  @Test("A released slot lease rejects an empty pathname replacement")
+  func releasedSlotLeaseRejectsPathReplacement() throws {
+    let policy = try makePolicy(maximumRetainedSlots: 1)
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    let slotURL = namespaceURL.appendingPathComponent("slot-0000", isDirectory: true)
+    let movedSlotURL = namespaceURL.appendingPathComponent(
+      "moved-owned-slot",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+
+    let retired = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    close(retired)
+    #expect(Darwin.rename(slotURL.path, movedSlotURL.path) == 0)
+    #expect(Darwin.mkdir(slotURL.path, 0o700) == 0)
+
+    let expectedUsage = MCPExecutableSnapshotNamespaceUsage(
+      namespacePath: namespaceURL.path,
+      retainedSlotCount: 1,
+      policy: policy
+    )
+    #expect(
+      throws: MCPExecutableSnapshotAdmissionError.namespaceExhausted(expectedUsage)
+    ) {
+      _ = try MCPExecutableSnapshot.makePrivateDirectory(
+        policy: policy,
+        namespaceBasename: namespace
+      )
+    }
+
+    var replacementStatus = stat()
+    var movedStatus = stat()
+    #expect(lstat(slotURL.path, &replacementStatus) == 0)
+    #expect(lstat(movedSlotURL.path, &movedStatus) == 0)
+    #expect(replacementStatus.st_ino != movedStatus.st_ino)
+  }
+
+  @Test("Stale reclamation unlinks a symlink without traversing its target")
+  func staleReclamationDoesNotTraverseSymlink() throws {
+    let policy = try makePolicy(maximumRetainedSlots: 1)
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+    let outsideURL = URL(
+      fileURLWithPath: "/private/tmp/hex-mcp-reclaim-target.\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: outsideURL) }
+    try FileManager.default.createDirectory(
+      at: outsideURL,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let sentinelURL = outsideURL.appendingPathComponent("sentinel")
+    try Data("preserve".utf8).write(to: sentinelURL, options: .withoutOverwriting)
+
+    let retired = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    let linkPath = URL(fileURLWithPath: retired.path).appendingPathComponent("escape").path
+    #expect(Darwin.symlink(outsideURL.path, linkPath) == 0)
+    close(retired)
+
+    let reclaimed = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    defer { close(reclaimed) }
+
+    #expect(try Data(contentsOf: sentinelURL) == Data("preserve".utf8))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: reclaimed.path).isEmpty)
+  }
+
+  @Test("Stale reclamation removes nested hardened snapshot entries")
+  func staleReclamationRemovesNestedHardenedEntries() throws {
+    let policy = try makePolicy(maximumRetainedSlots: 1)
+    let namespace = uniqueNamespace()
+    let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: namespaceURL) }
+
+    let retired = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    let nestedURL = URL(fileURLWithPath: retired.path)
+      .appendingPathComponent("Contents", isDirectory: true)
+      .appendingPathComponent("MacOS", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: nestedURL,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let executableURL = nestedURL.appendingPathComponent("server")
+    try Data("retired".utf8).write(to: executableURL, options: .withoutOverwriting)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o000],
+      ofItemAtPath: executableURL.path
+    )
+    close(retired)
+
+    let reclaimed = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
+    )
+    defer { close(reclaimed) }
+
+    #expect(try FileManager.default.contentsOfDirectory(atPath: reclaimed.path).isEmpty)
+  }
+
+  @Test("Repeated EMFILE failures do not permanently consume the fixed slot pool")
+  func repeatedPostMkdirEMFILEFailuresDoNotConsumePool() throws {
     let policy = try makePolicy(maximumRetainedSlots: 3)
     let namespace = uniqueNamespace()
     let namespaceURL = URL(fileURLWithPath: "/private/tmp/\(namespace)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: namespaceURL) }
 
-    for _ in 0..<policy.maximumRetainedSlots {
+    for _ in 0..<16 {
       do {
         let directory = try MCPExecutableSnapshot.makePrivateDirectory(
           policy: policy,
@@ -28,25 +353,22 @@ struct MCPExecutableSnapshotAdmissionTests {
         #expect(error as? MCPClientSessionError == .connectionClosed)
       }
     }
+    #expect(openVnodePaths(beneath: namespaceURL.path).isEmpty)
 
     #expect(
       try FileManager.default.contentsOfDirectory(atPath: namespaceURL.path).sorted()
-        == ["slot-0000", "slot-0001", "slot-0002"]
+        == ["slot-0000"]
     )
-    let expectedUsage = MCPExecutableSnapshotNamespaceUsage(
-      namespacePath: namespaceURL.path,
-      retainedSlotCount: 3,
-      policy: policy
+    let recovered = try MCPExecutableSnapshot.makePrivateDirectory(
+      policy: policy,
+      namespaceBasename: namespace
     )
-    #expect(
-      throws: MCPExecutableSnapshotAdmissionError.namespaceExhausted(expectedUsage)
-    ) {
-      _ = try MCPExecutableSnapshot.makePrivateDirectory(
-        policy: policy,
-        namespaceBasename: namespace,
-        openClaimedSlot: Self.failWithTooManyOpenFiles
-      )
+    defer {
+      Darwin.close(recovered.descriptor)
+      Darwin.close(recovered.parentDescriptor)
+      Darwin.close(recovered.namespaceParentDescriptor)
     }
+    #expect(recovered.basename == "slot-0000")
   }
 
   @Test("A failed slot open never deletes an unrelated pathname replacement")
@@ -318,6 +640,64 @@ struct MCPExecutableSnapshotAdmissionTests {
   ) -> Int32 {
     errno = EMFILE
     return -1
+  }
+
+  private func compileWaitingFixture(at executableURL: URL) throws {
+    let sourceURL = executableURL.appendingPathExtension("c")
+    try Data(
+      "#include <unistd.h>\nint main(void) { for (;;) pause(); }\n".utf8
+    ).write(to: sourceURL, options: .withoutOverwriting)
+    let process = Process()
+    let errors = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    process.arguments = ["--sdk", "macosx", "clang", sourceURL.path, "-o", executableURL.path]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = errors
+    try process.run()
+    process.waitUntilExit()
+    let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+    let errorText = String(decoding: errorData.prefix(4_096), as: UTF8.self)
+    try #require(
+      process.terminationReason == .exit && process.terminationStatus == 0,
+      "Fixture compiler failed: \(errorText)"
+    )
+  }
+
+  private func close(_ directory: MCPExecutableSnapshot.PrivateDirectory) {
+    Darwin.close(directory.descriptor)
+    Darwin.close(directory.parentDescriptor)
+    Darwin.close(directory.namespaceParentDescriptor)
+  }
+
+  private func openVnodePaths(beneath rootPath: String) -> [String] {
+    let childPathPrefix = rootPath + "/"
+    let infoByteCount = Int32(MemoryLayout<vnode_fdinfowithpath>.size)
+    var matches: [String] = []
+
+    for descriptor in 0..<getdtablesize() {
+      var info = vnode_fdinfowithpath()
+      guard
+        proc_pidfdinfo(
+          getpid(),
+          descriptor,
+          PROC_PIDFDVNODEPATHINFO,
+          &info,
+          infoByteCount
+        ) == infoByteCount
+      else {
+        continue
+      }
+      let path = withUnsafePointer(to: &info.pvip.vip_path) { pointer in
+        pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) {
+          String(cString: $0)
+        }
+      }
+      if path == rootPath || path.hasPrefix(childPathPrefix) {
+        matches.append(path)
+      }
+    }
+
+    return matches
   }
 
   private func makePolicy(maximumRetainedSlots: Int) throws -> MCPExecutableSnapshotPolicy {

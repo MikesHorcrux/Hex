@@ -3,40 +3,71 @@ import UniformTypeIdentifiers
 
 struct HexMLXBackendSettingsView: View {
   @Bindable var model: HexInferenceBackendSettingsModel
+  let showsAdvancedConfiguration: Bool
   @State private var isSelectingDirectory = false
 
   var body: some View {
     Section {
-      TextField("Model identifier", text: $model.mlxModelID)
-        .accessibilityIdentifier("inferenceMLXModelField")
-
-      TextField("Display name", text: $model.mlxDisplayName)
-        .accessibilityIdentifier("inferenceMLXDisplayNameField")
-
-      HStack(alignment: .firstTextBaseline, spacing: 10) {
-        Text(model.mlxDirectoryDisplayName)
-          .lineLimit(2)
-          .truncationMode(.middle)
-          .foregroundStyle(model.mlxDirectory == nil ? .secondary : .primary)
-        Spacer(minLength: 10)
-        Button("Choose Folder") {
-          isSelectingDirectory = true
+      if model.isInstallingLocalModel {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            Text("Downloading your private model…")
+            Spacer()
+            Text(downloadPercentage)
+              .monospacedDigit()
+              .foregroundStyle(.secondary)
+          }
+          ProgressView(value: model.localModelDownloadProgress ?? 0)
+            .tint(HexBrandPalette.coral)
+          Button("Cancel Download", action: model.cancelSave)
         }
+      } else if model.mlxDirectory != nil {
+        Label("Local model folder selected", systemImage: "folder.fill")
+          .foregroundStyle(HexBrandPalette.successInk)
+      } else {
+        Label("Private after setup", systemImage: "lock.macwindow")
+        Text("Hex will download a compatible model when you save and keep its work on this Mac.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
-      .accessibilityElement(children: .contain)
 
-      TextField("Context window (optional)", text: $model.mlxContextWindow)
-      TextField("Maximum output tokens", text: $model.mlxMaximumOutputTokens)
-        .accessibilityIdentifier("inferenceMLXOutputTokensField")
+      if showsAdvancedConfiguration {
+        DisclosureGroup("Advanced") {
+          TextField("Model identifier", text: $model.mlxModelID)
+            .accessibilityIdentifier("inferenceMLXModelField")
 
-      Toggle("Enable tool calling", isOn: $model.mlxSupportsToolCalling)
-      Toggle("Enable parallel tool calling", isOn: $model.mlxSupportsParallelToolCalling)
-        .disabled(!model.mlxSupportsToolCalling)
+          TextField("Display name", text: $model.mlxDisplayName)
+            .accessibilityIdentifier("inferenceMLXDisplayNameField")
+
+          HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(model.mlxDirectoryDisplayName)
+              .lineLimit(2)
+              .truncationMode(.middle)
+              .foregroundStyle(model.mlxDirectory == nil ? .secondary : .primary)
+            Spacer(minLength: 10)
+            Button("Use Existing Model") {
+              isSelectingDirectory = true
+            }
+          }
+          .accessibilityElement(children: .contain)
+
+          TextField("Context limit (optional)", text: $model.mlxContextWindow)
+          TextField("Maximum answer length", text: $model.mlxMaximumOutputTokens)
+            .accessibilityIdentifier("inferenceMLXOutputTokensField")
+
+          Toggle("Allow tool use", isOn: $model.mlxSupportsToolCalling)
+          Toggle("Allow parallel tool use", isOn: $model.mlxSupportsParallelToolCalling)
+            .disabled(!model.mlxSupportsToolCalling)
+        }
+        .disabled(model.isSaving || model.isLoading)
+      }
     } header: {
-      Text("Local MLX model")
+      Text("On this Mac")
     } footer: {
       Text(
-        "Choose an existing local model directory. Hex validates it on save and never downloads model files."
+        model.mlxDirectory == nil
+          ? "The first setup can take a while and needs several gigabytes of free space."
+          : "Model processing stays on this Mac."
       )
     }
     .fileImporter(
@@ -53,5 +84,9 @@ struct HexMLXBackendSettingsView: View {
         model.errorMessageForFileSelectionFailure()
       }
     }
+  }
+
+  private var downloadPercentage: String {
+    (model.localModelDownloadProgress ?? 0).formatted(.percent.precision(.fractionLength(0)))
   }
 }

@@ -14,6 +14,8 @@ struct HexGatewayHeartbeatRunnerTests {
     let workspaceRoot = URL(fileURLWithPath: "/tmp/hex-heartbeat-workspace")
     let runner = try HexGatewayHeartbeatRunner(
       client: client,
+      authorizationPolicy: HexHeartbeatAuthorizationPolicy(
+        interactivePrompter: HexGatewayAuthorizationBroker()),
       modelID: ModelID(rawValue: "test-model"),
       workspaceRoot: workspaceRoot,
       configuration: Self.runnerConfiguration()
@@ -37,13 +39,17 @@ struct HexGatewayHeartbeatRunnerTests {
     )
   }
 
-  @Test
-  func busyAdmissionReturnsRetryableFailureWithoutOpeningAnEventStream() async throws {
-    let transport = ScriptedTransport(mode: .busy)
+  @Test(arguments: [false, true])
+  func busyAdmissionReturnsRetryableFailureWithoutOpeningAnEventStream(maintenance: Bool)
+    async throws
+  {
+    let transport = ScriptedTransport(mode: maintenance ? .maintenance : .busy)
     let client = HexGatewayClient(transport: transport)
     _ = try await client.connect()
     let runner = try HexGatewayHeartbeatRunner(
       client: client,
+      authorizationPolicy: HexHeartbeatAuthorizationPolicy(
+        interactivePrompter: HexGatewayAuthorizationBroker()),
       modelID: ModelID(rawValue: "test-model"),
       workspaceRoot: URL(fileURLWithPath: "/tmp/hex-heartbeat-workspace"),
       configuration: Self.runnerConfiguration()
@@ -62,12 +68,14 @@ struct HexGatewayHeartbeatRunnerTests {
   }
 
   @Test
-  func authorizationRequestCancelsRunAndReturnsExplicitFailure() async throws {
+  func authorizationAuditDoesNotCancelOrMisclassifyTheActualTerminalOutcome() async throws {
     let transport = ScriptedTransport(mode: .authorization)
     let client = HexGatewayClient(transport: transport)
     _ = try await client.connect()
     let runner = try HexGatewayHeartbeatRunner(
       client: client,
+      authorizationPolicy: HexHeartbeatAuthorizationPolicy(
+        interactivePrompter: HexGatewayAuthorizationBroker()),
       modelID: ModelID(rawValue: "test-model"),
       workspaceRoot: URL(fileURLWithPath: "/tmp/hex-heartbeat-workspace"),
       configuration: Self.runnerConfiguration()
@@ -76,12 +84,12 @@ struct HexGatewayHeartbeatRunnerTests {
     let result = try await runner.run(Self.executionRequest())
 
     guard case .failed(let failure) = result else {
-      Issue.record("Expected an explicit authorization failure.")
+      Issue.record("Expected the actual cancelled outcome, not an inferred approval requirement.")
       return
     }
-    #expect(failure.code == .authorizationRequired)
-    #expect(!failure.retryable)
-    #expect(await transport.cancelRequestCount() == 1)
+    #expect(failure.code == .cancelled)
+    #expect(failure.retryable)
+    #expect(await transport.cancelRequestCount() == 0)
 
     let startedRequest = await transport.startedRequest()
     let runID = try #require(startedRequest?.runID)
@@ -103,6 +111,8 @@ struct HexGatewayHeartbeatRunnerTests {
     do {
       _ = try HexGatewayHeartbeatRunner(
         client: client,
+        authorizationPolicy: HexHeartbeatAuthorizationPolicy(
+          interactivePrompter: HexGatewayAuthorizationBroker()),
         modelID: ModelID(rawValue: "test-model"),
         workspaceRoot: URL(fileURLWithPath: "/tmp/hex-heartbeat-workspace"),
         configuration: invalidConfiguration
@@ -140,7 +150,7 @@ struct HexGatewayHeartbeatRunnerTests {
       lease: HexHeartbeatLease(
         occurrence: occurrence,
         claimedAt: dueAt,
-        expiresAt: dueAt.addingTimeInterval(10)
+        expiresAt: dueAt.addingTimeInterval(10), runID: AgentRunID()
       )
     )
   }
@@ -149,6 +159,7 @@ struct HexGatewayHeartbeatRunnerTests {
     enum Mode: Sendable {
       case success
       case busy
+      case maintenance
       case authorization
     }
 
@@ -185,6 +196,9 @@ struct HexGatewayHeartbeatRunnerTests {
       try requireConnection(lease: lease)
       started = request
       switch mode {
+      case .maintenance:
+        throw GatewayFailure(
+          code: .toolMaintenanceInProgress, message: "Tool check in progress.", isRetryable: true)
       case .busy:
         return GatewayStartRunResponse(
           runID: request.runID,
@@ -295,7 +309,7 @@ struct HexGatewayHeartbeatRunnerTests {
           ),
           .runCancelled,
         ]
-      case .busy:
+      case .busy, .maintenance:
         eventList = []
       }
       return eventList.enumerated().map { offset, event in

@@ -3,12 +3,15 @@
 public struct InferenceOptions: Codable, Equatable, Sendable {
   public let maxOutputTokens: Int?
   public let temperature: Double?
+  public let reasoningEffort: InferenceReasoningEffort?
 
   public init(
     maxOutputTokens: Int? = nil,
-    temperature: Double? = nil
+    temperature: Double? = nil,
+    reasoningEffort: InferenceReasoningEffort? = nil
   ) {
     self.maxOutputTokens = maxOutputTokens
     self.temperature = temperature
+    self.reasoningEffort = reasoningEffort
   }
 }

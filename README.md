@@ -6,10 +6,19 @@
 
 One personal agent. Your whole Mac.
 
+## Documentation
+
+Start with the [Hex handbook](docs/README.md): [getting started](docs/start.md),
+[architecture](docs/architecture/overview.md), [permissions](docs/concepts/permissions.md),
+[troubleshooting](docs/help/troubleshooting.md), and the
+[complete Swift source index](docs/reference/modules/README.md).
+See [current gaps and replacement readiness](docs/status.md) before treating Hex as a daily driver.
+
 Hex is a local-first macOS agent in active development. `Hex.app` is the user-facing control
 surface for a separate headless `HexGateway` resident helper. The integrated developer build can
 run bounded coding, process, web, native Mac, and MCP capabilities against an explicitly selected
-workspace. Every capability is permissioned; Hex is not a general autonomous Mac controller.
+workspace. Every capability is permissioned. Full personal Mac control is the product direction,
+not a claim that the current alpha has qualified every workflow.
 
 ## Build and run
 
@@ -31,21 +40,22 @@ user previously registered.
 
 ## Local resident quick start
 
-Settings contains **Resident**, **Inference**, **Heartbeats**, and **Personality** tabs. **Agent
-Tools** is a section inside Resident.
+Settings uses a sidebar: **General**, **AI model**, **Workspace**, **Tools**, **Mac access**,
+**Personality & memory**, and **Automations**. See the [interface guide](docs/guides/interface.md).
 
-1. Open **Inference** and select **OpenAI** or **Local MLX**. For OpenAI, choose either **ChatGPT /
+1. Open **AI model** and select **OpenAI** or **Local MLX**. For OpenAI, choose either **ChatGPT /
    Codex subscription** and complete sign-in, or **OpenAI API key** and enter a Platform key. Set
    the model identifier and choose **Save**. Non-secret settings and credentials are stored
    separately.
-2. Open **Resident**, enter a non-empty model identifier (keep it aligned with Inference), choose
+2. Open **Workspace**, enter a non-empty model identifier (keep it aligned with AI model settings), choose
    the workspace folder Hex may operate in, and save.
-3. In Resident → **Agent Tools**, enable Playwright, Peekaboo, or Xcode when their integrations are
-   installed and available. Add any extra MCP server under **Additional MCP Servers**, using HTTPS
-   or a literal loopback HTTP endpoint, then save again.
-4. In **Personality**, explicitly save a profile and manage personal memories if you want resident
-   runs to use them. In **Heartbeats**, add schedules for resident check-ins.
-5. Open Hex, connect to the gateway, and send a prompt. Tool requests pause for your approval.
+3. In **Tools**, enable the browser, screen, or Xcode capabilities you need.
+   Managed capability setup can install missing components. Add extra MCP servers under
+   **Additional MCP Servers**, using a supported HTTPS or loopback HTTP endpoint, then save again.
+4. In **Personality & memory**, explicitly save a profile and manage personal memories if you want resident
+   runs to use them. In **Automations**, add schedules for resident check-ins.
+5. Open Hex, connect to the gateway, and send a prompt. Tool approval follows your selected policy;
+   macOS privacy controls remain independent.
 6. After the readiness checks pass, use the menu-bar control to **Enable start at login**. If macOS
    asks for approval, use **Open Login Items Settings**.
 
@@ -60,8 +70,9 @@ Hex exposes two inference backends while retaining the same Hex-owned agent runt
   usage-based billing. Hex never launches or nests the Codex agent runtime in either mode.
 - **Local MLX** settings, the concrete provider builder, the package dependency, and resident
   `HexGateway` injection are complete in the integrated build, including an existing model
-  directory, context/output limits, and tool-calling flags. Selecting MLX requires the user to
-  supply an existing compatible local model; Hex does not download model files.
+  directory, context/output limits, and tool-calling flags. The app includes a local model
+  installation flow. A compatible downloaded or existing model still needs loading and live
+  generation verification; configuration alone does not prove it works.
 
 The direct ChatGPT subscription transport is a compatibility path modeled on Goose and Hermes. Its
 backend is not a published third-party OpenAI API and can change independently; API-key mode is the
@@ -78,9 +89,9 @@ exit is not restarted.
 
 The normal resident data directory is `~/Library/Application Support/Hex`:
 
-- `conversations.json` stores up to 64 local conversations, including the visible user, Hex, tool,
-  and run-event transcript items. A later run sends only bounded recent user/assistant context (up
-  to 24 messages and 24 KiB); tool and event rows remain display history, not model instructions.
+- `conversations.json` stores up to 64 local conversations, including visible transcript and native
+  history/recovery information. The old 24-message/24-KiB display-derived input slice is retired;
+  see [context and compaction](docs/concepts/context-and-memory.md) for the current bounded lifecycle.
 - `agent-events.sqlite` is the durable gateway event journal used for run lifecycle and recovery.
 - `personality-profile.json` and `personal-memory.json` hold explicit user-managed context. The
   resident gateway loads the selected profile scope into a quoted, bounded context that cannot
@@ -90,9 +101,9 @@ Personal memory is never silently extracted from conversations. The resident exp
 scope-bound tools: `personal_memory_list`, `personal_memory_search`, `personal_memory_upsert`, and
 `personal_memory_delete`. Reads, updates, and deletion still go through Hex authorization; writes
 require an explicit user-approved source. The Personality tab provides the matching add, edit, and
-delete controls.
+delete controls (under Personality & memory).
 
-Heartbeats are durable schedules owned by the resident gateway. The Heartbeats tab can add, pause,
+Heartbeats are durable schedules owned by the resident gateway. Automations settings can add, pause,
 resume, and remove schedules. The menu bar can pause or resume all scheduled heartbeats; pausing
 does not cancel an interactive run already in progress.
 
@@ -109,8 +120,8 @@ The built-in resident tool graph includes:
 - Native Mac tools: list running applications, activate an exact bundle identifier, and read or
   act on a bounded semantic Accessibility tree.
 - MCP adapters: Xcode's local `mcpbridge`, managed Playwright and Peekaboo, and additional
-  Streamable HTTP servers. MCP discovery starts lazily at an agent-run boundary, and a disconnected
-  server is retried on the next run without removing Hex's native tools.
+  Streamable HTTP servers. Discovery starts lazily at an agent-run boundary; connection health,
+  cooldown/retry and targeted reconnect are described in the [MCP guide](docs/guides/mcp.md).
 
 Playwright and Peekaboo are replaceable MCP adapters, not separate agent runtimes. The managed layout
 is `~/Library/Application Support/Hex/Tools` and currently pins Node `24.20.0`, `@playwright/mcp`
@@ -124,20 +135,22 @@ transactionally. Runtime and SDK names stay out of the normal capability UI.
 
 ## Permissions and security boundaries
 
-Hex's authorization center pauses the runtime until the operator allows a specific request once,
-for the session, or denies it. MCP servers do not grant themselves authority, and all native and
-MCP calls are journaled and bounded.
+Hex's authorization center supports Ask for approval, Approve for me (a deterministic low-risk
+allowlist), and Full access. Requests requiring approval can be allowed once, for the session, or
+denied. MCP servers do not grant themselves authority; native and MCP calls remain validated,
+journaled and bounded. See [permissions](docs/concepts/permissions.md).
 
 - Resident runs receive the workspace selected in Resident settings; a client cannot replace it.
   Workspace paths reject traversal and symbolic/hard links. Process execution uses an exact argv,
   an allowlisted host environment, process-group cleanup, identity checks, output limits, and time
-  limits.
+  limits. Process execution is a full-host capability after Hex authorization and is not contained
+  by the selected workspace; automatic approval gives it the access of the current macOS account.
 - Web tools reject local/private, credential-bearing, and unsafe custom-port URLs. Cookies are
   disabled; redirects are returned for a separately authorized call. HTTP MCP accepts HTTPS or
   literal loopback HTTP only, rejects URL credentials/queries and redirects, and keeps authentication
   headers process-only rather than in resident settings.
-- Accessibility and native Mac actions require the corresponding macOS permission and an approval
-  in Hex. Screen Recording and Accessibility are TCC permissions controlled by macOS; enabling
+- Accessibility and native Mac actions require the corresponding macOS permission and authorization
+  under Hex's selected policy. Screen Recording and Accessibility are TCC permissions controlled by macOS; enabling
   Peekaboo never grants them automatically. Secure text fields are not writable through the native
   Accessibility tool, and Hex does not claim full desktop control.
 - The OpenAI API key and ChatGPT OAuth bundle are separate data-protection Keychain items under the

@@ -36,6 +36,13 @@ struct AgentEventCodecTests {
     let events: [AgentEvent] = [
       .runStarted,
       .messageAppended(Message(role: .assistant, content: [.text("hello")])),
+      .contextCompactionStarted,
+      .contextCompacted(
+        try AgentContextCompaction(
+          ownerRunID: runID, sourceMessageIDs: [MessageID()],
+          summaryText: "Earlier conversation.", providerID: inferenceRequest.providerID,
+          modelID: inferenceRequest.modelID,
+          estimatedTokensBefore: 100, estimatedTokensAfter: 20)),
       .inferenceRequested(inferenceRequest),
       .inferenceEvent(.started(providerResponseID: "response")),
       .authorizationRequested(authorizationRequest),

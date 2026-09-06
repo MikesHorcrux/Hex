@@ -56,6 +56,8 @@ final class HexAccessibilityPermissionModel {
     switch failure.code {
     case .notConnected, .transportUnavailable, .disconnected:
       return .gatewayUnavailable
+    case .incompatibleProtocolVersion:
+      return .gatewayNeedsRestart
     default:
       return .failed(failure.message)
     }

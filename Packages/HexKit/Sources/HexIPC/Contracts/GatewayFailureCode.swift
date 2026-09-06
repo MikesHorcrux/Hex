@@ -4,10 +4,13 @@ public enum GatewayFailureCode: String, Codable, Equatable, Sendable {
   case notConnected
   case staleSession
   case capacityExceeded
+  case toolMaintenanceInProgress
   case conflictingRunRequest
   case runNotFound
   case staleRunInvocation
   case replayUnavailable
+  case recoveryUnavailable
+  case artifactUnavailable
   case invalidCursor
   case invalidEventSequence
   case wrongRun

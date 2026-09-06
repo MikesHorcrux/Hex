@@ -551,6 +551,7 @@ struct ProcessRunToolTests {
     #expect(invalid.status == .failure)
     #expect(invalid.output == .object(["error": .string("invalid_arguments")]))
     #expect(failed.status == .failure)
+    #expect(!failed.requiresUserAttention)
     guard case .object(let failureOutput) = failed.output else {
       Issue.record("Expected a structured process failure.")
       return
@@ -601,6 +602,7 @@ struct ProcessRunToolTests {
       return
     }
     #expect(output["termination"] == .string("output_limit_exceeded"))
+    #expect(result.requiresUserAttention)
     #expect(output["output"] == .string("1234"))
     #expect(output["output_bytes"] == .integer(4))
   }

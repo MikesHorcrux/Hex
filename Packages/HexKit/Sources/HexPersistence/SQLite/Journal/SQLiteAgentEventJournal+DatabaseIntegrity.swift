@@ -6,23 +6,7 @@ extension SQLiteAgentEventJournal {
     if checksCancellation {
       try Task.checkCancellation()
     }
-    let pageSize = try connection.scalarInt64("PRAGMA page_size")
-    let pageCount = try connection.scalarInt64("PRAGMA page_count")
-    guard pageSize > 0, pageCount >= 0 else {
-      throw SQLiteAgentEventJournalError.corruptSchema(
-        "SQLite reported an invalid physical page size or page count."
-      )
-    }
-    let (databaseBytes, overflowed) = pageSize.multipliedReportingOverflow(by: pageCount)
-    guard
-      !overflowed,
-      databaseBytes <= Int64(configuration.maximumDatabaseBytes)
-    else {
-      throw SQLiteAgentEventJournalError.databaseSizeLimitExceeded(
-        actual: overflowed ? Int.max : Int(databaseBytes),
-        maximum: configuration.maximumDatabaseBytes
-      )
-    }
+    try validatePhysicalDatabaseSize(connection: connection)
 
     if checksCancellation {
       try Task.checkCancellation()
@@ -49,6 +33,56 @@ extension SQLiteAgentEventJournal {
     }
     if checksCancellation {
       try Task.checkCancellation()
+    }
+  }
+
+  func validatePhysicalDatabaseSize(
+    connection: SQLiteConnection
+  ) throws {
+    let pageSize = try connection.scalarInt64("PRAGMA page_size")
+    let pageCount = try connection.scalarInt64("PRAGMA page_count")
+    guard pageSize > 0, pageCount >= 0 else {
+      throw SQLiteAgentEventJournalError.corruptSchema(
+        "SQLite reported an invalid physical page size or page count."
+      )
+    }
+    let (databaseBytes, overflowed) = pageSize.multipliedReportingOverflow(by: pageCount)
+    guard
+      !overflowed,
+      databaseBytes <= Int64(configuration.maximumDatabaseBytes)
+    else {
+      throw SQLiteAgentEventJournalError.databaseSizeLimitExceeded(
+        actual: overflowed ? Int.max : Int(databaseBytes),
+        maximum: configuration.maximumDatabaseBytes
+      )
+    }
+  }
+
+  func currentDataVersion(
+    connection: SQLiteConnection
+  ) throws -> Int64 {
+    let version = try connection.scalarInt64("PRAGMA data_version")
+    guard version >= 0 else {
+      throw SQLiteAgentEventJournalError.corruptSchema(
+        "SQLite reported an invalid data version."
+      )
+    }
+    return version
+  }
+
+  func validateIntegrityDataVersion(
+    connection: SQLiteConnection
+  ) throws {
+    guard let integrityDataVersion else {
+      throw SQLiteAgentEventJournalError.closed
+    }
+    guard try currentDataVersion(connection: connection) == integrityDataVersion else {
+      // An unexpected writer invalidates the cached baseline. Diagnose its data once so
+      // callers retain the precise corruption error, but never adopt that writer's state.
+      try validateWholeJournalIntegrity(connection: connection)
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "The journal changed through another SQLite connection while it was open."
+      )
     }
   }
 }

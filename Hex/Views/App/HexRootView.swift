@@ -1,3 +1,4 @@
+import HexCore
 import Observation
 import SwiftUI
 
@@ -35,35 +36,41 @@ struct HexRootView: View {
       guard !hasBootstrapped else { return }
       hasBootstrapped = true
       await residentSetup.load()
+      workspace.defaultAuthorizationMode = residentSetup.savedAuthorizationMode ?? .askEveryTime
       await inference.load()
-      workspace.modelID = residentSetup.modelID
+      workspace.modelID = inference.savedModelID ?? residentSetup.modelID
       guard suppressOnboarding || hasCompletedOnboarding else { return }
       await connectIfNeeded()
     }
     .onChange(of: hasCompletedOnboarding) { _, isComplete in
       guard isComplete else { return }
-      workspace.modelID = residentSetup.modelID
+      workspace.modelID = inference.savedModelID ?? residentSetup.modelID
       Task {
         await connectIfNeeded()
       }
     }
     .onChange(of: residentSetup.saveGeneration) { _, _ in
-      workspace.modelID = residentSetup.modelID
+      workspace.modelID = inference.savedModelID ?? residentSetup.modelID
       guard !suppressAutomaticConnection else { return }
       Task {
         await startAtLogin.refresh()
       }
     }
+    .onChange(of: residentSetup.savedAuthorizationMode) { _, mode in
+      workspace.defaultAuthorizationMode = mode ?? .askEveryTime
+    }
     .onChange(of: inference.saveGeneration) { _, _ in
-      let modelID = inference.effectiveModelID
-      guard !modelID.isEmpty else { return }
+      guard let modelID = inference.savedModelID, !modelID.isEmpty else { return }
       residentSetup.modelID = modelID
       workspace.modelID = modelID
+      workspace.discoveredModels = []
+      guard !suppressAutomaticConnection else { return }
+      Task { await workspace.refreshAvailableModels() }
     }
   }
 
   private func connectIfNeeded() async {
     guard !suppressAutomaticConnection else { return }
-    await workspace.connect()
+    await workspace.connectAutomatically()
   }
 }

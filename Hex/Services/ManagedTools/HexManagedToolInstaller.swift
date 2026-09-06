@@ -8,11 +8,11 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
   private static let peekabooArchiveSHA256 =
     "80b1983a9a2468e715e176167b75aabb4f43feb4882d667ffccc9373d706602e"
   private static let maximumDownloadBytes: Int64 = 500 * 1_024 * 1_024
-  private static let maximumCommandOutputBytes = 1 * 1_024 * 1_024
 
   private let layout: MCPManagedToolLayout
   private let session: URLSession
   private let fileManager: FileManager
+  private let processRunner = HexManagedToolProcessRunner()
 
   init(layout: MCPManagedToolLayout) {
     self.layout = layout
@@ -37,32 +37,6 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     try layout.validate(tool)
   }
 
-  func screenControlPermissionStatus() async throws -> Bool {
-    try layout.validate(.peekaboo)
-    let result = try run(
-      executableURL: layout.peekabooExecutableURL,
-      arguments: ["permissions", "status", "--json", "--no-remote"]
-    )
-    guard result.status == 0 else {
-      throw HexManagedToolInstallerError.commandFailed
-    }
-    return try parseScreenControlPermissions(from: result.standardOutput)
-  }
-
-  func requestScreenControlPermission() async throws -> Bool {
-    try await install(.peekaboo)
-    for permission in ["accessibility", "screen-recording"] {
-      let result = try run(
-        executableURL: layout.peekabooExecutableURL,
-        arguments: ["permissions", "request", permission, "--no-remote"]
-      )
-      guard result.status == 0 else {
-        throw HexManagedToolInstallerError.commandFailed
-      }
-    }
-    return try await screenControlPermissionStatus()
-  }
-
   private func installBrowserControl() async throws {
     try await installNodeIfNeeded()
     let parentURL = layout.playwrightInstallationURL.deletingLastPathComponent()
@@ -84,7 +58,7 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
       .deletingLastPathComponent()
     let npmCLI = nodeRoot.appendingPathComponent("lib/node_modules/npm/bin/npm-cli.js")
     let environment = privateNodeEnvironment(stagingURL: stagingURL, nodeRoot: nodeRoot)
-    let installResult = try run(
+    let installResult = try await run(
       executableURL: layout.nodeExecutableURL,
       arguments: [npmCLI.path, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
       environment: environment,
@@ -97,7 +71,7 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     let playwrightCLI = stagingURL.appendingPathComponent(
       "node_modules/playwright-core/cli.js"
     )
-    let browserResult = try run(
+    let browserResult = try await run(
       executableURL: layout.nodeExecutableURL,
       arguments: [playwrightCLI.path, "install", "chromium"],
       environment: environment,
@@ -133,8 +107,8 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     defer { try? fileManager.removeItem(at: temporaryRoot) }
     let archiveURL = temporaryRoot.appendingPathComponent(archiveName)
     try await download(downloadURL, to: archiveURL, expectedSHA256: Self.nodeArchiveSHA256)
-    try validateArchive(archiveURL)
-    try extractArchive(archiveURL, to: temporaryRoot)
+    try await validateArchive(archiveURL)
+    try await extractArchive(archiveURL, to: temporaryRoot)
     let extractedURL = temporaryRoot.appendingPathComponent(
       "node-v\(MCPManagedToolLayout.nodeVersion)-darwin-arm64",
       isDirectory: true
@@ -170,8 +144,8 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     }
     try await download(downloadURL, to: archiveURL, expectedSHA256: Self.peekabooArchiveSHA256)
     try createPrivateDirectory(temporaryRoot)
-    try validateArchive(archiveURL)
-    try extractArchive(archiveURL, to: temporaryRoot)
+    try await validateArchive(archiveURL)
+    try await extractArchive(archiveURL, to: temporaryRoot)
     let extractedURL = temporaryRoot.appendingPathComponent(
       "peekaboo-macos-universal",
       isDirectory: true
@@ -221,8 +195,8 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     try fileManager.moveItem(at: temporaryURL, to: destinationURL)
   }
 
-  private func validateArchive(_ archiveURL: URL) throws {
-    let result = try run(
+  private func validateArchive(_ archiveURL: URL) async throws {
+    let result = try await run(
       executableURL: URL(fileURLWithPath: "/usr/bin/tar"), arguments: ["-tzf", archiveURL.path])
     guard result.status == 0, let listing = String(data: result.standardOutput, encoding: .utf8)
     else {
@@ -239,8 +213,8 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     }
   }
 
-  private func extractArchive(_ archiveURL: URL, to directoryURL: URL) throws {
-    let result = try run(
+  private func extractArchive(_ archiveURL: URL, to directoryURL: URL) async throws {
+    let result = try await run(
       executableURL: URL(fileURLWithPath: "/usr/bin/tar"),
       arguments: ["-xzf", archiveURL.path, "-C", directoryURL.path]
     )
@@ -301,81 +275,13 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     arguments: [String],
     environment: [String: String] = [:],
     currentDirectoryURL: URL? = nil
-  ) throws -> HexManagedToolProcessResult {
-    let process = Process()
-    let identifier = UUID().uuidString
-    let outputURL = fileManager.temporaryDirectory.appendingPathComponent(
-      "HexCommand-\(identifier).stdout"
+  ) async throws -> HexManagedToolProcessResult {
+    try await processRunner.run(
+      executableURL: executableURL,
+      arguments: arguments,
+      environment: environment,
+      currentDirectoryURL: currentDirectoryURL
     )
-    let errorURL = fileManager.temporaryDirectory.appendingPathComponent(
-      "HexCommand-\(identifier).stderr"
-    )
-    guard
-      fileManager.createFile(
-        atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600]),
-      fileManager.createFile(
-        atPath: errorURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
-    else {
-      throw HexManagedToolInstallerError.commandFailed
-    }
-    defer {
-      try? fileManager.removeItem(at: outputURL)
-      try? fileManager.removeItem(at: errorURL)
-    }
-    let outputHandle = try FileHandle(forWritingTo: outputURL)
-    let errorHandle = try FileHandle(forWritingTo: errorURL)
-    defer {
-      try? outputHandle.close()
-      try? errorHandle.close()
-    }
-    process.executableURL = executableURL
-    process.arguments = arguments
-    process.environment = environment
-    process.currentDirectoryURL = currentDirectoryURL
-    process.standardOutput = outputHandle
-    process.standardError = errorHandle
-    try process.run()
-    process.waitUntilExit()
-    try outputHandle.close()
-    try errorHandle.close()
-    let output = try readBoundedData(from: outputURL)
-    let error = try readBoundedData(from: errorURL)
-    return HexManagedToolProcessResult(
-      status: process.terminationStatus,
-      standardOutput: output,
-      standardError: error
-    )
-  }
-
-  private func readBoundedData(from url: URL) throws -> Data {
-    let handle = try FileHandle(forReadingFrom: url)
-    defer { try? handle.close() }
-    guard
-      let data = try handle.read(upToCount: Self.maximumCommandOutputBytes + 1),
-      data.count <= Self.maximumCommandOutputBytes
-    else {
-      throw HexManagedToolInstallerError.commandFailed
-    }
-    return data
-  }
-
-  private func parseScreenControlPermissions(from data: Data) throws -> Bool {
-    guard
-      data.count <= Self.maximumCommandOutputBytes,
-      let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      object["success"] as? Bool == true,
-      let payload = object["data"] as? [String: Any],
-      let permissions = payload["permissions"] as? [[String: Any]]
-    else {
-      throw HexManagedToolInstallerError.commandFailed
-    }
-    let requiredNames = ["Accessibility", "Screen Recording"]
-    return requiredNames.allSatisfy { requiredName in
-      permissions.contains { permission in
-        permission["name"] as? String == requiredName
-          && permission["isGranted"] as? Bool == true
-      }
-    }
   }
 
   private func isSafeExecutable(_ url: URL) -> Bool {

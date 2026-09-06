@@ -8,6 +8,33 @@ import Testing
 @Suite("Live agent client connection reuse")
 struct HexLiveAgentClientTests {
   @Test
+  func toolHealthNeverEstablishesAConnectionImplicitly() async throws {
+    let transport = CountingTransport()
+    let adapter = HexGatewayClientAdapter(
+      client: HexGatewayClient(transport: transport),
+      authorizationTransport: NoopAuthorizationTransport())
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: adapter)
+
+    do {
+      _ = try await client.toolServerHealth()
+      Issue.record("A disconnected health read must fail without connecting.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .notConnected)
+    }
+    do {
+      _ = try await client.refreshToolServer(GatewayToolServerRequest(serverID: "playwright"))
+      Issue.record("A disconnected tool check must fail without connecting.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .notConnected)
+    }
+    #expect(await transport.handshakeCallCount == 0)
+    #expect(await transport.startCallCount == 0)
+  }
+
+  @Test
   func statusThenWorkspaceConnectUsesOneHandshake() async throws {
     let transport = CountingTransport()
     let gatewayClient = HexGatewayClient(transport: transport)
@@ -49,6 +76,132 @@ struct HexLiveAgentClientTests {
     #expect(await transport.handshakeCallCount == 1)
   }
 
+  @Test
+  func screenControlPermissionChecksUseTheResidentTransport() async throws {
+    let transport = CountingTransport()
+    let gatewayClient = HexGatewayClient(transport: transport)
+    let adapter = HexGatewayClientAdapter(
+      client: gatewayClient,
+      authorizationTransport: NoopAuthorizationTransport()
+    )
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: adapter
+    )
+
+    let status = try await client.screenControlPermissionStatus()
+
+    #expect(status.accessibilityGranted)
+    #expect(!status.screenRecordingGranted)
+    #expect(await transport.screenControlStatusCallCount == 1)
+    #expect(await transport.handshakeCallCount == 1)
+  }
+
+  @Test
+  func residentConnectionResetForcesTheNextOperationToHandshakeAgain() async throws {
+    let transport = CountingTransport()
+    let gatewayClient = HexGatewayClient(transport: transport)
+    let adapter = HexGatewayClientAdapter(
+      client: gatewayClient,
+      authorizationTransport: NoopAuthorizationTransport()
+    )
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: adapter
+    )
+
+    #expect(try await client.status() == .idle)
+    await client.resetResidentGatewayConnection()
+    #expect(try await client.status() == .idle)
+
+    #expect(await transport.disconnectCallCount == 1)
+    #expect(await transport.handshakeCallCount == 2)
+  }
+
+  @Test(arguments: [
+    GatewayFailureCode.disconnected, .transportUnavailable, .staleSession,
+    .producerEndedWithoutTerminalEvent,
+  ])
+  func brokenEventStreamInvalidatesTheCachedHandshake(code: GatewayFailureCode) async throws {
+    let transport = CountingTransport(streamFailure: code)
+    let adapter = HexGatewayClientAdapter(
+      client: HexGatewayClient(transport: transport),
+      authorizationTransport: NoopAuthorizationTransport()
+    )
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: adapter
+    )
+    _ = try await client.connect()
+    let stream = try await client.eventRecords(
+      for: AgentRunID(), invocationID: GatewayRunInvocationID(rawValue: UUID()))
+    do {
+      for try await _ in stream {}
+      Issue.record("Expected the event stream to fail.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == code)
+    }
+
+    _ = try await client.connect()
+    #expect(await transport.handshakeCallCount == 2)
+    #expect(await transport.startCallCount == 0)
+  }
+
+  @Test
+  func terminalRunFailureDoesNotForceAnotherHandshake() async throws {
+    let transport = CountingTransport(terminalRunFailure: true)
+    let adapter = HexGatewayClientAdapter(
+      client: HexGatewayClient(transport: transport),
+      authorizationTransport: NoopAuthorizationTransport()
+    )
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: adapter
+    )
+    _ = try await client.connect()
+    let stream = try await client.eventRecords(
+      for: AgentRunID(), invocationID: GatewayRunInvocationID(rawValue: UUID()))
+    var count = 0
+    for try await _ in stream { count += 1 }
+    #expect(count == 1)
+
+    _ = try await client.connect()
+    #expect(await transport.handshakeCallCount == 1)
+  }
+
+  @Test
+  func concurrentStatusAndConnectShareOneRecoveryHandshake() async throws {
+    let transport = CountingTransport(
+      yieldsBeforeHandshakeResponse: true, streamFailure: .disconnected)
+    let adapter = HexGatewayClientAdapter(
+      client: HexGatewayClient(transport: transport),
+      authorizationTransport: NoopAuthorizationTransport()
+    )
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: adapter
+    )
+    _ = try await client.connect()
+    let stream = try await client.eventRecords(
+      for: AgentRunID(), invocationID: GatewayRunInvocationID(rawValue: UUID()))
+    do {
+      for try await _ in stream {}
+      Issue.record("Expected the event stream to fail.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .disconnected)
+    }
+    async let status = client.status()
+    async let connection = client.connect()
+    let (resolvedStatus, _) = try await (status, connection)
+    #expect(resolvedStatus == .idle)
+    #expect(await transport.handshakeCallCount == 2)
+  }
+
   private struct NoopAuthorizationTransport: HexAuthorizationDecisionSubmitting {
     func submit(
       _ request: AuthorizationRequest,
@@ -56,13 +209,26 @@ struct HexLiveAgentClientTests {
     ) async throws {}
   }
 
-  private actor CountingTransport: HexGatewayTransport, HexGatewayResidentControlTransport {
+  private actor CountingTransport: HexGatewayTransport, HexGatewayResidentControlTransport,
+    HexGatewayScreenControlPermissionTransport
+  {
     private(set) var handshakeCallCount = 0
+    private(set) var disconnectCallCount = 0
+    private(set) var screenControlStatusCallCount = 0
+    private(set) var startCallCount = 0
     private var connectedLease: GatewayTransportConnectionLease?
     private let yieldsBeforeHandshakeResponse: Bool
+    private let streamFailure: GatewayFailureCode?
+    private let terminalRunFailure: Bool
 
-    init(yieldsBeforeHandshakeResponse: Bool = false) {
+    init(
+      yieldsBeforeHandshakeResponse: Bool = false,
+      streamFailure: GatewayFailureCode? = nil,
+      terminalRunFailure: Bool = false
+    ) {
       self.yieldsBeforeHandshakeResponse = yieldsBeforeHandshakeResponse
+      self.streamFailure = streamFailure
+      self.terminalRunFailure = terminalRunFailure
     }
 
     func handshake(
@@ -89,6 +255,7 @@ struct HexLiveAgentClientTests {
       lease: GatewayTransportConnectionLease
     ) async throws -> GatewayStartRunResponse {
       try requireConnection(lease)
+      startCallCount += 1
       return GatewayStartRunResponse(
         runID: request.runID,
         disposition: .started(invocationID: GatewayRunInvocationID(rawValue: UUID()))
@@ -113,11 +280,29 @@ struct HexLiveAgentClientTests {
     ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
       try requireConnection(lease)
       return AsyncThrowingStream { continuation in
+        if terminalRunFailure {
+          continuation.yield(
+            GatewayEventEnvelope(
+              invocationID: cursor.invocationID,
+              record: AgentEventRecord(
+                id: AgentEventID(), runID: cursor.runID, sequence: cursor.sequence + 1,
+                timestamp: Date(),
+                event: .runFailed(
+                  AgentFailure(code: .provider, message: "Synthetic failure."))
+              )
+            ))
+        }
+        if let streamFailure, streamFailure != .producerEndedWithoutTerminalEvent {
+          continuation.finish(
+            throwing: GatewayFailure(code: streamFailure, message: "Synthetic stream loss."))
+          return
+        }
         continuation.finish()
       }
     }
 
     func disconnect(lease: GatewayTransportConnectionLease) async {
+      disconnectCallCount += 1
       if connectedLease == lease {
         connectedLease = nil
       }
@@ -142,6 +327,23 @@ struct HexLiveAgentClientTests {
     ) async throws -> GatewayResidentStatus {
       try requireConnection(lease)
       return .idle
+    }
+
+    func screenControlPermissionStatus(
+      lease: GatewayTransportConnectionLease
+    ) async throws -> GatewayScreenControlPermissionStatus {
+      try requireConnection(lease)
+      screenControlStatusCallCount += 1
+      return GatewayScreenControlPermissionStatus(
+        accessibilityGranted: true,
+        screenRecordingGranted: false
+      )
+    }
+
+    func requestScreenControlPermission(
+      lease: GatewayTransportConnectionLease
+    ) async throws -> GatewayScreenControlPermissionStatus {
+      try await screenControlPermissionStatus(lease: lease)
     }
 
     private func requireConnection(_ lease: GatewayTransportConnectionLease) throws {

@@ -6,12 +6,28 @@ struct HexOnboardingToolsView: View {
 
   var body: some View {
     Form {
-      Section {
-        Text("Start with the integrations you trust. Additional HTTP MCP servers live in Settings.")
-          .foregroundStyle(.secondary)
-      }
       HexMCPIntegrationsView(model: model)
+
+      if let statusMessage = model.statusMessage {
+        HexInlineNoticeView(
+          message: statusMessage,
+          systemImage: model.isInstallingManagedTool
+            ? "arrow.down.circle.fill" : "checkmark.circle.fill",
+          tint: model.isInstallingManagedTool
+            ? HexBrandPalette.coral : HexBrandPalette.successInk
+        )
+      }
+
+      if let errorMessage = model.errorMessage {
+        HexInlineNoticeView(
+          message: "\(errorMessage) Turn the tool on again to retry.",
+          systemImage: "exclamationmark.triangle.fill",
+          tint: .orange
+        )
+      }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .tint(HexBrandPalette.coral)
   }
 }

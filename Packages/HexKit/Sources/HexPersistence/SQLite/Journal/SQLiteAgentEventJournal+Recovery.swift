@@ -4,7 +4,7 @@ import HexCore
 extension SQLiteAgentEventJournal {
   func recoverInterruptedRuns() throws -> [InterruptedAgentRun] {
     let connection = try requireConnection()
-    return try withImmediateOwnedTransaction(connection: connection) {
+    let recovered = try withImmediateOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
       try SQLiteJournalMigrator.validateSchemaDefinition(
         connection: connection,
@@ -12,6 +12,7 @@ extension SQLiteAgentEventJournal {
       )
       let interruptedRuns = try interruptedRunIDs(connection: connection)
       var reports: [InterruptedAgentRun] = []
+      var pendingRecoveryEvents: [AgentRunID: [AgentEvent]] = [:]
       reports.reserveCapacity(interruptedRuns.runIDs.count)
       var recoveredRecordCount = 0
       var recoveredByteCount = interruptedRuns.byteCount
@@ -26,6 +27,7 @@ extension SQLiteAgentEventJournal {
         )
         recoveredRecordCount = validated.recordCount
         recoveredByteCount = validated.byteCount
+        pendingRecoveryEvents[runID] = validated.nonExecutionEvents
         try reserveRecoveryTerminalCapacity(
           for: runID,
           recordCount: &recoveredRecordCount,
@@ -39,20 +41,38 @@ extension SQLiteAgentEventJournal {
         )
       }
 
-      try validateWholeJournalIntegrity(connection: connection)
+      var recoveryUsage = try validateWholeJournalIntegrity(connection: connection)
       try Task.checkCancellation()
       for report in reports {
         try Task.checkCancellation()
+        let closures = pendingRecoveryEvents[report.runID] ?? []
+        if let updatedUsage = try reservingInterruptedToolClosures(
+          closures, for: report.runID, usage: recoveryUsage)
+        {
+          recoveryUsage = updatedUsage
+          for event in closures {
+            try Task.checkCancellation()
+            _ = try appendInTransaction(event, to: report.runID, connection: connection)
+          }
+        }
         _ = try appendInTransaction(
           SQLiteInterruptedRunTerminal.event,
           to: report.runID,
           connection: connection
         )
       }
-      try validateWholeJournalIntegrity(connection: connection)
+      let integrityUsage = try validateWholeJournalIntegrity(connection: connection)
       try Task.checkCancellation()
-      return reports
+      return (
+        reports: reports,
+        integrityUsage: integrityUsage,
+        dataVersion: try currentDataVersion(connection: connection)
+      )
     }
+    integrityUsage = recovered.integrityUsage
+    integrityDataVersion = recovered.dataVersion
+    activeRunStates.removeAll()
+    return recovered.reports
   }
 
   private func interruptedRunIDs(
@@ -111,6 +131,7 @@ extension SQLiteAgentEventJournal {
     startingByteCount: Int
   ) throws -> (
     unresolvedToolCallIDs: [ToolCallID],
+    nonExecutionEvents: [AgentEvent],
     recordCount: Int,
     byteCount: Int
   ) {
@@ -213,9 +234,45 @@ extension SQLiteAgentEventJournal {
     }
     return (
       lifecycleValidator.unresolvedToolCallIDs,
+      lifecycleValidator.interruptedNonExecutionEvents,
       recoveredRecordCount,
       recoveredByteCount
     )
+  }
+
+  /// Legacy admission reserved one terminal record, not two receipts per declared tool. Optional
+  /// closure must never consume that reservation or make an otherwise recoverable journal fail to
+  /// open. If the complete closure group cannot fit, retain the original incomplete history and its
+  /// explicit interrupted terminal; do not claim a receipt was saved or drop part of a pair.
+  private func reservingInterruptedToolClosures(
+    _ events: [AgentEvent], for runID: AgentRunID, usage: SQLiteJournalIntegrityUsage
+  ) throws -> SQLiteJournalIntegrityUsage? {
+    var byteCount = 0
+    for event in events {
+      let payload = try AgentEventCodec.encode(event: event)
+      guard payload.count <= configuration.maximumPayloadBytes else { return nil }
+      let fields = [runID.description, event.journalKind, event.journalToolCallID?.rawValue ?? ""]
+      guard fields.allSatisfy({ $0.utf8.count <= configuration.maximumTextBytes }) else {
+        return nil
+      }
+      // Exactly the record fields counted by decodeRecord, including the optional tool-call index.
+      for size in [36, payload.count] + fields.map({ $0.utf8.count }) {
+        let (next, overflow) = byteCount.addingReportingOverflow(size)
+        guard !overflow else { return nil }
+        byteCount = next
+      }
+    }
+    do {
+      return try usage.replacing(
+        .zero,
+        with: SQLiteJournalIntegrityUsage(
+          runCount: 0, recordCount: events.count, byteCount: byteCount),
+        configuration: configuration)
+    } catch SQLiteAgentEventJournalError.integrityRecordLimitExceeded {
+      return nil
+    } catch SQLiteAgentEventJournalError.integrityByteLimitExceeded {
+      return nil
+    }
   }
 
   private func reserveRecoveryTerminalCapacity(

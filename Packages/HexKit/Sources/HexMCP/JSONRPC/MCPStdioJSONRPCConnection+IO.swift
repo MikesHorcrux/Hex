@@ -200,12 +200,14 @@ extension MCPStdioJSONRPCConnection {
       } catch {
         guard isActiveWrite(operation, generation: generation) else { return }
         activeWriteOperations.removeValue(forKey: generation)
-        operation.continuation.resume(throwing: error)
         failQueuedWrites(with: error, generation: generation)
         if activeWriterGeneration == generation { activeWriterGeneration = nil }
         if generation == self.generation {
           await closeConnection(error: error)
         }
+        // A failed active frame may have been written partially. Join teardown before the
+        // notification returns so its caller can safely retry against a fresh connection.
+        operation.continuation.resume(throwing: error)
         return
       }
     }

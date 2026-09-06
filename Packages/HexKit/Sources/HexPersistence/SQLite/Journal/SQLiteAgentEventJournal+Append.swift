@@ -7,20 +7,68 @@ extension SQLiteAgentEventJournal {
   ) async throws -> AgentEventRecord {
     try Task.checkCancellation()
     let connection = try requireConnection()
-    return try withImmediateOwnedTransaction(connection: connection) {
+    guard let currentUsage = integrityUsage else {
+      throw SQLiteAgentEventJournalError.closed
+    }
+    let appended = try withImmediateOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
       try SQLiteJournalMigrator.validateSchemaDefinition(
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
-      try validateWholeJournalIntegrity(connection: connection)
+      try validateIntegrityDataVersion(connection: connection)
+      let previousState = activeRunStates[runID]
       let record = try appendInTransaction(event, to: runID, connection: connection)
-      try validateWholeJournalIntegrity(
-        connection: connection,
-        checksCancellation: false
+      let decoded = try validateAppendedRecord(record, connection: connection)
+      let initialState =
+        try previousState
+        ?? SQLiteJournalActiveRunState(
+          runID: runID,
+          configuration: configuration
+        )
+      let updatedState = try initialState.appending(
+        decoded.record,
+        recordByteCount: decoded.byteCount,
+        configuration: configuration
       )
-      return record
+      let updatedUsage = try currentUsage.replacing(
+        previousState?.usage ?? .zero,
+        with: updatedState.usage,
+        configuration: configuration
+      )
+      try validatePhysicalDatabaseSize(connection: connection)
+      return (record: record, integrityUsage: updatedUsage, state: updatedState)
     }
+    // Publish the new lifecycle and accounting only after COMMIT and ownership validation.
+    integrityUsage = appended.integrityUsage
+    activeRunStates[runID] = event.terminatesRun ? nil : appended.state
+    return appended.record
+  }
+
+  private func validateAppendedRecord(
+    _ expectedRecord: AgentEventRecord,
+    connection: SQLiteConnection
+  ) throws -> (record: AgentEventRecord, byteCount: Int) {
+    let statement = try connection.prepare(
+      """
+      SELECT event_id, run_id, sequence, timestamp_us, record_schema_version, kind, tool_call_id,
+             payload
+      FROM event_records
+      WHERE run_id = ? AND sequence = ?
+      """
+    )
+    try statement.bind(expectedRecord.runID.description, at: 1)
+    try statement.bind(Int64(expectedRecord.sequence), at: 2)
+    guard try statement.step() == .row else {
+      throw SQLiteAgentEventJournalError.corruptRecord("The appended event is missing.")
+    }
+    let decoded = try decodeRecord(from: statement, expectedRunID: expectedRecord.runID)
+    guard decoded.record == expectedRecord else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "The appended event does not match its durable record."
+      )
+    }
+    return decoded
   }
 
   func appendInTransaction(

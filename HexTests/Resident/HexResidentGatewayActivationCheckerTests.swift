@@ -142,7 +142,7 @@ struct HexResidentGatewayActivationCheckerTests {
   }
 
   @Test
-  func enabledManagedToolMustHaveAValidatedInstallation() async throws {
+  func missingOptionalManagedToolDoesNotBlockCoreActivation() async throws {
     let workspace = try makeWorkspace()
     let bundle = try makeBundle()
     let toolsRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -167,8 +167,27 @@ struct HexResidentGatewayActivationCheckerTests {
 
     let readiness = await checker.check()
 
+    #expect(readiness.isReady)
+  }
+
+  @Test
+  func missingOptionalToolDoesNotRelaxCredentialRequirement() async throws {
+    let workspace = try makeWorkspace()
+    let bundle = try makeBundle()
+    defer {
+      try? FileManager.default.removeItem(at: workspace)
+      try? FileManager.default.removeItem(at: bundle)
+    }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "fixture-model", workspaceRoot: workspace, mcpServers: [try .peekaboo()])
+    let checker = HexResidentGatewayActivationChecker(
+      settingsStore: FakeSettingsStore(settings: settings), secretStore: FakeSecretStore(),
+      appBundleURL: bundle)
+
+    let readiness = await checker.check()
+
     #expect(!readiness.isReady)
-    #expect(readiness.message.contains("managed MCP tool is missing or incomplete"))
+    #expect(readiness.message.contains("missing an OpenAI API key"))
   }
 
   @Test

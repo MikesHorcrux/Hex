@@ -21,6 +21,10 @@ struct HexGatewayResidentConfigurationTests {
     #expect(configuration.workspaceRoot.path == "/tmp/hex-workspace")
     #expect(configuration.databaseURL.path == "/tmp/hex-gateway/journal.sqlite")
     #expect(configuration.heartbeatStoreURL.path == "/tmp/hex-gateway/heartbeats.json")
+    #expect(configuration.heartbeatDatabaseURL.path == "/tmp/hex-gateway/heartbeats.json.sqlite")
+    #expect(configuration.selfKnowledge.heartbeatFileURL == configuration.heartbeatDatabaseURL)
+    #expect(configuration.settingsFileURL == nil)
+    #expect(configuration.inferenceSettingsFileURL == nil)
     #expect(
       try await configuration.makeAuthorizationProvider().authorization().bearerToken
         == "sk-test-secret"

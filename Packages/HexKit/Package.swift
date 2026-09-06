@@ -38,7 +38,10 @@ let package = Package(
     ),
     .target(
       name: "HexProviders",
-      dependencies: ["HexCore"]
+      dependencies: [
+        "HexCore",
+        .product(name: "Hub", package: "swift-transformers"),
+      ]
     ),
     .target(
       name: "HexMLXProvider",

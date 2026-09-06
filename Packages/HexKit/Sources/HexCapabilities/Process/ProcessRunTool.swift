@@ -27,7 +27,8 @@ public struct ProcessRunTool: HostTool, Sendable {
     definition = ToolDefinition(
       name: "process_run",
       description:
-        "Run one non-interactive local executable with bounded combined output and no implicit shell. "
+        "Run one non-interactive local executable with a bounded output preview and no implicit shell. "
+        + "When output capture is configured, the full combined output is saved as a local artifact. "
         + "Authorization shows the complete escaped argv; never put secrets in arguments. "
         + "Injected environment values remain private and only names, count, and bytes are shown.",
       inputSchema: HostToolSchema.object(
@@ -178,8 +179,13 @@ public struct ProcessRunTool: HostTool, Sendable {
       guard try ProcessExecutionIdentity.capture(for: request) == snapshot.identity else {
         throw ProcessExecutionError.invalidRequest
       }
-      let result = try await executor.execute(request.requiringIdentity(snapshot.identity))
-      try Task.checkCancellation()
+      let result = try await executor.execute(
+        request.requiringIdentity(
+          snapshot.identity,
+          outputArtifactMetadata: ArtifactMetadata(
+            runID: context.runID, toolCallID: call.id, mediaType: "application/octet-stream")))
+      // The executor returned a known outcome. Preserve it for the runtime journal even if the
+      // task was cancelled while this actor resumed; cancellation must not hide completed effects.
       return ProcessToolResult.result(bounded(result), callID: call.id)
     } catch {
       // This also covers validation/cancellation before take(), where a pending authorization may
@@ -232,9 +238,12 @@ public struct ProcessRunTool: HostTool, Sendable {
       return result
     }
     return ProcessExecutionResult(
-      termination: .outputLimitExceeded,
+      termination: result.outputArtifact == nil ? .outputLimitExceeded : result.termination,
       output: Data(result.output.prefix(configuration.maximumOutputBytes)),
-      durationMilliseconds: result.durationMilliseconds
+      durationMilliseconds: result.durationMilliseconds,
+      outputArtifact: result.outputArtifact, totalOutputBytes: result.totalOutputBytes,
+      outputIsComplete: result.outputArtifact == nil ? false : result.outputIsComplete,
+      outputCaptureFailure: result.outputCaptureFailure
     )
   }
 

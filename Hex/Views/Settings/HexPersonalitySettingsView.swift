@@ -10,6 +10,8 @@ struct HexPersonalitySettingsView: View {
       HexPersonalMemoriesView(model: model.memories)
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .tint(HexBrandPalette.coral)
     .task {
       await model.load()
     }

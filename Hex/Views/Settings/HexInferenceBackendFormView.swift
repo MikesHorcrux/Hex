@@ -4,41 +4,56 @@ import SwiftUI
 
 struct HexInferenceBackendFormView: View {
   @Bindable var model: HexInferenceBackendSettingsModel
+  let showsAdvancedConfiguration: Bool
 
   var body: some View {
     Section {
-      Picker("Backend", selection: $model.selectedBackend) {
-        ForEach(HexInferenceBackendKind.allCases) { backend in
-          Text(backend.displayName)
-            .tag(backend)
+      Picker("How Hex thinks", selection: $model.setupChoice) {
+        ForEach(HexInferenceSetupChoice.allCases) { choice in
+          Text(choice.title)
+            .tag(choice)
         }
       }
+      .pickerStyle(.radioGroup)
+      .disabled(model.isLoading || model.isSaving || model.isInstallingLocalModel)
       .accessibilityIdentifier("inferenceBackendPicker")
     } header: {
-      Text("Inference backend")
+      Text("Choose one")
     } footer: {
-      Text("Choose where the model runs. Hex remains the agent runtime in every mode.")
+      Text(model.setupChoice.detail)
     }
 
-    switch model.selectedBackend {
-    case .openAIResponses:
-      HexOpenAIBackendSettingsView(model: model)
-    case .mlxLocal:
-      HexMLXBackendSettingsView(model: model)
+    switch model.setupChoice {
+    case .chatGPT, .openAIAPI:
+      HexOpenAIBackendSettingsView(
+        model: model,
+        showsAdvancedConfiguration: showsAdvancedConfiguration
+      )
+    case .onThisMac:
+      HexMLXBackendSettingsView(
+        model: model,
+        showsAdvancedConfiguration: showsAdvancedConfiguration
+      )
     }
 
     if let statusMessage = model.statusMessage {
-      Text(statusMessage)
-        .font(.callout)
-        .foregroundStyle(.secondary)
+      HexInlineNoticeView(
+        message: statusMessage,
+        systemImage: "info.circle",
+        tint: HexBrandPalette.mutedInk
+      )
     }
 
     if let errorMessage = model.errorMessage {
-      Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-        .font(.callout)
-        .foregroundStyle(.orange)
-        .fixedSize(horizontal: false, vertical: true)
+      HexInlineNoticeView(
+        message: errorMessage,
+        systemImage: "exclamationmark.triangle.fill",
+        tint: .orange
+      )
+    }
+    if model.needsLoadRetry {
+      Button("Try Loading Again") { Task { await model.load() } }
+        .disabled(model.isLoading)
     }
   }
-
 }

@@ -9,7 +9,7 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
     maximumSearchBytes: 32 * 1_024 * 1_024,
     maximumSearchMatches: 500,
     maximumSearchDepth: 64,
-    excludedSearchDirectoryNames: [".build", ".git", ".swiftpm", "DerivedData"]
+    excludedSearchDirectoryNames: [".build", ".git", ".swiftpm", "DerivedData", "node_modules"]
   )
 
   public let maximumReadBytes: Int
@@ -33,7 +33,9 @@ public struct WorkspaceFileSystemConfiguration: Equatable, Sendable {
     maximumSearchBytes: Int = 32 * 1_024 * 1_024,
     maximumSearchMatches: Int = 500,
     maximumSearchDepth: Int = 64,
-    excludedSearchDirectoryNames: Set<String> = [".build", ".git", ".swiftpm", "DerivedData"]
+    excludedSearchDirectoryNames: Set<String> = [
+      ".build", ".git", ".swiftpm", "DerivedData", "node_modules",
+    ]
   ) throws {
     guard
       (1...16 * 1_024 * 1_024).contains(maximumReadBytes),

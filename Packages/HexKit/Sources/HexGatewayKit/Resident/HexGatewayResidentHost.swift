@@ -30,8 +30,10 @@ public final class HexGatewayResidentHost {
   private let composition: HexGatewayComposition
   private let heartbeatClient: HexGatewayClient
   private let heartbeatScheduler: HexHeartbeatScheduler
+  private let heartbeatStore: SQLiteHexHeartbeatStore
   private let authorizationBroker: HexGatewayAuthorizationBroker
   private let mcpToolExecutors: [MCPManagedToolExecutor]
+  private let toolServerController: HexGatewayToolServerController
   private let listener: NSXPCListener
   private let listenerDelegate: HexGatewayXPCListenerDelegate
   private var signalSources: [DispatchSourceSignal] = []
@@ -44,8 +46,13 @@ public final class HexGatewayResidentHost {
     configuration: HexGatewayResidentConfiguration
   ) async throws -> Self {
     let authorizationBroker = HexGatewayAuthorizationBroker()
+    let heartbeatAuthorizationPolicy = HexHeartbeatAuthorizationPolicy(
+      interactivePrompter: authorizationBroker)
     let fileSystem = try WorkspaceFileSystem(root: configuration.workspaceRoot)
-    let processExecutor = POSIXProcessExecutor()
+    let artifactStore = try FileArtifactStore(
+      rootURL: configuration.databaseURL.deletingLastPathComponent()
+        .appendingPathComponent("Artifacts", isDirectory: true))
+    let processExecutor = POSIXProcessExecutor(artifactWriter: artifactStore)
     let personalMemoryStore = try JSONPersonalMemoryStore(
       fileURL: configuration.personalMemoryURL
     )
@@ -60,13 +67,19 @@ public final class HexGatewayResidentHost {
     let mcpToolExecutors = try configuration.mcpClientSessions.map {
       try MCPManagedToolExecutor(session: $0)
     }
+    let toolServerController = try HexGatewayToolServerController(executors: mcpToolExecutors)
     let routedToolExecutor = try CompositeToolExecutor(
-      executors: [personalToolExecutor, personalMemoryToolExecutor] + mcpToolExecutors
+      executors: [
+        personalToolExecutor, personalMemoryToolExecutor,
+        try ArtifactToolExecutor(reader: artifactStore),
+      ] + mcpToolExecutors
     )
-    let authorizationProvider = CapabilityAuthorizationCenter(
-      prompter: authorizationBroker,
-      automaticallyAllowsValidatedRequests: configuration.authorizationMode == .fullAccess
+    let authorizationCenter = CapabilityAuthorizationCenter(
+      prompter: heartbeatAuthorizationPolicy,
+      authorizationMode: configuration.authorizationMode
     )
+    let authorizationProvider = HexHeartbeatAuthorizationProvider(
+      base: authorizationCenter, policy: heartbeatAuthorizationPolicy)
     let inferenceProvider = try configuration.inferenceProviderFactory.makeInferenceProvider(
       for: configuration.inferenceBackendSettings,
       authorizationProvider: configuration.makeAuthorizationProvider()
@@ -92,36 +105,66 @@ public final class HexGatewayResidentHost {
       personalityContextService: personalityContextService,
       personalityMemoryQuery: personalityMemoryQuery,
       enforcedWorkingDirectory: configuration.workspaceRoot,
-      enforcedModelID: ModelID(rawValue: configuration.modelID)
+      selfKnowledge: configuration.selfKnowledge,
+      artifactWriter: artifactStore,
+      artifactReader: artifactStore
     )
-    let composition = try await HexGatewayComposition.open(
-      configuration: compositionConfiguration
-    )
-    let heartbeatConfiguration = HexHeartbeatSchedulerConfiguration.standard
-    let heartbeatClient = HexGatewayClient(
-      transport: composition.transport,
-      clientID: GatewayClientID(),
-      configuration: composition.gatewayConfiguration
-    )
-    let heartbeatRunner = try HexGatewayHeartbeatRunner(
-      client: heartbeatClient,
-      modelID: ModelID(rawValue: configuration.modelID),
-      workspaceRoot: configuration.workspaceRoot,
-      configuration: heartbeatConfiguration
-    )
-    let heartbeatScheduler = HexHeartbeatScheduler(
-      store: JSONHexHeartbeatStore(fileURL: configuration.heartbeatStoreURL),
-      runner: heartbeatRunner,
-      configuration: heartbeatConfiguration
-    )
-    return Self(
-      configuration: configuration,
-      composition: composition,
-      heartbeatClient: heartbeatClient,
-      heartbeatScheduler: heartbeatScheduler,
-      authorizationBroker: authorizationBroker,
-      mcpToolExecutors: mcpToolExecutors
-    )
+    let heartbeatConfiguration = try HexHeartbeatSchedulerConfiguration.standard.validated()
+    let screenControlPermissionController = try configuration.managedToolLayout.map {
+      try MCPPeekabooPermissionController(layout: $0)
+    }
+    // Nothing has been advertised or started yet. Retain each opened resource before the next
+    // suspension, so cancellation or any later construction failure has one explicit unwind path.
+    var openedComposition: HexGatewayComposition?
+    var openedHeartbeatStore: SQLiteHexHeartbeatStore?
+    do {
+      try Task.checkCancellation()
+      let composition = try await HexGatewayComposition.open(
+        configuration: compositionConfiguration)
+      openedComposition = composition
+      try Task.checkCancellation()
+      let heartbeatClient = HexGatewayClient(
+        transport: composition.transport,
+        clientID: GatewayClientID(),
+        configuration: composition.gatewayConfiguration
+      )
+      let heartbeatRunner = try HexGatewayHeartbeatRunner(
+        client: heartbeatClient,
+        authorizationPolicy: heartbeatAuthorizationPolicy,
+        modelID: ModelID(rawValue: configuration.modelID),
+        workspaceRoot: configuration.workspaceRoot,
+        configuration: heartbeatConfiguration
+      )
+      let heartbeatStore = try await SQLiteHexHeartbeatStore.open(
+        databaseURL: configuration.heartbeatDatabaseURL,
+        legacyJSONURL: configuration.heartbeatStoreURL)
+      openedHeartbeatStore = heartbeatStore
+      try Task.checkCancellation()
+      let heartbeatScheduler = HexHeartbeatScheduler(
+        store: heartbeatStore,
+        runner: heartbeatRunner,
+        configuration: heartbeatConfiguration,
+        runInspector: HexGatewayHeartbeatRunInspector(client: heartbeatClient)
+      )
+      return Self(
+        configuration: configuration,
+        composition: composition,
+        heartbeatClient: heartbeatClient,
+        heartbeatScheduler: heartbeatScheduler,
+        heartbeatStore: heartbeatStore,
+        authorizationBroker: authorizationBroker,
+        mcpToolExecutors: mcpToolExecutors,
+        toolServerController: toolServerController,
+        inferenceProvider: inferenceProvider,
+        screenControlPermissionController: screenControlPermissionController
+      )
+    } catch {
+      // Both close operations deliberately remain available to a cancelled caller. Preserve the
+      // original startup error, while attempting every acquired resource in reverse ownership order.
+      if let openedHeartbeatStore { try? await openedHeartbeatStore.close() }
+      if let openedComposition { try? await openedComposition.close() }
+      throw error
+    }
   }
 
   private init(
@@ -129,15 +172,21 @@ public final class HexGatewayResidentHost {
     composition: HexGatewayComposition,
     heartbeatClient: HexGatewayClient,
     heartbeatScheduler: HexHeartbeatScheduler,
+    heartbeatStore: SQLiteHexHeartbeatStore,
     authorizationBroker: HexGatewayAuthorizationBroker,
-    mcpToolExecutors: [MCPManagedToolExecutor]
+    mcpToolExecutors: [MCPManagedToolExecutor],
+    toolServerController: HexGatewayToolServerController,
+    inferenceProvider: any InferenceProvider,
+    screenControlPermissionController: MCPPeekabooPermissionController?
   ) {
     self.configuration = configuration
     self.composition = composition
     self.heartbeatClient = heartbeatClient
     self.heartbeatScheduler = heartbeatScheduler
+    self.heartbeatStore = heartbeatStore
     self.authorizationBroker = authorizationBroker
     self.mcpToolExecutors = mcpToolExecutors
+    self.toolServerController = toolServerController
     listener = NSXPCListener(machServiceName: configuration.machServiceName)
     let service = composition.service
     let gatewayConfiguration = composition.gatewayConfiguration
@@ -184,6 +233,13 @@ public final class HexGatewayResidentHost {
         let mutation = try mutation.validated()
         try await scheduler.resume(HexHeartbeatScheduleID(rawValue: mutation.scheduleID))
         return try await listHeartbeats()
+      },
+      listHeartbeatRuns: { request in
+        let request = try request.validated()
+        let page = try await scheduler.receipts(
+          scheduleID: request.scheduleID.map(HexHeartbeatScheduleID.init(rawValue:)),
+          after: HexGatewayHeartbeatRunMapper.cursor(from: request), limit: request.limit)
+        return try HexGatewayHeartbeatRunMapper.page(from: page, for: request)
       }
     )
     let accessibilityPermissionHandlers = HexGatewayAccessibilityPermissionHandlers(
@@ -194,6 +250,35 @@ public final class HexGatewayResidentHost {
         await accessibilityController.isTrusted(promptIfNeeded: true) ? .trusted : .notTrusted
       }
     )
+    let screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers
+    if let screenControlPermissionController {
+      screenControlPermissionHandlers = HexGatewayScreenControlPermissionHandlers(
+        status: {
+          do {
+            let status = try await screenControlPermissionController.status()
+            return GatewayScreenControlPermissionStatus(
+              accessibilityGranted: status.accessibilityGranted,
+              screenRecordingGranted: status.screenRecordingGranted
+            )
+          } catch {
+            throw HexGatewayScreenControlPermissionFailureMapper.map(error)
+          }
+        },
+        request: {
+          do {
+            let status = try await screenControlPermissionController.request()
+            return GatewayScreenControlPermissionStatus(
+              accessibilityGranted: status.accessibilityGranted,
+              screenRecordingGranted: status.screenRecordingGranted
+            )
+          } catch {
+            throw HexGatewayScreenControlPermissionFailureMapper.map(error)
+          }
+        }
+      )
+    } else {
+      screenControlPermissionHandlers = .unavailable
+    }
     listenerDelegate = HexGatewayXPCListenerDelegate(
       serviceFactory: {
         HexGatewayXPCService(
@@ -203,7 +288,13 @@ public final class HexGatewayResidentHost {
             try await broker.submit(request, choice: choice, gate: gate)
           },
           residentControlHandlers: residentControlHandlers,
-          accessibilityPermissionHandlers: accessibilityPermissionHandlers
+          accessibilityPermissionHandlers: accessibilityPermissionHandlers,
+          screenControlPermissionHandlers: screenControlPermissionHandlers,
+          modelCatalogHandler: { try await inferenceProvider.availableModels() },
+          toolServerControlHandlers: HexGatewayToolServerControlHandlers(
+            list: { try await toolServerController.health() },
+            refresh: { try await toolServerController.refresh($0) }
+          )
         )
       },
       admissionPolicy: configuration.connectionAdmissionPolicy
@@ -255,15 +346,23 @@ public final class HexGatewayResidentHost {
       runError = error
     }
 
-    // Teardown is deliberately ordered around the shared gateway graph. The listener is closed
-    // first, then the scheduler is drained, then the scheduler's client is disconnected before
-    // authorization continuations and the durable journal are released.
+    // Seal all admissions before cancellation, but preserve existing read sessions while the
+    // scheduler inspects its last receipt. Driver ownership outlives terminal replay publication.
     invalidateResources()
-    await heartbeatScheduler.stop()
-    await disconnectHeartbeatClientWithoutCancellation()
+    await composition.service.beginShutdown()
     await authorizationBroker.cancelAll()
+    await heartbeatScheduler.stop()
+    // If a driver will not stop, fail without tearing down the tools/storage it still owns. A
+    // cancellation request or closed listener cannot justify claiming its effects have finished.
+    try await composition.service.drainRuns()
+    await disconnectHeartbeatClientWithoutCancellation()
     for executor in mcpToolExecutors.reversed() {
       await executor.stop()
+    }
+    do {
+      try await heartbeatStore.close()
+    } catch {
+      if runError == nil { runError = error }
     }
     do {
       try await composition.close()
@@ -301,6 +400,11 @@ public final class HexGatewayResidentHost {
       states[executor.serverID] = await executor.currentState()
     }
     return states
+  }
+
+  /// The same cached, enabled-server snapshot exposed by the authenticated control connection.
+  public func toolServerHealth() async throws -> GatewayToolServerHealth {
+    try await toolServerController.health()
   }
 
   /// Requests an idempotent graceful shutdown. This does not install, unregister, or otherwise

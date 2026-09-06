@@ -7,13 +7,23 @@ nonisolated enum HexAccessibilityPermissionState: Equatable, Sendable {
   case notTrusted
   case requestSent
   case gatewayUnavailable
+  case gatewayNeedsRestart
   case failed(String)
+
+  var canRepairByRestartingGateway: Bool {
+    switch self {
+    case .gatewayUnavailable, .gatewayNeedsRestart:
+      true
+    case .unchecked, .checking, .trusted, .notTrusted, .requestSent, .failed:
+      false
+    }
+  }
 
   var hasVerifiedGateway: Bool {
     switch self {
     case .trusted, .notTrusted, .requestSent:
       true
-    case .unchecked, .checking, .gatewayUnavailable, .failed:
+    case .unchecked, .checking, .gatewayUnavailable, .gatewayNeedsRestart, .failed:
       false
     }
   }

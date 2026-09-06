@@ -1,10 +1,39 @@
 import Foundation
 import HexCore
 import Testing
+
 @testable import HexRuntime
 
 @Suite("AgentRuntime validation")
 struct AgentRuntimeValidationTests {
+  @Test
+  func rejectsUnsupportedEffortAndInconsistentModelMetadata() async throws {
+    let effortLists: [[InferenceReasoningEffort]] = [[.low], [.low, .low]]
+    for efforts in effortLists {
+      let model = ModelDescriptor(
+        id: RuntimeTestFixture.modelID,
+        providerID: RuntimeTestFixture.descriptor().id, displayName: "Test",
+        capabilities: [.textInput, .streaming], supportedReasoningEfforts: efforts)
+      let provider = ScriptedInferenceProvider(
+        descriptor: RuntimeTestFixture.descriptor(),
+        models: [model], scripts: [])
+      let runtime = RuntimeTestFixture.runtime(
+        provider: provider,
+        executor: ScriptedToolExecutor(tools: []))
+      await expectError(
+        matching: {
+          if efforts.count == 1, case .invalidRequest = $0 { return true }
+          if efforts.count == 2, case .providerFailure = $0 { return true }
+          return false
+        },
+        operation: {
+          _ = try await runtime.run(
+            RuntimeTestFixture.request(
+              options: InferenceOptions(reasoningEffort: .ultra)))
+        })
+    }
+  }
+
   @Test
   func requiresProviderAndModelCapabilityIntersection() async {
     let model = RuntimeTestFixture.model()
@@ -306,7 +335,7 @@ struct AgentRuntimeValidationTests {
   }
 
   @Test
-  func forcedToolChoiceBecomesAutomaticAfterFirstAcceptedBatch() async throws {
+  func requiredToolChoiceBecomesAutomaticAfterFirstAcceptedBatch() async throws {
     let requiredCall = ToolCall(
       id: ToolCallID(rawValue: "required-once"),
       name: "echo",
@@ -329,7 +358,10 @@ struct AgentRuntimeValidationTests {
 
     #expect(requiredResult.turns.count == 2)
     #expect(await requiredProvider.requests().map(\.toolChoice) == [.required, .automatic])
+  }
 
+  @Test
+  func namedToolChoiceBecomesNoneAfterFirstAcceptedCall() async throws {
     let namedCall = ToolCall(
       id: ToolCallID(rawValue: "named-once"),
       name: "echo",
@@ -341,11 +373,12 @@ struct AgentRuntimeValidationTests {
         .events(RuntimeTestFixture.textEvents("named complete")),
       ]
     )
+    let namedExecutor = ScriptedToolExecutor(
+      tools: [RuntimeTestFixture.tool("echo"), RuntimeTestFixture.tool("inspect")]
+    )
     let namedRuntime = RuntimeTestFixture.runtime(
       provider: namedProvider,
-      executor: ScriptedToolExecutor(
-        tools: [RuntimeTestFixture.tool("echo"), RuntimeTestFixture.tool("inspect")]
-      )
+      executor: namedExecutor
     )
 
     let namedResult = try await namedRuntime.run(
@@ -353,10 +386,37 @@ struct AgentRuntimeValidationTests {
     )
 
     #expect(namedResult.turns.count == 2)
+    #expect(await namedExecutor.calls().map(\.name) == ["echo"])
     #expect(
       await namedProvider.requests().map(\.toolChoice)
-        == [.named("echo"), .automatic]
+        == [.named("echo"), .none]
     )
+  }
+
+  @Test
+  func automaticToolChoiceRemainsAutomaticAfterAcceptedBatch() async throws {
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "automatic-once"),
+      name: "echo",
+      arguments: [:]
+    )
+    let provider = provider(
+      scripts: [
+        .events(RuntimeTestFixture.toolEvents([call])),
+        .events(RuntimeTestFixture.textEvents("automatic complete")),
+      ]
+    )
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider,
+      executor: ScriptedToolExecutor(tools: [RuntimeTestFixture.tool()])
+    )
+
+    let result = try await runtime.run(
+      RuntimeTestFixture.request(toolChoice: .automatic)
+    )
+
+    #expect(result.turns.count == 2)
+    #expect(await provider.requests().map(\.toolChoice) == [.automatic, .automatic])
   }
 
   @Test

@@ -1,26 +1,30 @@
+import HexCore
 import SwiftUI
 
 struct AgentConversationRowView: View {
   let item: ConversationItem
+  var onOpenArtifact: (ArtifactReference) -> Void = { _ in }
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      Image(systemName: icon)
-        .font(.callout.weight(.semibold))
-        .foregroundStyle(iconColor)
-        .frame(width: 24, height: 24)
-        .background(iconColor.opacity(0.1), in: Circle())
+      if item.role == .user {
+        Spacer(minLength: 72)
+      } else {
+        avatar
+      }
 
       VStack(alignment: .leading, spacing: 7) {
         HStack(spacing: 7) {
           Text(item.role.label)
-            .font(.callout.weight(.semibold))
+            .font(.caption.weight(.bold))
+            .foregroundStyle(HexBrandPalette.ink)
           Text(item.timestamp, style: .time)
-            .font(.caption)
-            .foregroundStyle(.tertiary)
+            .font(.caption2)
+            .foregroundStyle(HexBrandPalette.mutedInk)
           if item.isStreaming {
             ProgressView()
               .controlSize(.mini)
+              .tint(HexBrandPalette.coral)
               .accessibilityLabel("Hex is responding")
           }
         }
@@ -28,17 +32,63 @@ struct AgentConversationRowView: View {
         if item.role == .event {
           Text(item.text.isEmpty ? "…" : item.text)
             .font(.callout)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(HexBrandPalette.mutedInk)
+            .textSelection(.enabled)
+        } else if item.role == .tool {
+          Text(item.text)
+            .font(.system(.callout, design: .monospaced))
             .textSelection(.enabled)
         } else {
           MarkdownMessageView(markdown: item.text.isEmpty ? "…" : item.text)
         }
+        ForEach(item.artifacts, id: \.id) { artifact in
+          Button {
+            onOpenArtifact(artifact)
+          } label: {
+            Label(
+              "View \(artifact.isComplete ? "saved" : "partial") output · "
+                + ByteCountFormatter.string(fromByteCount: artifact.byteCount, countStyle: .file),
+              systemImage: "doc.text.magnifyingglass")
+          }
+          .buttonStyle(.bordered)
+          .help("Read the saved output without adding the whole file to the conversation")
+        }
       }
-      .frame(maxWidth: 760, alignment: .leading)
+      .padding(.horizontal, 15)
+      .padding(.vertical, 12)
+      .frame(maxWidth: item.role == .user ? 620 : 720, alignment: .leading)
+      .hexSurface(
+        cornerRadius: 18,
+        fill: bubbleColor,
+        border: bubbleBorderColor,
+        shadowRadius: item.role == .event ? 0 : 5
+      )
 
-      Spacer(minLength: 0)
+      if item.role == .user {
+        avatar
+      } else {
+        Spacer(minLength: 72)
+      }
     }
-    .padding(.vertical, 9)
+    .padding(.vertical, 3)
+  }
+
+  @ViewBuilder
+  private var avatar: some View {
+    if item.role == .assistant {
+      HexAppIconView(size: 34)
+    } else {
+      Image(systemName: icon)
+        .font(.callout.weight(.semibold))
+        .foregroundStyle(iconColor)
+        .frame(width: 32, height: 32)
+        .background(iconColor.opacity(0.12), in: Circle())
+        .overlay {
+          Circle()
+            .strokeBorder(iconColor.opacity(0.16), lineWidth: 1)
+        }
+        .accessibilityHidden(true)
+    }
   }
 
   private var icon: String {
@@ -57,13 +107,37 @@ struct AgentConversationRowView: View {
   private var iconColor: Color {
     switch item.role {
     case .user:
-      .accentColor
+      HexBrandPalette.coral
     case .assistant:
-      .primary
+      HexBrandPalette.deepPlum
     case .tool:
-      .orange
+      HexBrandPalette.apricot
     case .event:
-      .secondary
+      HexBrandPalette.mutedInk
+    }
+  }
+
+  private var bubbleColor: Color {
+    switch item.role {
+    case .user:
+      HexBrandPalette.softCoral
+    case .assistant:
+      HexBrandPalette.raisedSurface
+    case .tool:
+      HexBrandPalette.softApricot.opacity(0.82)
+    case .event:
+      HexBrandPalette.surface.opacity(0.78)
+    }
+  }
+
+  private var bubbleBorderColor: Color {
+    switch item.role {
+    case .user:
+      HexBrandPalette.coral.opacity(0.24)
+    case .assistant, .event:
+      HexBrandPalette.hairline
+    case .tool:
+      HexBrandPalette.apricot.opacity(0.32)
     }
   }
 }

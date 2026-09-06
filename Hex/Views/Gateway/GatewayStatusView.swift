@@ -48,7 +48,7 @@ struct GatewayStatusView: View {
   private var connectionColor: Color {
     switch connectionState {
     case .connected:
-      .green
+      HexBrandPalette.successInk
     case .connecting:
       .orange
     case .disconnected:

@@ -109,6 +109,67 @@ struct HexInferenceBackendSettingsModelTests {
     #expect(model.openAIAPIKey.isEmpty)
   }
 
+  @Test @MainActor
+  func successfulSaveReloadsTheResidentAfterBackendSettingsAreDurable() async {
+    let settingsStore = RecordingSettingsStore()
+    let reloader = RecordingConfigurationReloader(settingsStore: settingsStore)
+    let model = HexInferenceBackendSettingsModel(
+      settingsStore: settingsStore,
+      secretStore: RecordingSecretStore(),
+      chatGPTAuthorizationManager: TrackingChatGPTAuthorizationManager(),
+      configurationReloader: reloader
+    )
+    await model.load()
+    model.openAIAuthenticationMethod = .apiKey
+    model.openAIAPIKey = "platform-api-key"
+
+    model.save()
+    await waitForSave(model)
+
+    #expect(reloader.reloadCount == 1)
+    #expect(reloader.observedPersistedModelID == HexInferenceBackendSettings.defaultOpenAIModelID)
+    #expect(model.saveGeneration == 1)
+  }
+
+  @Test @MainActor
+  func localChoiceDownloadsRecommendedModelBeforeSaving() async throws {
+    let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString,
+      isDirectory: true
+    )
+    let modelDirectory = temporaryRoot.appendingPathComponent("model", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: modelDirectory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+    let settingsStore = RecordingSettingsStore()
+    let installer = RecordingLocalModelInstaller(directory: modelDirectory)
+    let model = HexInferenceBackendSettingsModel(
+      settingsStore: settingsStore,
+      secretStore: RecordingSecretStore(),
+      chatGPTAuthorizationManager: TrackingChatGPTAuthorizationManager(),
+      localModelInstaller: installer
+    )
+    await model.load()
+
+    model.setupChoice = .onThisMac
+    #expect(model.mlxModelID == HexInferenceBackendSettingsModel.recommendedLocalModelID)
+    #expect(model.mlxDisplayName == HexInferenceBackendSettingsModel.recommendedLocalModelName)
+    #expect(model.needsLocalModelDownload)
+
+    model.save()
+    await waitForSave(model)
+
+    #expect(await installer.requestedModelIDs == [model.mlxModelID])
+    #expect(await settingsStore.savedSettings?.selectedBackend == .mlxLocal)
+    #expect(await settingsStore.savedSettings?.mlx.directory == modelDirectory)
+    #expect(model.localModelDownloadProgress == 1)
+    #expect(!model.needsLocalModelDownload)
+  }
+
   @MainActor
   private func waitForLoginChallenge(_ model: HexInferenceBackendSettingsModel) async {
     for _ in 0..<100 {
@@ -208,6 +269,41 @@ struct HexInferenceBackendSettingsModelTests {
 
     func delete(_ key: HexSecretKey) async throws {
       _ = key
+    }
+  }
+
+  private actor RecordingLocalModelInstaller: MLXLocalModelInstalling {
+    let directory: URL
+    private(set) var requestedModelIDs: [String] = []
+
+    init(directory: URL) {
+      self.directory = directory
+    }
+
+    func install(
+      modelID: String,
+      progress: @Sendable @escaping (Double) -> Void
+    ) async throws -> URL {
+      requestedModelIDs.append(modelID)
+      progress(0.5)
+      progress(1)
+      return directory
+    }
+  }
+
+  @MainActor
+  private final class RecordingConfigurationReloader: HexResidentConfigurationReloading {
+    private let settingsStore: RecordingSettingsStore
+    private(set) var reloadCount = 0
+    private(set) var observedPersistedModelID: String?
+
+    init(settingsStore: RecordingSettingsStore) {
+      self.settingsStore = settingsStore
+    }
+
+    func reloadAfterConfigurationChange() async {
+      reloadCount += 1
+      observedPersistedModelID = await settingsStore.savedSettings?.openAI.modelID
     }
   }
 

@@ -58,5 +58,8 @@ extension SQLiteAgentEventJournal {
     self.connection = nil
     fileLock = nil
     secureDirectory = nil
+    integrityUsage = nil
+    integrityDataVersion = nil
+    activeRunStates.removeAll()
   }
 }

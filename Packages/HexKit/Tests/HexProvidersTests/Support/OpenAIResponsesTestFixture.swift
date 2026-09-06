@@ -99,7 +99,8 @@ struct OpenAIResponsesTestFixture {
     annotation: [String: Any]? = nil,
     refusal: Bool = false,
     terminalStatus: String = "completed",
-    incompleteReason: String? = nil
+    incompleteReason: String? = nil,
+    omitsTerminalOutput: Bool = false
   ) throws -> Data {
     let annotations: [[String: Any]] = annotation.map { [$0] } ?? []
     let partType = refusal ? "refusal" : "output_text"
@@ -229,7 +230,7 @@ struct OpenAIResponsesTestFixture {
     var terminalResponse: [String: Any] = [
       "id": responseID,
       "status": terminalStatus,
-      "output": [item],
+      "output": omitsTerminalOutput ? [] : [item],
       "usage": [
         "input_tokens": 12,
         "output_tokens": 3,
@@ -258,7 +259,9 @@ struct OpenAIResponsesTestFixture {
     callID: String,
     toolName: String = "lookup_weather",
     arguments: String = "{\"city\":\"Zürich\"}",
-    includeReasoning: Bool = true
+    includeReasoning: Bool = true,
+    reasoningEncryptedContent: String? = "encrypted-state",
+    omitsTerminalOutput: Bool = false
   ) throws -> Data {
     let reasoningItemID = "rs_\(responseID)"
     let functionItemID = "fc_\(responseID)"
@@ -267,13 +270,15 @@ struct OpenAIResponsesTestFixture {
       "type": "reasoning",
       "summary": [],
     ]
-    let reasoningDone: [String: Any] = [
+    var reasoningDone: [String: Any] = [
       "id": reasoningItemID,
       "type": "reasoning",
       "summary": [["type": "summary_text", "text": "Checking weather"]],
-      "encrypted_content": "encrypted-state",
       "status": "completed",
     ]
+    if let reasoningEncryptedContent {
+      reasoningDone["encrypted_content"] = reasoningEncryptedContent
+    }
     let callAdded: [String: Any] = [
       "id": functionItemID,
       "type": "function_call",
@@ -427,7 +432,12 @@ struct OpenAIResponsesTestFixture {
     )
     sequence += 1
 
-    let output: [Any] = includeReasoning ? [reasoningDone, callDone] : [callDone]
+    let output: [Any]
+    if omitsTerminalOutput {
+      output = []
+    } else {
+      output = includeReasoning ? [reasoningDone, callDone] : [callDone]
+    }
     try appendEvent(
       [
         "type": "response.completed",

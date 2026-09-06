@@ -42,10 +42,10 @@ enum WorkspaceToolResult {
   }
 
   static func search(
-    _ matches: [WorkspaceSearchMatch],
+    _ report: WorkspaceSearchReport,
     callID: ToolCallID
   ) -> ToolResult {
-    let values = matches.map { match in
+    let values = report.matches.map { match in
       JSONValue.object([
         "path": .string(match.path),
         "line": .integer(Int64(match.line)),
@@ -56,7 +56,10 @@ enum WorkspaceToolResult {
     return ToolResult(
       toolCallID: callID,
       status: .success,
-      output: .object(["matches": .array(values)])
+      output: .object([
+        "matches": .array(values),
+        "skipped_oversized_files": .integer(Int64(report.skippedOversizedFiles)),
+      ])
     )
   }
 

@@ -8,80 +8,168 @@ struct HexOnboardingView: View {
   @Bindable var personality: HexPersonalitySettingsModel
   @Bindable var startAtLogin: HexStartAtLoginModel
   @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
-  let onFinish: () -> Void
+  let onFinish: @MainActor () -> Void
 
-  @State private var step = HexOnboardingStep.welcome
-  @State private var isWaitingForInferenceSave = false
-  @State private var isWaitingForResidentSave = false
-  @State private var isWaitingForPersonalitySave = false
+  @State private var coordinator = HexOnboardingCoordinator()
+  @State private var advanceTask: Task<Void, Never>?
+  @AccessibilityFocusState private var isStepHeadingFocused: Bool
+
+  private var step: HexOnboardingStep { coordinator.step }
 
   var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 12) {
-        Image(systemName: "hexagon.fill")
-          .foregroundStyle(.tint)
-        Text("Set Up Hex")
-          .font(.headline)
-        Spacer()
-        Text("\(step.position) of \(HexOnboardingStep.allCases.count) · \(step.title)")
-          .font(.callout)
-          .foregroundStyle(.secondary)
-      }
-      .padding(.horizontal, 20)
-      .padding(.vertical, 14)
+    HStack(spacing: 0) {
+      HexOnboardingStepRailView(currentStep: step)
 
-      ProgressView(
-        value: Double(step.position),
-        total: Double(HexOnboardingStep.allCases.count)
-      )
-      .progressViewStyle(.linear)
+      Rectangle()
+        .fill(HexBrandPalette.hairline)
+        .frame(width: 1)
 
-      Divider()
+      VStack(spacing: 0) {
+        HStack(spacing: 14) {
+          Image(systemName: stepSymbol)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(HexBrandPalette.accentInk)
+            .frame(width: 40, height: 40)
+            .background(HexBrandPalette.softCoral, in: Circle())
+            .accessibilityHidden(true)
 
-      currentStep
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-      Divider()
-
-      HStack {
-        Button("Back") {
-          if let previous = step.previous {
-            step = previous
+          VStack(alignment: .leading, spacing: 2) {
+            Text(stepTitle)
+              .font(.title2.weight(.semibold))
+              .foregroundStyle(HexBrandPalette.ink)
+              .accessibilityFocused($isStepHeadingFocused)
+            Text(stepDetail)
+              .font(.callout)
+              .foregroundStyle(HexBrandPalette.mutedInk)
           }
+
+          Spacer()
+
+          Text("Step \(step.position) of \(HexOnboardingStep.allCases.count)")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(HexBrandPalette.mutedInk)
         }
-        .disabled(step.previous == nil || isBusy)
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 14)
 
-        Spacer()
+        ProgressView(
+          value: Double(step.position),
+          total: Double(HexOnboardingStep.allCases.count)
+        )
+        .progressViewStyle(.linear)
+        .tint(HexBrandPalette.coral)
+        .padding(.horizontal, 24)
 
-        if step == .personality {
-          Text("Optional—you can finish this later in Settings.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        currentStep
+          .scrollContentBackground(.hidden)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        Rectangle()
+          .fill(HexBrandPalette.hairline)
+          .frame(height: 1)
+
+        HStack(spacing: 12) {
+          Button("Back") {
+            coordinator.goBack()
+          }
+          .buttonStyle(.hexSecondaryAction)
+          .disabled(step.previous == nil || isBusy)
+
+          Spacer()
+
+          if step == .personality {
+            Text("Optional — you can finish this later in Settings.")
+              .font(.caption)
+              .foregroundStyle(HexBrandPalette.mutedInk)
+          }
+
+          if isBusy {
+            ProgressView()
+              .controlSize(.small)
+              .accessibilityLabel(busyAccessibilityLabel)
+          }
+
+          Button(continueTitle, action: continueSetup)
+            .buttonStyle(.hexPrimaryAction)
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canContinue || isBusy)
+            .accessibilityIdentifier("onboardingContinueButton")
         }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(HexBrandPalette.surface.opacity(0.74))
+      }
+      .background(HexBrandPalette.canvas)
+    }
+    .tint(HexBrandPalette.coral)
+    .frame(minWidth: 860, minHeight: 620)
+    .onChange(of: step) { _, _ in
+      isStepHeadingFocused = true
+    }
+    .onAppear {
+      isStepHeadingFocused = true
+    }
+    .onDisappear {
+      advanceTask?.cancel()
+      advanceTask = nil
+    }
+  }
 
-        Button(continueTitle, action: continueSetup)
-          .buttonStyle(.borderedProminent)
-          .keyboardShortcut(.defaultAction)
-          .disabled(!canContinue || isBusy)
-          .accessibilityIdentifier("onboardingContinueButton")
-      }
-      .padding(16)
-      .background(.bar)
+  private var stepTitle: String {
+    switch step {
+    case .welcome:
+      "Meet Hex"
+    case .inference:
+      "Choose the AI model"
+    case .workspace:
+      "Choose a workspace"
+    case .tools:
+      "Choose what Hex can do"
+    case .permissions:
+      "Allow Mac access"
+    case .personality:
+      "Make Hex yours"
+    case .ready:
+      "Ready when you are"
     }
-    .frame(minWidth: 720, minHeight: 560)
-    .onChange(of: inference.saveGeneration) { _, _ in
-      guard isWaitingForInferenceSave else { return }
-      isWaitingForInferenceSave = false
-      residentSetup.modelID = inference.effectiveModelID
-      step = .workspace
+  }
+
+  private var stepDetail: String {
+    switch step {
+    case .welcome:
+      "A local-first agent that can think, build, and act across your Mac."
+    case .inference:
+      "Hex runs the agent; you choose where its answers come from."
+    case .workspace:
+      "Pick the folder where Hex may read, search, edit, and run commands."
+    case .tools:
+      "Turn on browser, screen, or Xcode control. Missing components install automatically."
+    case .permissions:
+      "See exactly what is ready, what macOS still needs, and what to do next."
+    case .personality:
+      "Give Hex a name, voice, and boundaries — or leave this for later."
+    case .ready:
+      "Review the essentials, then start your first conversation."
     }
-    .onChange(of: residentSetup.saveGeneration) { _, _ in
-      guard isWaitingForResidentSave else { return }
-      isWaitingForResidentSave = false
-      Task {
-        await startAtLogin.refresh()
-      }
-      step = .permissions
+  }
+
+  private var stepSymbol: String {
+    switch step {
+    case .welcome:
+      "sparkles"
+    case .inference:
+      "cpu"
+    case .workspace:
+      "folder"
+    case .tools:
+      "wrench.and.screwdriver"
+    case .permissions:
+      "hand.raised"
+    case .personality:
+      "person.crop.circle"
+    case .ready:
+      "checkmark.seal"
     }
   }
 
@@ -117,10 +205,10 @@ struct HexOnboardingView: View {
     case .welcome:
       "Get Started"
     case .inference:
-      "Save & Continue"
-    case .tools:
-      "Save & Continue"
-    case .workspace, .permissions:
+      inference.needsLocalModelDownload ? "Download & Continue" : "Save & Continue"
+    case .tools, .permissions:
+      residentSetup.isInstallingManagedTool ? "Setting Up Tools…" : "Save & Continue"
+    case .workspace:
       "Continue"
     case .personality:
       personality.profile.hasDraftContent ? "Save & Continue" : "Skip for Now"
@@ -138,7 +226,8 @@ struct HexOnboardingView: View {
     case .tools:
       residentSetup.canSave
     case .permissions:
-      startAtLogin.status == .enabled && accessibilityPermission.hasVerifiedGateway
+      residentSetup.canSave && startAtLogin.status == .enabled
+        && accessibilityPermission.hasVerifiedGateway
     case .personality:
       !personality.profile.hasDraftContent || personality.profile.canSave
     case .welcome, .ready:
@@ -147,47 +236,44 @@ struct HexOnboardingView: View {
   }
 
   private var isBusy: Bool {
-    isWaitingForInferenceSave || isWaitingForResidentSave || isWaitingForPersonalitySave
+    coordinator.isAdvancing
       || inference.isSaving || residentSetup.isSaving
-      || personality.profile.isSaving
+      || residentSetup.isInstallingManagedTool || personality.profile.isSaving
+  }
+
+  private var busyAccessibilityLabel: String {
+    residentSetup.isInstallingManagedTool ? "Setting up tools" : "Saving setup"
   }
 
   private func continueSetup() {
-    switch step {
-    case .welcome:
-      step = .inference
-    case .inference:
-      isWaitingForInferenceSave = true
-      inference.save()
-      if !inference.isSaving {
-        isWaitingForInferenceSave = false
-      }
-    case .workspace:
-      residentSetup.modelID = inference.effectiveModelID
-      step = .tools
-    case .tools:
-      isWaitingForResidentSave = true
-      residentSetup.save()
-      if !residentSetup.isSaving {
-        isWaitingForResidentSave = false
-      }
-    case .permissions:
-      step = .personality
-    case .personality:
-      guard personality.profile.hasDraftContent else {
-        step = .ready
-        return
-      }
-      isWaitingForPersonalitySave = true
-      Task {
-        await personality.profile.save()
-        isWaitingForPersonalitySave = false
-        if personality.profile.errorMessage == nil {
-          step = .ready
-        }
-      }
-    case .ready:
-      onFinish()
+    guard advanceTask == nil else { return }
+    advanceTask = Task {
+      defer { advanceTask = nil }
+      await coordinator.advance(
+        saveInference: {
+          guard await inference.saveAndWait(), let savedModelID = inference.savedModelID else {
+            return false
+          }
+          residentSetup.modelID = savedModelID
+          return true
+        },
+        prepareWorkspace: {
+          if let savedModelID = inference.savedModelID {
+            residentSetup.modelID = savedModelID
+          }
+        },
+        saveResident: {
+          guard await residentSetup.saveAndWait() else { return false }
+          await startAtLogin.refresh()
+          return true
+        },
+        savePersonality: {
+          guard personality.profile.hasDraftContent else { return true }
+          await personality.profile.save()
+          return personality.profile.errorMessage == nil
+        },
+        finish: onFinish
+      )
     }
   }
 }

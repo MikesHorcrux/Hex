@@ -10,6 +10,74 @@ import Testing
 @Suite("Gateway personality composition")
 struct HexGatewayPersonalityCompositionTests {
   @Test
+  func runsWithoutPersonalityWhenOptionalProfileHasNotBeenCreated() async throws {
+    let root = try Self.makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let profileStore = try JSONPersonalityProfileStore(
+      fileURL: root.appendingPathComponent("personality-profile.json", isDirectory: false)
+    )
+    let memoryStore = try JSONPersonalMemoryStore(
+      fileURL: root.appendingPathComponent("personal-memory.json", isDirectory: false)
+    )
+    let scope = try PersonalMemoryScope(rawValue: "hex")
+    let provider = GatewayTestInferenceProvider()
+    let journal = try await SQLiteAgentEventJournal.open(
+      configuration: SQLiteAgentEventJournalConfiguration(
+        databaseURL: root.appendingPathComponent("journal.sqlite", isDirectory: false)
+      )
+    )
+    let composition = try await HexGatewayComposition.open(
+      configuration: HexGatewayCompositionConfiguration(
+        journal: journal,
+        inferenceProvider: provider,
+        toolExecutor: GatewayTestToolExecutor(),
+        authorizationProvider: GatewayTestAuthorizationProvider(),
+        personalityContextService: try PersonalityContextService(
+          profileStore: profileStore,
+          memoryStore: memoryStore
+        ),
+        personalityMemoryQuery: try PersonalMemoryQuery(scope: scope, limit: 64)
+      )
+    )
+
+    _ = try await composition.transport.handshake(
+      GatewayHandshakeRequest(clientID: GatewayClientID())
+    )
+    let runID = AgentRunID()
+    let start = try await composition.transport.startRun(
+      GatewayStartRunRequest(
+        runID: runID,
+        modelID: provider.modelID,
+        initialMessages: [Message(role: .user, content: [.text("hello")])],
+        toolChoice: .none
+      )
+    )
+    let invocationID = try #require(start.invocationID)
+    let stream = try await composition.transport.eventRecords(
+      after: GatewayEventCursor(runID: runID, invocationID: invocationID)
+    )
+    for try await _ in stream {}
+
+    let records = try await journal.records(for: runID, after: nil, limit: 128)
+    let inferenceRequest = try #require(
+      records.compactMap { record -> InferenceRequest? in
+        guard case .inferenceRequested(let request) = record.event else {
+          return nil
+        }
+        return request
+      }.first
+    )
+    let contextText = inferenceRequest.messages.map(Self.messageText).joined(separator: "\n")
+    #expect(contextText.contains("You are Hex"))
+    #expect(contextText.contains("hello"))
+    #expect(!contextText.contains("<hex_personal_context_data"))
+
+    try await composition.close()
+    try await journal.close()
+  }
+
+  @Test
   func injectsDurablePersonalityIntoInferenceWithoutTranscriptEvents() async throws {
     let root = try Self.makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

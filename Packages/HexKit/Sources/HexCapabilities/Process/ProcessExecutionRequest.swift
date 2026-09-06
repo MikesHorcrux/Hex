@@ -1,4 +1,5 @@
 import Foundation
+import HexCore
 
 public struct ProcessExecutionRequest: Equatable, Sendable {
   /// An executable path passed directly to `posix_spawn`; arguments are never shell-interpolated.
@@ -16,6 +17,8 @@ public struct ProcessExecutionRequest: Equatable, Sendable {
   /// through the public initializer; the POSIX executor compares this snapshot immediately before
   /// `posix_spawn`.
   let expectedIdentity: ProcessExecutionIdentity?
+  /// Host-bound output ownership, never accepted from model arguments or the public initializer.
+  let outputArtifactMetadata: ArtifactMetadata?
 
   public init(
     executable: URL,
@@ -30,6 +33,7 @@ public struct ProcessExecutionRequest: Equatable, Sendable {
     self.environment = environment ?? [:]
     self.timeoutSeconds = timeoutSeconds
     expectedIdentity = nil
+    outputArtifactMetadata = nil
   }
 
   init(
@@ -38,7 +42,8 @@ public struct ProcessExecutionRequest: Equatable, Sendable {
     workingDirectory: URL,
     environment: [String: String],
     timeoutSeconds: Int,
-    expectedIdentity: ProcessExecutionIdentity?
+    expectedIdentity: ProcessExecutionIdentity?,
+    outputArtifactMetadata: ArtifactMetadata? = nil
   ) {
     self.executable = executable
     self.arguments = arguments
@@ -46,16 +51,20 @@ public struct ProcessExecutionRequest: Equatable, Sendable {
     self.environment = environment
     self.timeoutSeconds = timeoutSeconds
     self.expectedIdentity = expectedIdentity
+    self.outputArtifactMetadata = outputArtifactMetadata
   }
 
-  func requiringIdentity(_ identity: ProcessExecutionIdentity) -> ProcessExecutionRequest {
+  func requiringIdentity(
+    _ identity: ProcessExecutionIdentity, outputArtifactMetadata: ArtifactMetadata? = nil
+  ) -> ProcessExecutionRequest {
     ProcessExecutionRequest(
       executable: executable,
       arguments: arguments,
       workingDirectory: workingDirectory,
       environment: environment,
       timeoutSeconds: timeoutSeconds,
-      expectedIdentity: identity
+      expectedIdentity: identity,
+      outputArtifactMetadata: outputArtifactMetadata
     )
   }
 }

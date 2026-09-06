@@ -5,9 +5,10 @@ extension POSIXProcessExecutor {
   func monitor(
     _ process: SpawnedProcess,
     timeoutSeconds: Int,
-    startedAt: UInt64
+    startedAt: UInt64,
+    capture initialCapture: ProcessOutputCapture
   ) async throws -> ProcessExecutionResult {
-    var output = Data()
+    var capture = initialCapture
     var leaderHasExited = false
     var leaderMayHaveBeenReaped = false
     var cleanupAttempted = false
@@ -18,28 +19,25 @@ extension POSIXProcessExecutor {
     guard !deadlineOverflowed else {
       cleanupAttempted = true
       _ = try terminateAndReap(process.processID)
+      await capture.retainInterruptedOutput()
       throw ProcessExecutionError.invalidRequest
     }
 
     do {
       while true {
         try Task.checkCancellation()
-        let drainResult = try drain(
-          process.outputDescriptor,
-          into: &output,
-          maximumBytes: configuration.maximumOutputBytes
-        )
+        let drainResult = try drainBatch(process.outputDescriptor)
         let reachedEndOfFile = drainResult.reachedEndOfFile
-        if drainResult.exceededLimit {
+        let accepted = drainResult.data.isEmpty ? true : try await capture.append(drainResult.data)
+        if !accepted {
           cleanupAttempted = true
           _ = try terminateAndReap(
             process.processID,
             leaderHasExited: leaderHasExited
           )
-          return ProcessExecutionResult(
-            termination: .outputLimitExceeded,
-            output: output,
-            durationMilliseconds: elapsedMilliseconds(since: startedAt)
+          return await capture.finish(
+            termination: capture.failure == nil ? .outputLimitExceeded : .outputCaptureFailed,
+            durationMilliseconds: elapsedMilliseconds(since: startedAt), reachedEOF: false
           )
         }
 
@@ -56,10 +54,9 @@ extension POSIXProcessExecutor {
             process.processID,
             leaderHasExited: true
           )
-          return ProcessExecutionResult(
+          return await capture.finish(
             termination: termination(from: status),
-            output: output,
-            durationMilliseconds: elapsedMilliseconds(since: startedAt)
+            durationMilliseconds: elapsedMilliseconds(since: startedAt), reachedEOF: true
           )
         }
 
@@ -69,32 +66,40 @@ extension POSIXProcessExecutor {
             process.processID,
             leaderHasExited: leaderHasExited
           )
-          return ProcessExecutionResult(
+          return await capture.finish(
             termination: .timedOut,
-            output: output,
-            durationMilliseconds: elapsedMilliseconds(since: startedAt)
+            durationMilliseconds: elapsedMilliseconds(since: startedAt), reachedEOF: false
           )
         }
-        try await Task.sleep(
-          for: .milliseconds(configuration.pollingIntervalMilliseconds)
-        )
+        if drainResult.data.isEmpty {
+          try await Task.sleep(for: .milliseconds(configuration.pollingIntervalMilliseconds))
+        } else {
+          // Continuous output must return to deadline/cancellation checks after every bounded
+          // append, rather than draining a permanently readable pipe until EAGAIN.
+          await Task.yield()
+        }
       }
     } catch is CancellationError {
-      if !cleanupAttempted {
-        cleanupAttempted = true
-        guard !leaderMayHaveBeenReaped else {
-          throw ProcessExecutionError.cleanupFailed
+      do {
+        if !cleanupAttempted {
+          cleanupAttempted = true
+          guard !leaderMayHaveBeenReaped else { throw ProcessExecutionError.cleanupFailed }
+          _ = try terminateAndReap(process.processID, leaderHasExited: leaderHasExited)
         }
-        _ = try terminateAndReap(
-          process.processID,
-          leaderHasExited: leaderHasExited
-        )
+      } catch {
+        await capture.retainInterruptedOutput()
+        throw error
       }
-      throw CancellationError()
+      // The owned leader is reaped and cleanup is known. Return the partial-output receipt so the
+      // runtime can commit toolFinished before its next cancellation checkpoint ends the run.
+      return await capture.finish(
+        termination: .cancelled, durationMilliseconds: elapsedMilliseconds(since: startedAt),
+        reachedEOF: false)
     } catch {
       if !cleanupAttempted {
         cleanupAttempted = true
         guard !leaderMayHaveBeenReaped else {
+          await capture.retainInterruptedOutput()
           throw ProcessExecutionError.cleanupFailed
         }
         do {
@@ -103,9 +108,17 @@ extension POSIXProcessExecutor {
             leaderHasExited: leaderHasExited
           )
         } catch let cleanupError {
+          await capture.retainInterruptedOutput()
           throw cleanupError
         }
       }
+      if error as? ProcessExecutionError == .ioFailure {
+        capture.markReadFailure()
+        return await capture.finish(
+          termination: .outputCaptureFailed,
+          durationMilliseconds: elapsedMilliseconds(since: startedAt), reachedEOF: false)
+      }
+      await capture.retainInterruptedOutput()
       throw error
     }
   }
@@ -206,39 +219,28 @@ extension POSIXProcessExecutor {
     return status
   }
 
-  private func drain(
-    _ descriptor: Int32,
-    into output: inout Data,
-    maximumBytes: Int
-  ) throws -> (reachedEndOfFile: Bool, exceededLimit: Bool) {
+  private func drainBatch(_ descriptor: Int32) throws -> (data: Data, reachedEndOfFile: Bool) {
     var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
-    while true {
+    for _ in 0..<4 {
       try Task.checkCancellation()
       let count = buffer.withUnsafeMutableBytes { bytes in
         Darwin.read(descriptor, bytes.baseAddress, bytes.count)
       }
       if count > 0 {
-        let remaining = maximumBytes - output.count
-        let accepted = min(remaining, count)
-        if accepted > 0 {
-          output.append(contentsOf: buffer.prefix(accepted))
-        }
-        if accepted < count {
-          return (false, true)
-        }
-        continue
+        return (Data(buffer.prefix(count)), false)
       }
       if count == 0 {
-        return (true, false)
+        return (Data(), true)
       }
       if errno == EINTR {
         continue
       }
       if errno == EAGAIN || errno == EWOULDBLOCK {
-        return (false, false)
+        return (Data(), false)
       }
       throw ProcessExecutionError.ioFailure
     }
+    return (Data(), false)
   }
 
   private func termination(from status: Int32) -> ProcessTermination {

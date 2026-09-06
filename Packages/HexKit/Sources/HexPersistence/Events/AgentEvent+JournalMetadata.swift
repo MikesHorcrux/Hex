@@ -7,6 +7,10 @@ extension AgentEvent {
       "run_started"
     case .messageAppended:
       "message_appended"
+    case .contextCompactionStarted:
+      "context_compaction_started"
+    case .contextCompacted:
+      "context_compacted"
     case .inferenceRequested:
       "inference_requested"
     case .inferenceEvent:

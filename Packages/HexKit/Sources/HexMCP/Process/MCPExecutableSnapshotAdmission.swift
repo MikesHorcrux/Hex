@@ -1,7 +1,9 @@
 import Darwin
 
 enum MCPExecutableSnapshotAdmission {
-  static let productionNamespaceBasename = ".hex-mcp-snapshots.v1"
+  /// Version two adds descriptor-backed slot leases and persistent inode identities. Keeping a
+  /// distinct namespace prevents a pre-lease slot from being mistaken for safely reclaimable data.
+  static let productionNamespaceBasename = ".hex-mcp-snapshots.v2"
 
   static func claimSlot(
     policy: MCPExecutableSnapshotPolicy,
@@ -52,6 +54,13 @@ enum MCPExecutableSnapshotAdmission {
       Darwin.close(temporaryDescriptor)
       throw MCPClientSessionError.connectionClosed
     }
+    var transfersNamespaceDescriptors = false
+    defer {
+      if !transfersNamespaceDescriptors {
+        Darwin.close(namespaceDescriptor)
+        Darwin.close(temporaryDescriptor)
+      }
+    }
     var namespaceStatus = stat()
     var namedNamespaceStatus = stat()
     let namedNamespaceResult = namespaceBasename.withCString { name in
@@ -67,47 +76,21 @@ enum MCPExecutableSnapshotAdmission {
         namedNamespaceStatus
       )
     else {
-      Darwin.close(namespaceDescriptor)
-      Darwin.close(temporaryDescriptor)
       throw MCPClientSessionError.connectionClosed
     }
 
     for index in 0..<policy.maximumRetainedSlots {
       let slotBasename = slotBasename(index)
-      let createResult = slotBasename.withCString { name in
-        mkdirat(namespaceDescriptor, name, 0o700)
-      }
-      if createResult != 0 {
-        if errno == EEXIST { continue }
-        Darwin.close(namespaceDescriptor)
-        Darwin.close(temporaryDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      let slotDescriptor = openClaimedSlot(namespaceDescriptor, slotBasename)
-      guard slotDescriptor >= 0 else {
-        Darwin.close(namespaceDescriptor)
-        Darwin.close(temporaryDescriptor)
-        throw MCPClientSessionError.connectionClosed
-      }
-      var slotStatus = stat()
-      var namedSlotStatus = stat()
-      let namedSlotResult = slotBasename.withCString { name in
-        fstatat(namespaceDescriptor, name, &namedSlotStatus, AT_SYMLINK_NOFOLLOW)
-      }
       guard
-        fstat(slotDescriptor, &slotStatus) == 0,
-        namedSlotResult == 0,
-        MCPExecutableSnapshot.isAcceptableSnapshotDirectory(slotStatus),
-        slotStatus.st_mode & 0o777 == 0o700,
-        MCPExecutableSnapshot.sameSnapshotDirectoryIdentityAndPermissions(
-          slotStatus,
-          namedSlotStatus
+        let claimedSlot = try claimPreparedSlot(
+          index: index,
+          basename: slotBasename,
+          namespaceDescriptor: namespaceDescriptor,
+          policy: policy,
+          openClaimedSlot: openClaimedSlot
         )
       else {
-        Darwin.close(slotDescriptor)
-        Darwin.close(namespaceDescriptor)
-        Darwin.close(temporaryDescriptor)
-        throw MCPClientSessionError.connectionClosed
+        continue
       }
       var finalNamespaceStatus = stat()
       var finalNamedNamespaceStatus = stat()
@@ -131,11 +114,10 @@ enum MCPExecutableSnapshotAdmission {
           finalNamedNamespaceStatus
         )
       else {
-        Darwin.close(slotDescriptor)
-        Darwin.close(namespaceDescriptor)
-        Darwin.close(temporaryDescriptor)
+        Darwin.close(claimedSlot.descriptor)
         throw MCPClientSessionError.connectionClosed
       }
+      transfersNamespaceDescriptors = true
       return MCPExecutableSnapshot.PrivateDirectory(
         namespaceParentDescriptor: temporaryDescriptor,
         namespaceBasename: namespaceBasename,
@@ -143,13 +125,11 @@ enum MCPExecutableSnapshotAdmission {
         parentDescriptor: namespaceDescriptor,
         basename: slotBasename,
         path: "/private/tmp/\(namespaceBasename)/\(slotBasename)",
-        descriptor: slotDescriptor,
-        initialStatus: slotStatus
+        descriptor: claimedSlot.descriptor,
+        initialStatus: claimedSlot.status
       )
     }
 
-    Darwin.close(namespaceDescriptor)
-    Darwin.close(temporaryDescriptor)
     throw MCPExecutableSnapshotAdmissionError.namespaceExhausted(
       MCPExecutableSnapshotNamespaceUsage(
         namespacePath: "/private/tmp/\(namespaceBasename)",
@@ -159,7 +139,7 @@ enum MCPExecutableSnapshotAdmission {
     )
   }
 
-  private static func slotBasename(_ index: Int) -> String {
+  static func slotBasename(_ index: Int) -> String {
     let digits = String(index)
     return "slot-" + String(repeating: "0", count: max(0, 4 - digits.count)) + digits
   }

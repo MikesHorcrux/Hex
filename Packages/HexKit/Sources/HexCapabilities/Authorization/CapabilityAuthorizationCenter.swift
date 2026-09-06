@@ -8,7 +8,8 @@ public actor CapabilityAuthorizationCenter: AuthorizationProvider {
   private let prompter: any AuthorizationPrompting
   private let persistentStore: any AuthorizationGrantStore
   private let configuration: CapabilityAuthorizationCenterConfiguration
-  private let automaticallyAllowsValidatedRequests: Bool
+  private let authorizationMode: HexAuthorizationMode
+  private var runModes: [AgentRunID: HexAuthorizationMode] = [:]
   private var runGrants: Set<RunAuthorizationGrantKey> = []
   private var sessionGrants: Set<AuthorizationGrantKey> = []
 
@@ -17,19 +18,50 @@ public actor CapabilityAuthorizationCenter: AuthorizationProvider {
     prompter: any AuthorizationPrompting = DenyingAuthorizationPrompter(),
     persistentStore: any AuthorizationGrantStore = UnavailableAuthorizationGrantStore(),
     configuration: CapabilityAuthorizationCenterConfiguration = .standard,
-    automaticallyAllowsValidatedRequests: Bool = false
+    authorizationMode: HexAuthorizationMode = .askEveryTime
   ) {
     self.sessionID = sessionID
     self.prompter = prompter
     self.persistentStore = persistentStore
     self.configuration = configuration
-    self.automaticallyAllowsValidatedRequests = automaticallyAllowsValidatedRequests
+    self.authorizationMode = authorizationMode
+  }
+
+  /// Source compatibility for existing compositions. New callers should select the explicit mode.
+  public init(
+    sessionID: AuthorizationSessionID = AuthorizationSessionID(),
+    prompter: any AuthorizationPrompting = DenyingAuthorizationPrompter(),
+    persistentStore: any AuthorizationGrantStore = UnavailableAuthorizationGrantStore(),
+    configuration: CapabilityAuthorizationCenterConfiguration = .standard,
+    automaticallyAllowsValidatedRequests: Bool
+  ) {
+    self.init(
+      sessionID: sessionID, prompter: prompter, persistentStore: persistentStore,
+      configuration: configuration,
+      authorizationMode: automaticallyAllowsValidatedRequests ? .fullAccess : .askEveryTime)
+  }
+
+  public func beginRun(_ runID: AgentRunID, authorizationMode: HexAuthorizationMode?) async throws {
+    try Task.checkCancellation()
+    let mode = authorizationMode ?? self.authorizationMode
+    if let previous = runModes[runID] {
+      guard previous == mode else { throw AuthorizationPolicyError.runPolicyAlreadyEstablished }
+      return
+    }
+    guard runModes.count < configuration.maximumRunGrants else {
+      throw CapabilityAuthorizationCenterError.capacityExceeded(
+        "The run approval-policy limit was reached.")
+    }
+    runModes[runID] = mode
   }
 
   public func authorize(_ request: AuthorizationRequest) async throws -> AuthorizationDecision {
     try Task.checkCancellation()
     try validate(request)
-    if automaticallyAllowsValidatedRequests {
+    let mode = runModes[request.runID] ?? authorizationMode
+    if mode == .fullAccess
+      || (mode == .approveForMe && LowRiskAuthorizationPolicy.automaticallyAllows(request))
+    {
       return .allow
     }
     let grantKey = AuthorizationGrantKey(request: request)
@@ -85,6 +117,7 @@ public actor CapabilityAuthorizationCenter: AuthorizationProvider {
 
   public func endRun(_ runID: AgentRunID) async {
     runGrants = runGrants.filter { $0.runID != runID }
+    runModes.removeValue(forKey: runID)
   }
 
   public func revokeSessionGrant(_ key: AuthorizationGrantKey) {

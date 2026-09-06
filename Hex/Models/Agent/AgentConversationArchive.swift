@@ -1,7 +1,8 @@
 import Foundation
 
 nonisolated struct AgentConversationArchive: Codable, Equatable, Sendable {
-  static let currentSchemaVersion: UInt16 = 1
+  static let currentSchemaVersion: UInt16 = 2
+  static let legacySchemaVersion: UInt16 = 1
 
   let schemaVersion: UInt16
   let selectedConversationID: UUID?

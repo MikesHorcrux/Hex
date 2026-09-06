@@ -1,6 +1,6 @@
 import HexCore
 
-enum HexJSONValueFormatter {
+nonisolated enum HexJSONValueFormatter {
   static func string(from value: JSONValue) -> String {
     switch value {
     case .null:

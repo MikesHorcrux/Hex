@@ -6,6 +6,106 @@ import Testing
 
 @Suite("MCP tool executor")
 struct MCPToolExecutorTests {
+  @Test("Publishes provider-portable names and routes normalized calls")
+  func publishesProviderPortableNames() async throws {
+    let session = FakeSession(
+      serverID: "fixture",
+      tools: [
+        MCPRemoteTool(
+          name: "inspect.window_state",
+          description: "Inspect a window.",
+          inputSchema: ["type": .string("object")]
+        )
+      ],
+      result: MCPRemoteToolResult(content: [.text("window")], isError: false)
+    )
+    let executor = try MCPToolExecutor(sessions: [session])
+    try await executor.start()
+
+    let definition = try #require(await executor.availableTools().first)
+    #expect(definition.name.utf8.count <= 64)
+    #expect(
+      definition.name.utf8.allSatisfy { byte in
+        (0x30...0x39).contains(byte)
+          || (0x41...0x5A).contains(byte)
+          || (0x61...0x7A).contains(byte)
+          || byte == 0x5F
+          || byte == 0x2D
+      }
+    )
+
+    _ = try await executor.execute(
+      ToolCall(name: definition.name, arguments: [:]),
+      in: ToolExecutionContext(runID: AgentRunID())
+    )
+    #expect(
+      await session.receivedCalls() == [
+        MCPRemoteToolCall(name: "inspect.window_state", arguments: [:])
+      ]
+    )
+    await executor.stop()
+  }
+
+  @Test("Provider-portable aliases remain bounded and collision resistant")
+  func providerPortableAliasesRemainBoundedAndDistinct() async throws {
+    let remoteNames = [
+      "inspect.window_state",
+      "inspect_window_state",
+      String(repeating: "a", count: 128),
+    ]
+    let session = FakeSession(
+      serverID: "fixture",
+      tools: remoteNames.map { name in
+        MCPRemoteTool(name: name, inputSchema: ["type": .string("object")])
+      },
+      result: MCPRemoteToolResult(content: [.text("ok")], isError: false)
+    )
+    let executor = try MCPToolExecutor(sessions: [session])
+    try await executor.start()
+
+    let definitions = try await executor.availableTools()
+    #expect(definitions.count == remoteNames.count)
+    #expect(Set(definitions.map(\.name)).count == remoteNames.count)
+    #expect(definitions.allSatisfy { $0.name.utf8.count <= 64 })
+
+    for definition in definitions {
+      _ = try await executor.execute(
+        ToolCall(name: definition.name, arguments: [:]),
+        in: ToolExecutionContext(runID: AgentRunID())
+      )
+    }
+    #expect(Set(await session.receivedCalls().map(\.name)) == Set(remoteNames))
+    await executor.stop()
+  }
+
+  @Test("Provider-portable aliases preserve the server and tool boundary")
+  func providerPortableAliasesPreserveComponentBoundary() async throws {
+    let underscoredServer = FakeSession(
+      serverID: "a_b",
+      tools: [MCPRemoteTool(name: "c", inputSchema: ["type": .string("object")])],
+      result: MCPRemoteToolResult(content: [.text("first")], isError: false)
+    )
+    let underscoredTool = FakeSession(
+      serverID: "a",
+      tools: [MCPRemoteTool(name: "b_c", inputSchema: ["type": .string("object")])],
+      result: MCPRemoteToolResult(content: [.text("second")], isError: false)
+    )
+    let executor = try MCPToolExecutor(sessions: [underscoredServer, underscoredTool])
+    try await executor.start()
+
+    let definitions = try await executor.availableTools()
+    #expect(definitions.map(\.name) == ["mcp_1_a_b_c", "mcp_3_a_b_c"])
+    for definition in definitions {
+      _ = try await executor.execute(
+        ToolCall(name: definition.name, arguments: [:]),
+        in: ToolExecutionContext(runID: AgentRunID())
+      )
+    }
+    #expect(await underscoredServer.receivedCalls().map(\.name) == ["c"])
+    #expect(await underscoredTool.receivedCalls().map(\.name) == ["b_c"])
+    await executor.stop()
+  }
+
   @Test("Publishes a cached namespaced catalog and routes exact remote calls")
   func publishesCatalogAndRoutesCalls() async throws {
     let session = FakeSession(
@@ -32,15 +132,15 @@ struct MCPToolExecutorTests {
     try await executor.start()
 
     let definitions = try await executor.availableTools()
-    #expect(definitions.map(\.name) == ["mcp.xcode.build_project"])
+    #expect(definitions.map(\.name) == ["mcp_5_xcode_build_project"])
 
     let call = ToolCall(
-      name: "mcp.xcode.build_project",
+      name: "mcp_5_xcode_build_project",
       arguments: ["scheme": .string("TOP_SECRET_SCHEME_ARGUMENT")]
     )
     let context = ToolExecutionContext(runID: AgentRunID())
     let authorization = try await executor.authorizationRequest(for: call, in: context)
-    #expect(authorization.capability.rawValue == "mcp.xcode.build_project")
+    #expect(authorization.capability.rawValue == "mcp_5_xcode_build_project")
     #expect(authorization.resource == "mcp://xcode/build_project")
     #expect(!String(describing: authorization).contains("TOP_SECRET_SCHEME_ARGUMENT"))
 
@@ -99,7 +199,7 @@ struct MCPToolExecutorTests {
     )
     let executor = try MCPToolExecutor(sessions: [session])
     try await executor.start()
-    let call = ToolCall(name: "mcp.fixture.inspect", arguments: [:])
+    let call = ToolCall(name: "mcp_7_fixture_inspect", arguments: [:])
 
     let result = try await executor.execute(
       call,
@@ -142,10 +242,10 @@ struct MCPToolExecutorTests {
     let executor = try MCPToolExecutor(sessions: [session])
     try await executor.start()
 
-    #expect(try await executor.availableTools().map(\.name) == ["mcp.fixture.ordinary_job"])
+    #expect(try await executor.availableTools().map(\.name) == ["mcp_7_fixture_ordinary_job"])
     await #expect(throws: MCPToolExecutorError.unknownTool) {
       try await executor.execute(
-        ToolCall(name: "mcp.fixture.long_job", arguments: [:]),
+        ToolCall(name: "mcp_7_fixture_long_job", arguments: [:]),
         in: ToolExecutionContext(runID: AgentRunID())
       )
     }
@@ -214,7 +314,7 @@ struct MCPToolExecutorTests {
 
     await #expect(throws: MCPToolExecutorError.invalidToolResult) {
       try await executor.execute(
-        ToolCall(name: "mcp.fixture.oversized", arguments: [:]),
+        ToolCall(name: "mcp_7_fixture_oversized", arguments: [:]),
         in: ToolExecutionContext(runID: AgentRunID())
       )
     }
@@ -238,7 +338,7 @@ struct MCPToolExecutorTests {
 
     try await cancelledWaiter.value
     try await successfulWaiter.value
-    #expect(try await executor.availableTools().map(\.name) == ["mcp.gated.echo"])
+    #expect(try await executor.availableTools().map(\.name) == ["mcp_5_gated_echo"])
     #expect(await session.connectionCounts() == ConnectionCounts(connects: 1, disconnects: 0))
 
     await executor.stop()
@@ -271,6 +371,40 @@ struct MCPToolExecutorTests {
     await secondStop.value
     #expect(await completions.count() == 2)
     #expect(await session.connectionCounts() == ConnectionCounts(connects: 1, disconnects: 1))
+  }
+
+  @Test("A completed concurrent stop batch leaves a restartable state")
+  func concurrentStopCallersLeaveRestartableState() async throws {
+    for iteration in 0..<32 {
+      let session = GatedDisconnectSession(serverID: "gated-\(iteration)")
+      let executor = try MCPToolExecutor(sessions: [session])
+      try await executor.start()
+
+      let firstStop = Task(priority: .background) {
+        await executor.stop()
+      }
+      await session.waitUntilDisconnectStarts()
+      let additionalStops = (0..<8).map { _ in
+        Task(priority: .high) {
+          await executor.stop()
+        }
+      }
+      for _ in 0..<100 {
+        await Task.yield()
+      }
+
+      await session.releaseDisconnect()
+      await firstStop.value
+      for stop in additionalStops {
+        await stop.value
+      }
+
+      // A yield does not guarantee every stop task has entered the actor. Restart only after
+      // the batch completes; otherwise a late stop is permitted to invalidate that new start.
+      try await executor.start()
+      #expect(await session.connectionCounts() == ConnectionCounts(connects: 2, disconnects: 1))
+      await executor.stop()
+    }
   }
 
   actor FakeSession: MCPClientSession {

@@ -11,6 +11,7 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
   public let models: [ModelDescriptor]
   public let privacyMode: OpenAIResponsesPrivacyMode
   public let requestTimeout: TimeInterval
+  public let reasoningEffort: OpenAIResponsesReasoningEffort
   public let requestReasoningSummaries: Bool
   public let maximumMessages: Int
   public let maximumTools: Int
@@ -45,13 +46,14 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
     models: [ModelDescriptor],
     privacyMode: OpenAIResponsesPrivacyMode? = nil,
     requestTimeout: TimeInterval = 120,
+    reasoningEffort: OpenAIResponsesReasoningEffort = .low,
     requestReasoningSummaries: Bool = true,
     maximumMessages: Int = 4_096,
     maximumTools: Int = 512,
     maximumIdentifierBytes: Int = 512,
     maximumInputValueBytes: Int = 8 * 1_024 * 1_024,
     maximumRequestBodyBytes: Int = 16 * 1_024 * 1_024,
-    maximumSSELineBytes: Int = 64 * 1_024,
+    maximumSSELineBytes: Int = 8 * 1_024 * 1_024,
     maximumSSEEventBytes: Int = 8 * 1_024 * 1_024,
     maximumResponseBytes: Int = 32 * 1_024 * 1_024,
     maximumStreamEvents: Int = 50_000,
@@ -111,7 +113,7 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
       (1...4_096).contains(maximumIdentifierBytes),
       (1...32 * 1_024 * 1_024).contains(maximumInputValueBytes),
       (1...64 * 1_024 * 1_024).contains(maximumRequestBodyBytes),
-      (1...1 * 1_024 * 1_024).contains(maximumSSELineBytes),
+      (1...16 * 1_024 * 1_024).contains(maximumSSELineBytes),
       (1...16 * 1_024 * 1_024).contains(maximumSSEEventBytes),
       (1...128 * 1_024 * 1_024).contains(maximumResponseBytes),
       (1...200_000).contains(maximumStreamEvents),
@@ -160,6 +162,7 @@ public struct OpenAIResponsesConfiguration: Equatable, Sendable {
     self.models = models
     self.privacyMode = resolvedPrivacyMode
     self.requestTimeout = requestTimeout
+    self.reasoningEffort = reasoningEffort
     self.requestReasoningSummaries = requestReasoningSummaries
     self.maximumMessages = maximumMessages
     self.maximumTools = maximumTools

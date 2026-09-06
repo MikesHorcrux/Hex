@@ -68,13 +68,12 @@ struct HexGatewayInferenceProviderFactoryTests {
       openAIAuthenticationMethod: .chatGPT
     )
 
-    let provider = try HexGatewayInferenceProviderFactory().makeInferenceProvider(
-      for: settings,
-      authorizationProvider: authorizationProvider
-    )
+    let provider = try HexGatewayInferenceProviderFactory(
+      makeChatGPTModelCatalog: { _ in StubModelCatalog() }
+    ).makeInferenceProvider(for: settings, authorizationProvider: authorizationProvider)
     let models = try await provider.availableModels()
 
-    #expect(models.map(\.id.rawValue) == ["subscription-model"])
+    #expect(models.map(\.id.rawValue) == ["subscription-model", "another-model"])
     #expect(await authorizationProvider.didReadValue() == false)
   }
 
@@ -129,6 +128,16 @@ struct HexGatewayInferenceProviderFactoryTests {
 
     func didReadValue() -> Bool {
       didRead
+    }
+  }
+
+  private struct StubModelCatalog: OpenAIModelCatalogLoading {
+    func availableModels() async throws -> [ModelDescriptor] {
+      ["subscription-model", "another-model"].map {
+        ModelDescriptor(
+          id: ModelID(rawValue: $0), providerID: ProviderID(rawValue: "openai"),
+          displayName: $0, capabilities: [.textInput, .streaming])
+      }
     }
   }
 

@@ -1,0 +1,48 @@
+import Foundation
+import HexCore
+import HexRuntime
+import Testing
+
+@Suite("Conservative context token estimation")
+struct ConservativeAgentContextTokenEstimatorTests {
+  @Test
+  func usesSerializedUTF8AndFramingRatherThanCharacterCount() throws {
+    let message = Message(role: .user, content: [.text("Hello 🐑 漢字")])
+    let tool = ToolDefinition(
+      name: "inspect", description: "Tool",
+      inputSchema: [
+        "type": .string("object"),
+        "properties": .object(["path": .object(["type": .string("string")])]),
+      ])
+    let estimator = ConservativeAgentContextTokenEstimator()
+    #expect(try estimator.estimateTokens(in: message) == JSONEncoder().encode(message).count + 16)
+    #expect(try estimator.estimateTokens(in: tool) == JSONEncoder().encode(tool).count + 8)
+  }
+
+  @Test
+  func toolResultImagesAreUnestimatedEvenWhenTheURLIsShort() throws {
+    let image = ImageContent(
+      sourceURL: URL(fileURLWithPath: "/not-read.png"), mediaType: "image/png")
+    let result = ToolResult(
+      toolCallID: ToolCallID(rawValue: "call"), status: .success, output: .null,
+      content: [.image(image)]
+    )
+    #expect(throws: AgentContextPlanningError.imageCostUnavailable) {
+      try ConservativeAgentContextTokenEstimator().estimateTokens(
+        in: Message(role: .tool, content: [.toolResult(result)])
+      )
+    }
+  }
+
+  @Test
+  func invalidJSONSchemaReturnsATypedErrorWithoutItsContents() {
+    let tool = ToolDefinition(
+      name: "invalid", description: "Sensitive description",
+      inputSchema: [
+        "private": .number(.infinity)
+      ])
+    #expect(throws: AgentContextPlanningError.unserializableContent) {
+      try ConservativeAgentContextTokenEstimator().estimateTokens(in: tool)
+    }
+  }
+}

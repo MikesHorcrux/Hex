@@ -11,10 +11,12 @@ public actor HexGatewayClient {
   let configuredMaximumVersion: GatewayProtocolVersion
   let handshakeRequest: GatewayHandshakeRequest
   var gatewayInstanceID: GatewayInstanceID?
+  var connectedProtocolVersion: GatewayProtocolVersion?
   var acknowledgedSequences: [GatewayRunAcknowledgementKey: UInt64] = [:]
   var terminalAcknowledgements: Set<GatewayRunAcknowledgementKey> = []
   var acknowledgementOrder: [GatewayRunAcknowledgementKey] = []
   var startAttemptIDs: [AgentRunID: GatewayClientStartAttemptID] = [:]
+  var eventCheckpointRestorations: [AgentRunID: UUID] = [:]
   var connectionAttemptID: GatewayClientConnectionAttemptID?
   var connectionGenerationID = GatewayClientConnectionGenerationID()
   var connectionLease: GatewayTransportConnectionLease?

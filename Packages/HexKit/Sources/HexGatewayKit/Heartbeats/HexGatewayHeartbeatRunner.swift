@@ -23,12 +23,14 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
   }
 
   private let client: HexGatewayClient
+  private let authorizationPolicy: HexHeartbeatAuthorizationPolicy
   private let modelID: ModelID
   private let workspaceRoot: URL
   private let timeoutNanoseconds: UInt64
 
   public init(
     client: HexGatewayClient,
+    authorizationPolicy: HexHeartbeatAuthorizationPolicy,
     modelID: ModelID,
     workspaceRoot: URL,
     configuration: HexHeartbeatSchedulerConfiguration = .standard
@@ -44,6 +46,7 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
     }
 
     self.client = client
+    self.authorizationPolicy = authorizationPolicy
     self.modelID = modelID
     self.workspaceRoot = workspaceRoot
     timeoutNanoseconds = UInt64(requestedNanoseconds.rounded(.up))
@@ -53,7 +56,23 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
     _ request: HexHeartbeatExecutionRequest
   ) async throws -> HexHeartbeatExecutionResult {
     try Task.checkCancellation()
-    let runID = AgentRunID()
+    guard let runID = request.lease.runID else {
+      throw RunnerError.invalidConfiguration
+    }
+    try await authorizationPolicy.register(runID)
+    do {
+      let result = try await run(request, runID: runID)
+      await authorizationPolicy.release(runID)
+      return result
+    } catch {
+      await authorizationPolicy.release(runID)
+      throw error
+    }
+  }
+
+  private func run(_ request: HexHeartbeatExecutionRequest, runID: AgentRunID) async throws
+    -> HexHeartbeatExecutionResult
+  {
     let startRequest = GatewayStartRunRequest(
       runID: runID,
       modelID: modelID,
@@ -68,6 +87,14 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
       startResponse = try await client.startRun(startRequest)
     } catch is CancellationError {
       throw CancellationError()
+    } catch let failure as GatewayFailure where failure.code == .toolMaintenanceInProgress {
+      try Task.checkCancellation()
+      await authorizationPolicy.release(runID, confirmedNotAdmitted: true)
+      return .failed(
+        HexHeartbeatFailure(
+          code: .gatewayBusy,
+          message: "Hex is checking a tool connection. This scheduled task was not started.",
+          retryable: true))
     } catch {
       if Task.isCancelled {
         throw CancellationError()
@@ -77,6 +104,7 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
 
     switch startResponse.disposition {
     case .busy:
+      await authorizationPolicy.release(runID, confirmedNotAdmitted: true)
       return .failed(
         HexHeartbeatFailure(
           code: .gatewayBusy,
@@ -99,39 +127,30 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
     runID: AgentRunID,
     invocationID: GatewayRunInvocationID
   ) async throws -> HexHeartbeatExecutionResult {
-    try await withTaskCancellationHandler {
-      do {
-        return try await consumeWithTimeout(
-          runID: runID,
-          invocationID: invocationID
+    do {
+      return try await consumeWithTimeout(
+        runID: runID,
+        invocationID: invocationID
+      )
+    } catch RunnerError.timedOut {
+      await cancelAdmittedRun(runID: runID, invocationID: invocationID)
+      return .failed(
+        HexHeartbeatFailure(
+          code: .timedOut,
+          message: RunnerError.timedOut.errorDescription
+            ?? "The heartbeat run timed out.",
+          retryable: true
         )
-      } catch RunnerError.timedOut {
-        await cancelAdmittedRun(runID: runID, invocationID: invocationID)
-        return .failed(
-          HexHeartbeatFailure(
-            code: .timedOut,
-            message: RunnerError.timedOut.errorDescription
-              ?? "The heartbeat run timed out.",
-            retryable: true
-          )
-        )
-      } catch is CancellationError {
+      )
+    } catch is CancellationError {
+      await cancelAdmittedRun(runID: runID, invocationID: invocationID)
+      throw CancellationError()
+    } catch {
+      await cancelAdmittedRun(runID: runID, invocationID: invocationID)
+      if Task.isCancelled {
         throw CancellationError()
-      } catch {
-        if Task.isCancelled {
-          throw CancellationError()
-        }
-        return .failed(Self.failure(from: error))
       }
-    } onCancel: {
-      let client = self.client
-      Task.detached {
-        await Self.cancelAdmittedRun(
-          client: client,
-          runID: runID,
-          invocationID: invocationID
-        )
-      }
+      return .failed(Self.failure(from: error))
     }
   }
 
@@ -166,9 +185,6 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
       for: runID,
       invocationID: invocationID
     )
-    var authorizationRequired = false
-    var cancellationRequested = false
-
     do {
       for try await envelope in stream {
         try Task.checkCancellation()
@@ -177,36 +193,17 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
         }
 
         switch envelope.record.event {
-        case .authorizationRequested:
-          authorizationRequired = true
-          guard !cancellationRequested else {
-            try await client.acknowledge(envelope)
-            continue
-          }
-          cancellationRequested = true
-          do {
-            _ = try await client.cancelRun(
-              GatewayCancelRunRequest(
-                runID: runID,
-                invocationID: invocationID
-              )
-            )
-          } catch is CancellationError {
-            throw CancellationError()
-          } catch {
-            return .failed(Self.authorizationFailure())
-          }
-          try await client.acknowledge(envelope)
-
         case .runCompleted:
           try await client.acknowledge(envelope)
-          return authorizationRequired
+          await authorizationPolicy.runtimeDidEnd(runID)
+          return await authorizationPolicy.requiresInteractiveAuthorization(for: runID)
             ? .failed(Self.authorizationFailure())
             : .succeeded
 
         case .runCancelled:
           try await client.acknowledge(envelope)
-          return authorizationRequired
+          await authorizationPolicy.runtimeDidEnd(runID)
+          return await authorizationPolicy.requiresInteractiveAuthorization(for: runID)
             ? .failed(Self.authorizationFailure())
             : .failed(
               HexHeartbeatFailure(
@@ -218,7 +215,8 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
 
         case .runFailed(let failure):
           try await client.acknowledge(envelope)
-          return authorizationRequired
+          await authorizationPolicy.runtimeDidEnd(runID)
+          return await authorizationPolicy.requiresInteractiveAuthorization(for: runID)
             ? .failed(Self.authorizationFailure())
             : .failed(
               HexHeartbeatFailure(
@@ -237,13 +235,13 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
       if error is CancellationError || Task.isCancelled {
         throw CancellationError()
       }
-      if authorizationRequired {
+      if await authorizationPolicy.requiresInteractiveAuthorization(for: runID) {
         return .failed(Self.authorizationFailure())
       }
       throw error
     }
 
-    if authorizationRequired {
+    if await authorizationPolicy.requiresInteractiveAuthorization(for: runID) {
       return .failed(Self.authorizationFailure())
     }
 
@@ -269,23 +267,28 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
     runID: AgentRunID,
     invocationID: GatewayRunInvocationID
   ) async {
-    do {
-      _ = try await client.cancelRun(
-        GatewayCancelRunRequest(
-          runID: runID,
-          invocationID: invocationID
+    // Await cancellation from a fresh task: this runner may itself already be cancelled, but its
+    // known admission still needs an actual cancellation request before observer cleanup returns.
+    await Task.detached {
+      do {
+        _ = try await client.cancelRun(
+          GatewayCancelRunRequest(
+            runID: runID,
+            invocationID: invocationID
+          )
         )
-      )
-    } catch {
-      // Timeout and task cancellation already have an explicit heartbeat outcome. Cancellation is
-      // best-effort here; the host's client disconnect remains the final cleanup boundary.
-    }
+      } catch {
+        // Observation has ended, but the worker may still be running. The scheduler's exact-run
+        // inspector preserves that pending identity; the service owns the awaited shutdown drain.
+      }
+    }.value
   }
 
   private static func authorizationFailure() -> HexHeartbeatFailure {
     HexHeartbeatFailure(
       code: .authorizationRequired,
-      message: "The heartbeat run required interactive authorization and was cancelled.",
+      message:
+        "The scheduled run needs your approval for a new capability scope and stopped before that action ran.",
       retryable: false
     )
   }

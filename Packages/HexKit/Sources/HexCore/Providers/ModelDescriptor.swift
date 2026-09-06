@@ -7,6 +7,9 @@ public struct ModelDescriptor: Codable, Equatable, Sendable {
   public let capabilities: Set<InferenceCapability>
   public let contextWindow: Int?
   public let maxOutputTokens: Int?
+  /// Nil means the provider has not advertised effort metadata; an empty array means unsupported.
+  public let supportedReasoningEfforts: [InferenceReasoningEffort]?
+  public let defaultReasoningEffort: InferenceReasoningEffort?
 
   public init(
     id: ModelID,
@@ -14,7 +17,9 @@ public struct ModelDescriptor: Codable, Equatable, Sendable {
     displayName: String,
     capabilities: Set<InferenceCapability>,
     contextWindow: Int? = nil,
-    maxOutputTokens: Int? = nil
+    maxOutputTokens: Int? = nil,
+    supportedReasoningEfforts: [InferenceReasoningEffort]? = nil,
+    defaultReasoningEffort: InferenceReasoningEffort? = nil
   ) {
     self.id = id
     self.providerID = providerID
@@ -22,5 +27,7 @@ public struct ModelDescriptor: Codable, Equatable, Sendable {
     self.capabilities = capabilities
     self.contextWindow = contextWindow
     self.maxOutputTokens = maxOutputTokens
+    self.supportedReasoningEfforts = supportedReasoningEfforts
+    self.defaultReasoningEffort = defaultReasoningEffort
   }
 }

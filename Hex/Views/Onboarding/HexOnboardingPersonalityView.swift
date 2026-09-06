@@ -7,12 +7,18 @@ struct HexOnboardingPersonalityView: View {
   var body: some View {
     Form {
       Section {
-        Text("Make Hex feel like your agent. This profile is local, explicit, and always editable.")
-          .foregroundStyle(.secondary)
+        HexInlineNoticeView(
+          message:
+            "This is optional. Anything you add stays local, remains visible, and can be changed later.",
+          systemImage: "sparkles",
+          tint: HexBrandPalette.coral
+        )
       }
-      HexPersonalityProfileView(model: model.profile)
+      HexPersonalityProfileView(model: model.profile, showsSaveAction: false)
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .tint(HexBrandPalette.coral)
     .task {
       await model.profile.load()
     }

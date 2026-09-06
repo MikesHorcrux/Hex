@@ -44,13 +44,68 @@ struct HexGatewayResidentPersistenceTests {
     #expect(configuration.databaseURL == paths.databaseURL)
     #expect(configuration.heartbeatStoreURL == paths.heartbeatStoreURL)
     #expect(configuration.mcpClientSessions.map(\.serverID) == ["docs"])
+    #expect(
+      configuration.managedToolLayout?.rootURL
+        == paths.directoryURL.appendingPathComponent("Tools", isDirectory: true)
+    )
     #expect(configuration.authorizationMode == .fullAccess)
+    #expect(configuration.settingsFileURL == nil)
+    #expect(
+      configuration.inferenceSettingsFileURL?.resolvingSymlinksInPath().path
+        == root.appendingPathComponent("inference-backends.json").resolvingSymlinksInPath().path)
+    #expect(configuration.selfKnowledge.journalFileURL == paths.databaseURL)
+    #expect(
+      configuration.heartbeatDatabaseURL == paths.heartbeatStoreURL.appendingPathExtension("sqlite")
+    )
+    #expect(configuration.selfKnowledge.heartbeatFileURL == configuration.heartbeatDatabaseURL)
+    #expect(configuration.selfKnowledge.personalityFileURL == paths.personalityProfileURL)
+    #expect(configuration.selfKnowledge.memoryFileURL == paths.personalMemoryURL)
+    #expect(
+      configuration.selfKnowledge.managedToolsRootURL == configuration.managedToolLayout?.rootURL)
     #expect(await secretStore.didReadValue() == false)
     #expect(
       try await configuration.makeAuthorizationProvider().authorization().bearerToken
         == "sk-persisted-secret"
     )
     #expect(await secretStore.didReadValue())
+  }
+
+  @Test
+  func selfKnowledgeReportsOwnedSettingsFilesAndNeverSerializesCredentials() async throws {
+    // Recreating a no-symlink store under macOS /private/var can cause Foundation to standardize
+    // the already-existing file to the /var symlink alias. Use the source checkout for this fixture
+    // only; production's ancestor policy remains unchanged and the exact UUID directory is removed.
+    var fixtureParent = URL(fileURLWithPath: #filePath)
+    for _ in 0..<6 { fixtureParent.deleteLastPathComponent() }
+    let root = try makeTemporaryDirectory(baseURL: fixtureParent)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = try makePaths(in: root)
+    let store = try JSONHexResidentRuntimeSettingsStore(fileURL: paths.settingsURL)
+    try await store.save(
+      HexResidentRuntimeSettings(
+        modelID: "configured-model", workspaceRoot: root.appendingPathComponent("workspace")
+      ))
+    let reopenedStore = try JSONHexResidentRuntimeSettingsStore(fileURL: paths.settingsURL)
+    let reloaded = try await reopenedStore.load()
+    #expect(reloaded?.modelID == "configured-model")
+    let secretStore = SecretStore(value: "sk-private-fixture-must-not-appear")
+    let configuration = try await HexGatewayResidentConfiguration.loadPersisted(
+      paths: paths, secretStore: secretStore
+    )
+    #expect(configuration.settingsFileURL == paths.settingsURL)
+    #expect(
+      configuration.inferenceSettingsFileURL?.resolvingSymlinksInPath().path
+        == root.appendingPathComponent("inference-backends.json").resolvingSymlinksInPath().path)
+    let description = configuration.selfKnowledge.snapshot(
+      provider: GatewayTestInferenceProvider().descriptor,
+      modelID: ModelID(rawValue: configuration.modelID),
+      workingDirectory: configuration.workspaceRoot,
+      options: InferenceOptions()
+    )
+    let encoded = try JSONEncoder().encode(description)
+    #expect(
+      !String(decoding: encoded, as: UTF8.self).contains("sk-private-fixture-must-not-appear"))
+    #expect(await secretStore.didReadValue() == false)
   }
 
   @Test
@@ -103,6 +158,8 @@ struct HexGatewayResidentPersistenceTests {
     #expect(configuration.inferenceBackendSettings.selectedBackend == .openAIResponses)
     #expect(configuration.inferenceBackendSettings.openAI.modelID == "legacy-model")
     #expect(configuration.modelID == "legacy-model")
+    #expect(configuration.settingsFileURL == nil)
+    #expect(configuration.inferenceSettingsFileURL == nil)
     let loadedSettings = try await persistedStore.load()
     #expect(loadedSettings == configuration.inferenceBackendSettings)
   }
@@ -197,8 +254,8 @@ struct HexGatewayResidentPersistenceTests {
     }
   }
 
-  private func makeTemporaryDirectory() throws -> URL {
-    let temporaryPath = FileManager.default.temporaryDirectory.path
+  private func makeTemporaryDirectory(baseURL: URL? = nil) throws -> URL {
+    let temporaryPath = (baseURL ?? FileManager.default.temporaryDirectory).path
     var resolvedPath = [CChar](repeating: 0, count: Int(PATH_MAX))
     let didResolve = resolvedPath.withUnsafeMutableBufferPointer { buffer in
       temporaryPath.withCString { source in

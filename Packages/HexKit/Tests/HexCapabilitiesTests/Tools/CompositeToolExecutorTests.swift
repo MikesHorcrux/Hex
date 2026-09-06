@@ -60,6 +60,18 @@ struct CompositeToolExecutorTests {
     }
   }
 
+  @Test("Discovers independent executors concurrently")
+  func discoversConcurrently() async throws {
+    let barrier = DiscoveryBarrier(expectedArrivals: 2)
+    let composite = try CompositeToolExecutor(executors: [
+      BarrierExecutor(toolName: "beta", barrier: barrier),
+      BarrierExecutor(toolName: "alpha", barrier: barrier),
+    ])
+
+    #expect(try await composite.availableTools().map(\.name) == ["alpha", "beta"])
+    #expect(await barrier.arrivalCount() == 2)
+  }
+
   private actor StubExecutor: ToolExecutor {
     private var toolName: String
     private var executed: [String] = []
@@ -113,5 +125,69 @@ struct CompositeToolExecutorTests {
     func executedNames() -> [String] {
       executed
     }
+  }
+
+  private struct BarrierExecutor: ToolExecutor {
+    let toolName: String
+    let barrier: DiscoveryBarrier
+
+    func availableTools() async throws -> [ToolDefinition] {
+      try await barrier.arrive()
+      return [
+        ToolDefinition(
+          name: toolName,
+          description: "Fixture tool.",
+          inputSchema: ["type": .string("object")]
+        )
+      ]
+    }
+
+    func authorizationRequest(
+      for call: ToolCall,
+      in context: ToolExecutionContext
+    ) async throws -> AuthorizationRequest {
+      _ = call
+      _ = context
+      throw FixtureError.unexpectedCall
+    }
+
+    func execute(
+      _ call: ToolCall,
+      in context: ToolExecutionContext
+    ) async throws -> ToolResult {
+      _ = call
+      _ = context
+      throw FixtureError.unexpectedCall
+    }
+  }
+
+  private actor DiscoveryBarrier {
+    private let expectedArrivals: Int
+    private var arrivals = 0
+
+    init(expectedArrivals: Int) {
+      self.expectedArrivals = expectedArrivals
+    }
+
+    func arrive() async throws {
+      arrivals += 1
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: .milliseconds(250))
+      while arrivals < expectedArrivals {
+        guard clock.now < deadline else {
+          throw FixtureError.discoveryWasSerial
+        }
+        try await Task.sleep(for: .milliseconds(1))
+      }
+    }
+
+    func arrivalCount() -> Int {
+      arrivals
+    }
+  }
+
+  private enum FixtureError: Error {
+    case discoveryWasSerial
+    case unexpectedCall
   }
 }

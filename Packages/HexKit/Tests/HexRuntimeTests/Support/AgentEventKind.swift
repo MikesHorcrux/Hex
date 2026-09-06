@@ -1,6 +1,8 @@
 enum AgentEventKind: Equatable {
   case runStarted
   case messageAppended
+  case contextCompactionStarted
+  case contextCompacted
   case inferenceRequested
   case inferenceStarted
   case textDelta

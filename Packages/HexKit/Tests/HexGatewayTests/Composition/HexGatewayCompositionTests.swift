@@ -82,11 +82,9 @@ struct HexGatewayCompositionTests {
         await collector.append(record)
       }
       Issue.record("Expected a malformed durable record to fail the run.")
-    } catch let error as AgentRuntimeError {
-      guard case .journalFailure = error else {
-        Issue.record("Expected a journal failure, received: \(error).")
-        return
-      }
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .runDriverFailed)
+      #expect(failure.message == "The event journal failed to append a record.")
     }
 
     #expect(await collector.records().isEmpty)

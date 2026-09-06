@@ -115,6 +115,76 @@ struct HexStartAtLoginTests {
     #expect(model.status == .notRegistered)
   }
 
+  @Test @MainActor
+  func enabledButUnreachableServiceCanBeRestartedInRequiredOrder() async {
+    let controller = SpyController(status: .enabled)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .ready)
+    )
+    await model.refresh()
+
+    #expect(model.canRestart)
+
+    await model.restart()
+
+    #expect(await controller.lifecycleMutations == ["unregister", "register"])
+    #expect(model.status == .enabled)
+    #expect(model.message == nil)
+    #expect(!model.isUpdating)
+  }
+
+  @Test @MainActor
+  func restartFailsClosedWhenResidentConfigurationIsNotReady() async {
+    let controller = SpyController(status: .enabled)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .blocked)
+    )
+    await model.refresh()
+
+    #expect(!model.canRestart)
+    #expect(model.readinessMessage == HexGatewayActivationReadiness.blocked.message)
+
+    await model.restart()
+
+    #expect(await controller.lifecycleMutations.isEmpty)
+    #expect(model.status == .enabled)
+    #expect(model.message == HexGatewayActivationReadiness.blocked.message)
+  }
+
+  @Test @MainActor
+  func savedConfigurationResetsConnectionBeforeRestartingEnabledService() async throws {
+    let events = LifecycleEvents()
+    let controller = SpyController(status: .enabled, events: events)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .ready),
+      connectionResetter: SpyConnectionResetter(events: events)
+    )
+
+    try await model.reloadAfterConfigurationChange()
+
+    #expect(await events.values == ["reset-connection", "unregister", "register"])
+    #expect(model.status == .enabled)
+    #expect(model.message == nil)
+  }
+
+  @Test @MainActor
+  func savedConfigurationDoesNotRegisterADisabledService() async throws {
+    let controller = SpyController(status: .notRegistered)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .ready)
+    )
+
+    try await model.reloadAfterConfigurationChange()
+
+    #expect(await controller.lifecycleMutations.isEmpty)
+    #expect(model.status == .notRegistered)
+    #expect(model.message == nil)
+  }
+
   private struct FixedReadinessChecker: HexGatewayActivationReadinessChecking {
     let value: HexGatewayActivationReadiness
 
@@ -139,9 +209,12 @@ struct HexStartAtLoginTests {
     private(set) var statusCallCount = 0
     private(set) var registerCallCount = 0
     private(set) var unregisterCallCount = 0
+    private(set) var lifecycleMutations: [String] = []
+    private let events: LifecycleEvents?
 
-    init(status: HexGatewayLifecycleStatus) {
+    init(status: HexGatewayLifecycleStatus, events: LifecycleEvents? = nil) {
       currentStatus = status
+      self.events = events
     }
 
     func status() async -> HexGatewayLifecycleStatus {
@@ -151,12 +224,32 @@ struct HexStartAtLoginTests {
 
     func register() async throws {
       registerCallCount += 1
+      lifecycleMutations.append("register")
+      await events?.append("register")
       currentStatus = .enabled
     }
 
     func unregister() async throws {
       unregisterCallCount += 1
+      lifecycleMutations.append("unregister")
+      await events?.append("unregister")
       currentStatus = .notRegistered
+    }
+  }
+
+  private struct SpyConnectionResetter: HexResidentGatewayConnectionResetting {
+    let events: LifecycleEvents
+
+    func resetResidentGatewayConnection() async {
+      await events.append("reset-connection")
+    }
+  }
+
+  private actor LifecycleEvents {
+    private(set) var values: [String] = []
+
+    func append(_ value: String) {
+      values.append(value)
     }
   }
 

@@ -50,9 +50,9 @@ extension HexGatewayService {
       )
     }
 
-    let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream(
-      bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
-    )
+    let pair = GatewayBufferedStream<GatewayEventEnvelope>.makeStream(
+      bufferCapacity: configuration.subscriberBufferCapacity,
+      maximumBufferedBytes: configuration.maximumBufferedWireBytesPerSubscriber)
     let stream = pair.stream
     let continuation = pair.continuation
 
@@ -61,7 +61,8 @@ extension HexGatewayService {
         invocationID: state.invocationID,
         record: record
       )
-      guard enqueue(envelope, into: continuation) else {
+      guard enqueue(envelope, wireBytes: try codec.encode(envelope).count, into: continuation)
+      else {
         continuation.finish(
           throwing: GatewayFailure(
             code: .consumerTooSlow,
@@ -170,6 +171,13 @@ extension HexGatewayService {
       failRun(runID, invocationID: invocationID, with: failure)
       throw failure
     }
+    if case .contextCompacted(let compaction) = record.event, compaction.ownerRunID != runID {
+      let failure = GatewayFailure(
+        code: .wrongRun,
+        message: "The run driver emitted context compaction for a different run.")
+      failRun(runID, invocationID: invocationID, with: failure)
+      throw failure
+    }
 
     guard record.schemaVersion == 1 else {
       let failure = GatewayFailure(
@@ -265,7 +273,7 @@ extension HexGatewayService {
     )
     var subscribersToRemove: [UUID] = []
     for (subscriberID, subscriber) in state.subscribers {
-      guard enqueue(envelope, into: subscriber.continuation) else {
+      guard enqueue(envelope, wireBytes: wireByteCount, into: subscriber.continuation) else {
         subscriber.continuation.finish(throwing: slowConsumerFailure)
         subscribersToRemove.append(subscriberID)
         continue
@@ -295,9 +303,10 @@ extension HexGatewayService {
 
   private func enqueue(
     _ envelope: GatewayEventEnvelope,
-    into continuation: AsyncThrowingStream<GatewayEventEnvelope, any Error>.Continuation
+    wireBytes: Int,
+    into continuation: GatewayBufferedStream<GatewayEventEnvelope>.Continuation
   ) -> Bool {
-    switch continuation.yield(envelope) {
+    switch continuation.yield(envelope, wireBytes: wireBytes) {
     case .enqueued:
       return true
     case .dropped, .terminated:

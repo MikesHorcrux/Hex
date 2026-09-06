@@ -6,6 +6,7 @@ struct HexHeartbeatManagementView: View {
   @Bindable var model: HexHeartbeatManagementModel
   let suppressAutomaticRefresh: Bool
   @State private var isPresentingEditor = false
+  @State private var isPresentingHistory = false
 
   init(
     model: HexHeartbeatManagementModel,
@@ -26,6 +27,10 @@ struct HexHeartbeatManagementView: View {
             .foregroundStyle(.secondary)
         }
         Spacer()
+        Button("Run history", systemImage: "clock.arrow.circlepath") {
+          model.history.show()
+          isPresentingHistory = true
+        }
         Button {
           Task { await model.refresh() }
         } label: {
@@ -56,7 +61,10 @@ struct HexHeartbeatManagementView: View {
         }
       }
 
-      if !model.isAvailable {
+      if model.isLoading && model.schedules.isEmpty {
+        ProgressView("Loading schedules…")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if !model.isAvailable && model.schedules.isEmpty {
         ContentUnavailableView(
           "Resident gateway unavailable",
           systemImage: "antenna.radiowaves.left.and.right.slash",
@@ -83,6 +91,10 @@ struct HexHeartbeatManagementView: View {
               },
               onRemove: {
                 Task { await model.removeSchedule(id: schedule.id) }
+              },
+              onViewResults: {
+                model.history.show(scheduleID: schedule.id, name: schedule.name)
+                isPresentingHistory = true
               }
             )
             .listRowInsets(EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
@@ -117,6 +129,11 @@ struct HexHeartbeatManagementView: View {
       HexHeartbeatScheduleEditorView { request in
         await model.addSchedule(request)
       }
+    }
+    .sheet(isPresented: $isPresentingHistory) {
+      HexHeartbeatRunHistoryView(
+        model: model.history,
+        currentScheduleIDs: model.isAvailable ? Set(model.schedules.map(\.id)) : nil)
     }
   }
 }

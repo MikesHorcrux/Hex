@@ -24,6 +24,9 @@ enum ProcessToolResult {
       "output_encoding": .string(encoding),
       "output_sanitized": .boolean(sanitized),
       "output_bytes": .integer(Int64(result.output.count)),
+      "total_output_bytes": .integer(result.totalOutputBytes),
+      "preview_truncated": .boolean(result.totalOutputBytes > Int64(result.output.count)),
+      "output_complete": .boolean(result.outputIsComplete),
       "duration_milliseconds": .integer(
         Int64(exactly: result.durationMilliseconds) ?? Int64.max
       ),
@@ -41,11 +44,38 @@ enum ProcessToolResult {
     case .timedOut:
       output["termination"] = .string("timed_out")
       status = .failure
+    case .cancelled:
+      output["termination"] = .string("cancelled")
+      output["message"] = .string(
+        "The command was cancelled after it started and its process group was stopped. Captured output is partial. Do not repeat it automatically; it may already have changed files or external state."
+      )
+      status = .failure
     case .outputLimitExceeded:
       output["termination"] = .string("output_limit_exceeded")
       status = .failure
+    case .outputCaptureFailed:
+      output["termination"] = .string("output_capture_failed")
+      status = .failure
     }
-    return ToolResult(toolCallID: callID, status: status, output: .object(output))
+    if let failure = result.outputCaptureFailure {
+      output["output_capture_error"] = .string(failure.rawValue)
+    }
+    if result.outputCaptureFailure != nil || result.termination == .outputLimitExceeded {
+      output["message"] = .string(
+        "The command ran, but Hex could not preserve all of its output. Its reported exit or termination remains authoritative. Do not repeat the command automatically to recover missing output; it may already have changed files or external state."
+      )
+    }
+    if let artifact = result.outputArtifact {
+      output["artifact_output_bytes"] = .integer(artifact.byteCount)
+      output["output_location"] = .string("artifact")
+    } else {
+      output["output_location"] = .string("inline")
+    }
+    return ToolResult(
+      toolCallID: callID, status: result.outputCaptureFailure == nil ? status : .failure,
+      output: .object(output), artifacts: result.outputArtifact.map { [$0] } ?? [],
+      requiresUserAttention: result.outputCaptureFailure != nil
+        || result.termination == .outputCaptureFailed || result.termination == .outputLimitExceeded)
   }
 
   static func failure(
@@ -71,6 +101,8 @@ enum ProcessToolResult {
       code = "spawn_failed"
     case ProcessExecutionError.ioFailure:
       code = "io_failure"
+    case ProcessExecutionError.outputCaptureUnavailable:
+      code = "output_capture_unavailable"
     case ProcessExecutionError.cleanupFailed:
       // A cleanup failure leaves the process outcome uncertain. Keep it on the infrastructure
       // error path instead of returning a result that could claim the process was terminated.

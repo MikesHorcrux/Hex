@@ -30,6 +30,7 @@ extension MLXRequestContentValidator {
     remainingNodes: inout Int
   ) -> Bool {
     guard
+      result.hasValidNonExecutionMetadata,
       isValidToolCallID(result.toolCallID),
       consumeString(result.toolCallID.rawValue, remainingBytes: &remainingBytes),
       validateJSONValue(

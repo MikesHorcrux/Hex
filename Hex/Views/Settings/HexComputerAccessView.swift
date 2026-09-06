@@ -32,10 +32,10 @@ struct HexComputerAccessView: View {
 
       HexExternalComputerPermissionsView(model: model)
     } header: {
-      Text("Computer & Web")
+      Text("Mac permissions")
     } footer: {
       Text(
-        "Hex approvals and macOS privacy grants are separate. Requesting access never marks it granted; Hex verifies the resident agent again after you return."
+        "Hex only marks access ready after the always-on agent verifies it. macOS remains the final authority for protected access."
       )
     }
     .task {

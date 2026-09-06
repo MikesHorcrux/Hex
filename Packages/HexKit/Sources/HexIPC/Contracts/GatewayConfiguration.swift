@@ -3,16 +3,17 @@ public struct GatewayConfiguration: Equatable, Sendable {
   /// journal-event budget for `GatewayEventEnvelope` metadata and JSON framing. HexIPC intentionally
   /// does not depend on HexRuntime, so integration must keep these two documented budgets aligned.
   ///
-  /// Replay retains at most eight records and 32 MiB per run. With four remembered runs, two live
-  /// subscribers, and the same-process transport's second bounded forwarding buffer, the standard
-  /// theoretical retained-plus-buffered wire payload is 384 MiB. A reconnect older than either the
-  /// eight-record or 32-MiB per-run replay window fails explicitly with `replayUnavailable`.
+  /// Replay retains at most eight records and 32 MiB per run. Each forwarding queue separately
+  /// admits at most 256 records AND 64 MiB of actual encoded payload. Tiny text fragments therefore
+  /// tolerate ordinary UI scheduling pauses without permitting 256 maximum-sized envelopes.
+  /// A reconnect older than the replay window requires durable journal recovery.
   public static var standard: GatewayConfiguration {
     GatewayConfiguration(
       validatedMaximumWireBytes: 8_388_608,
       validatedMaximumRetainedRecordsPerRun: 8,
       validatedMaximumRetainedWireBytesPerRun: 33_554_432,
-      validatedSubscriberBufferCapacity: 8,
+      validatedSubscriberBufferCapacity: 256,
+      validatedMaximumBufferedWireBytesPerSubscriber: 67_108_864,
       validatedMaximumSubscribersPerRun: 2,
       validatedMaximumSessions: 8,
       validatedMaximumRememberedRuns: 4
@@ -34,6 +35,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
   public let maximumRetainedRecordsPerRun: Int
   public let maximumRetainedWireBytesPerRun: Int
   public let subscriberBufferCapacity: Int
+  public let maximumBufferedWireBytesPerSubscriber: Int
   public let maximumSubscribersPerRun: Int
   public let maximumSessions: Int
   public let maximumRememberedRuns: Int
@@ -43,6 +45,29 @@ public struct GatewayConfiguration: Equatable, Sendable {
     maximumRetainedRecordsPerRun: Int,
     maximumRetainedWireBytesPerRun: Int = 33_554_432,
     subscriberBufferCapacity: Int,
+    maximumSubscribersPerRun: Int = 2,
+    maximumSessions: Int = 8,
+    maximumRememberedRuns: Int = 4
+  ) {
+    let bytes = maximumWireBytes.multipliedReportingOverflow(by: subscriberBufferCapacity)
+    guard !bytes.overflow else { return nil }
+    self.init(
+      maximumWireBytes: maximumWireBytes,
+      maximumRetainedRecordsPerRun: maximumRetainedRecordsPerRun,
+      maximumRetainedWireBytesPerRun: maximumRetainedWireBytesPerRun,
+      subscriberBufferCapacity: subscriberBufferCapacity,
+      maximumBufferedWireBytesPerSubscriber: bytes.partialValue,
+      maximumSubscribersPerRun: maximumSubscribersPerRun,
+      maximumSessions: maximumSessions,
+      maximumRememberedRuns: maximumRememberedRuns)
+  }
+
+  public init?(
+    maximumWireBytes: Int,
+    maximumRetainedRecordsPerRun: Int,
+    maximumRetainedWireBytesPerRun: Int = 33_554_432,
+    subscriberBufferCapacity: Int,
+    maximumBufferedWireBytesPerSubscriber: Int,
     maximumSubscribersPerRun: Int = 2,
     maximumSessions: Int = 8,
     maximumRememberedRuns: Int = 4
@@ -61,15 +86,15 @@ public struct GatewayConfiguration: Equatable, Sendable {
       maximumSessions > 0,
       maximumSessions <= Self.hardMaximumSessions,
       maximumRememberedRuns > 0,
-      maximumRememberedRuns <= Self.hardMaximumRememberedRuns,
-      maximumWireBytes
-        <= Self.hardMaximumBufferedWireBytesPerSubscriber / subscriberBufferCapacity
+      maximumRememberedRuns <= Self.hardMaximumRememberedRuns
     else {
       return nil
     }
 
-    let bufferedWireBytesPerSubscriber = maximumWireBytes * subscriberBufferCapacity
+    let bufferedWireBytesPerSubscriber = maximumBufferedWireBytesPerSubscriber
     guard
+      bufferedWireBytesPerSubscriber >= maximumWireBytes,
+      bufferedWireBytesPerSubscriber <= Self.hardMaximumBufferedWireBytesPerSubscriber,
       bufferedWireBytesPerSubscriber
         <= Self.hardMaximumBufferedWireBytesAcrossSubscribers / maximumSubscribersPerRun,
       maximumRetainedWireBytesPerRun
@@ -83,6 +108,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
       validatedMaximumRetainedRecordsPerRun: maximumRetainedRecordsPerRun,
       validatedMaximumRetainedWireBytesPerRun: maximumRetainedWireBytesPerRun,
       validatedSubscriberBufferCapacity: subscriberBufferCapacity,
+      validatedMaximumBufferedWireBytesPerSubscriber: bufferedWireBytesPerSubscriber,
       validatedMaximumSubscribersPerRun: maximumSubscribersPerRun,
       validatedMaximumSessions: maximumSessions,
       validatedMaximumRememberedRuns: maximumRememberedRuns
@@ -94,6 +120,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
     validatedMaximumRetainedRecordsPerRun: Int,
     validatedMaximumRetainedWireBytesPerRun: Int,
     validatedSubscriberBufferCapacity: Int,
+    validatedMaximumBufferedWireBytesPerSubscriber: Int,
     validatedMaximumSubscribersPerRun: Int,
     validatedMaximumSessions: Int,
     validatedMaximumRememberedRuns: Int
@@ -102,6 +129,7 @@ public struct GatewayConfiguration: Equatable, Sendable {
     maximumRetainedRecordsPerRun = validatedMaximumRetainedRecordsPerRun
     maximumRetainedWireBytesPerRun = validatedMaximumRetainedWireBytesPerRun
     subscriberBufferCapacity = validatedSubscriberBufferCapacity
+    maximumBufferedWireBytesPerSubscriber = validatedMaximumBufferedWireBytesPerSubscriber
     maximumSubscribersPerRun = validatedMaximumSubscribersPerRun
     maximumSessions = validatedMaximumSessions
     maximumRememberedRuns = validatedMaximumRememberedRuns

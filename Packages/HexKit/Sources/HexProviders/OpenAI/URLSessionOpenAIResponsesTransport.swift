@@ -23,45 +23,18 @@ public final class URLSessionOpenAIResponsesTransport: OpenAIResponsesTransport,
   public func send(_ request: URLRequest) async throws -> OpenAIResponsesTransportResponse {
     do {
       let (bytes, response) = try await session.bytes(for: request)
-      try Task.checkCancellation()
+      let networkTask = bytes.task
+      if Task.isCancelled {
+        networkTask.cancel()
+        throw CancellationError()
+      }
 
       guard let httpResponse = response as? HTTPURLResponse else {
+        networkTask.cancel()
         throw URLError(.badServerResponse)
       }
 
-      let (body, continuation) = AsyncThrowingStream.makeStream(
-        of: Data.self,
-        throwing: (any Error).self,
-        bufferingPolicy: .bufferingOldest(16)
-      )
-      let producer = Task {
-        do {
-          var chunk = Data()
-          chunk.reserveCapacity(8 * 1_024)
-
-          for try await byte in bytes {
-            try Task.checkCancellation()
-            chunk.append(byte)
-            if chunk.count == 8 * 1_024 {
-              try Self.yield(chunk, to: continuation)
-              chunk.removeAll(keepingCapacity: true)
-            }
-          }
-
-          if !chunk.isEmpty {
-            try Self.yield(chunk, to: continuation)
-          }
-          continuation.finish()
-        } catch is CancellationError {
-          continuation.finish(throwing: CancellationError())
-        } catch {
-          if Task.isCancelled {
-            continuation.finish(throwing: CancellationError())
-          } else {
-            continuation.finish(throwing: error)
-          }
-        }
-      }
+      let (body, producer) = OpenAIResponsesBodyStreamer.start(bytes)
 
       return OpenAIResponsesTransportResponse(
         statusCode: httpResponse.statusCode,
@@ -69,9 +42,11 @@ public final class URLSessionOpenAIResponsesTransport: OpenAIResponsesTransport,
         body: body,
         cancel: {
           producer.cancel()
+          networkTask.cancel()
         },
         waitForTermination: {
           await producer.value
+          networkTask.cancel()
         }
       )
     } catch is CancellationError {
@@ -84,19 +59,4 @@ public final class URLSessionOpenAIResponsesTransport: OpenAIResponsesTransport,
     }
   }
 
-  private static func yield(
-    _ data: Data,
-    to continuation: AsyncThrowingStream<Data, any Error>.Continuation
-  ) throws {
-    switch continuation.yield(data) {
-    case .enqueued:
-      return
-    case .dropped:
-      throw URLError(.dataLengthExceedsMaximum)
-    case .terminated:
-      throw CancellationError()
-    @unknown default:
-      throw URLError(.unknown)
-    }
-  }
 }

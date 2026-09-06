@@ -1,11 +1,11 @@
 import Darwin
 import Foundation
+import HexCore
 
-actor AgentConversationStore {
+actor AgentConversationStore: AgentConversationStoring {
   static let defaultMaximumBytes = 4 * 1_024 * 1_024
   private static let maximumConversations = 64
   private static let maximumTranscriptItems = 512
-  private static let maximumTitleBytes = 256
   private static let maximumArchiveBytes = 16 * 1_024 * 1_024
 
   let fileURL: URL
@@ -58,8 +58,21 @@ actor AgentConversationStore {
       throw AgentConversationStoreError.malformedArchive
     }
 
-    guard archive.schemaVersion == AgentConversationArchive.currentSchemaVersion else {
+    guard
+      archive.schemaVersion == AgentConversationArchive.currentSchemaVersion
+        || archive.schemaVersion == AgentConversationArchive.legacySchemaVersion
+    else {
       throw AgentConversationStoreError.unsupportedSchemaVersion(Int(archive.schemaVersion))
+    }
+    if archive.schemaVersion == AgentConversationArchive.legacySchemaVersion,
+      archive.conversations.contains(where: {
+        $0.history != nil || $0.pendingRun != nil || $0.archivedAt != nil
+          || $0.isTitleExplicit != nil
+      })
+    {
+      throw AgentConversationStoreError.invalidArchive(
+        "Legacy archives cannot contain native history, recovery checkpoints, or organization metadata."
+      )
     }
     try Self.validate(archive)
 
@@ -67,22 +80,19 @@ actor AgentConversationStore {
     guard canonicalData == data else {
       throw AgentConversationStoreError.malformedArchive
     }
+    if archive.schemaVersion == AgentConversationArchive.legacySchemaVersion {
+      // Check the original v1 canonical bytes first. Migration changes only the in-memory version;
+      // nil history preserves legacy provenance and the source file is never rewritten by load.
+      return AgentConversationArchive(
+        selectedConversationID: archive.selectedConversationID, conversations: archive.conversations
+      )
+    }
     return archive
   }
 
   func save(_ archive: AgentConversationArchive) throws {
     try Task.checkCancellation()
-    guard archive.schemaVersion == AgentConversationArchive.currentSchemaVersion else {
-      throw AgentConversationStoreError.unsupportedSchemaVersion(Int(archive.schemaVersion))
-    }
-    try Self.validate(archive)
-    let data = try Self.encode(archive)
-    guard data.count <= maximumBytes else {
-      throw AgentConversationStoreError.archiveTooLarge(
-        actual: data.count,
-        maximum: maximumBytes
-      )
-    }
+    let data = try Self.dataForPersistence(archive, maximumBytes: maximumBytes)
 
     let directoryURL = fileURL.deletingLastPathComponent()
     try Self.rejectSymlinkAncestors(for: fileURL)
@@ -98,7 +108,34 @@ actor AgentConversationStore {
     } catch {
       throw AgentConversationStoreError.ioFailure
     }
-    try Task.checkCancellation()
+    // The snapshot has been atomically replaced. Cancellation after this commit must not turn a
+    // successful save into an ambiguous failure receipt. This is not an fsync/power-loss guarantee.
+  }
+
+  nonisolated func validateForPersistence(_ archive: AgentConversationArchive) throws {
+    _ = try Self.dataForPersistence(archive, maximumBytes: maximumBytes)
+  }
+
+  nonisolated static func validateForPersistence(_ archive: AgentConversationArchive) throws {
+    _ = try dataForPersistence(archive, maximumBytes: defaultMaximumBytes)
+  }
+
+  private nonisolated static func dataForPersistence(
+    _ archive: AgentConversationArchive, maximumBytes: Int
+  ) throws -> Data {
+    guard archive.schemaVersion == AgentConversationArchive.currentSchemaVersion else {
+      throw AgentConversationStoreError.unsupportedSchemaVersion(Int(archive.schemaVersion))
+    }
+    try Self.validate(archive)
+    let data = try Self.encode(archive)
+    guard data.count <= maximumBytes else {
+      throw AgentConversationStoreError.archiveTooLarge(
+        actual: data.count,
+        maximum: maximumBytes
+      )
+    }
+
+    return data
   }
 
   private func readArchiveData() throws -> Data? {
@@ -187,6 +224,7 @@ actor AgentConversationStore {
     }
 
     var conversationIDs = Set<UUID>()
+    var nativeRunIDs = Set<AgentRunID>()
     for conversation in archive.conversations {
       guard conversationIDs.insert(conversation.id).inserted else {
         throw AgentConversationStoreError.invalidArchive(
@@ -195,7 +233,7 @@ actor AgentConversationStore {
       }
       guard
         !conversation.title.isEmpty,
-        conversation.title.utf8.count <= maximumTitleBytes,
+        conversation.title.utf8.count <= AgentConversation.maximumTitleBytes,
         conversation.createdAt.timeIntervalSinceReferenceDate.isFinite,
         conversation.updatedAt.timeIntervalSinceReferenceDate.isFinite,
         conversation.updatedAt >= conversation.createdAt
@@ -204,12 +242,36 @@ actor AgentConversationStore {
           "A conversation has an invalid title or timestamp."
         )
       }
+      // Old automatically-derived titles retain their original validation contract. Explicit new
+      // names are stricter without making an otherwise valid legacy archive unreadable.
+      if conversation.isTitleExplicit == true,
+        !AgentConversation.isValidExplicitTitle(conversation.title)
+      {
+        throw AgentConversationStoreError.invalidArchive(
+          "A conversation name is blank, too long, or contains control characters.")
+      }
+      if let archivedAt = conversation.archivedAt {
+        guard archivedAt.timeIntervalSinceReferenceDate.isFinite,
+          archivedAt >= conversation.createdAt, archivedAt <= conversation.updatedAt
+        else {
+          throw AgentConversationStoreError.invalidArchive(
+            "A conversation archive timestamp is invalid.")
+        }
+      }
       guard conversation.transcript.count <= maximumTranscriptItems else {
         throw AgentConversationStoreError.invalidArchive(
           "A conversation contains too many transcript items."
         )
       }
+      if let modelID = conversation.composerSelection?.modelID {
+        guard !modelID.isEmpty, modelID.utf8.count <= 512,
+          modelID == modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { throw AgentConversationStoreError.invalidArchive("A model selection is invalid.") }
+      }
       for item in conversation.transcript {
+        do { try ToolArtifactValidation.validate(item.artifacts) } catch {
+          throw AgentConversationStoreError.invalidArchive("A saved output reference is invalid.")
+        }
         guard
           !item.text.isEmpty,
           item.text.utf8.count <= AgentConversation.maximumPersistedTextBytes,
@@ -220,6 +282,13 @@ actor AgentConversationStore {
           )
         }
       }
+      if let history = conversation.history {
+        try AgentConversationHistoryValidator.validate(history, runIDs: &nativeRunIDs)
+      }
+      if let checkpoint = conversation.pendingRun {
+        try AgentConversationRunCheckpointValidator.validate(checkpoint, in: conversation)
+      }
+      _ = try conversation.availableArtifacts()
     }
 
     if let selectedConversationID = archive.selectedConversationID {

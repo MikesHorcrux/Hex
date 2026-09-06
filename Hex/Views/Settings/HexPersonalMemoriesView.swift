@@ -35,18 +35,21 @@ struct HexPersonalMemoriesView: View {
         memoryContent
 
         if let errorMessage = model.errorMessage {
-          Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-            .font(.callout)
-            .foregroundStyle(.orange)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier("hexPersonalMemoriesError")
+          HexInlineNoticeView(
+            message: errorMessage,
+            systemImage: "exclamationmark.triangle.fill",
+            tint: .orange
+          )
+          .accessibilityIdentifier("hexPersonalMemoriesError")
         }
 
         if let statusMessage = model.statusMessage {
-          Label(statusMessage, systemImage: "checkmark.circle.fill")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .accessibilityIdentifier("hexPersonalMemoriesStatus")
+          HexInlineNoticeView(
+            message: statusMessage,
+            systemImage: "checkmark.circle.fill",
+            tint: HexBrandPalette.successInk
+          )
+          .accessibilityIdentifier("hexPersonalMemoriesStatus")
         }
 
         HStack {
@@ -55,6 +58,7 @@ struct HexPersonalMemoriesView: View {
               await model.reload()
             }
           }
+          .buttonStyle(.hexSecondaryAction)
           .accessibilityIdentifier("hexPersonalMemoriesRetryButton")
           .disabled(model.isLoading || model.isSaving)
 
@@ -113,13 +117,11 @@ struct HexPersonalMemoriesView: View {
         )
       }
     case .corrupted(let message), .unavailable(let message), .failed(let message):
-      Label(
-        message,
-        systemImage: model.state.isUnavailable ? "nosign" : "exclamationmark.triangle"
+      HexInlineNoticeView(
+        message: message,
+        systemImage: model.state.isUnavailable ? "nosign" : "exclamationmark.triangle",
+        tint: model.state.isUnavailable ? HexBrandPalette.mutedInk : .orange
       )
-      .font(.callout)
-      .foregroundStyle(model.state.isUnavailable ? Color.secondary : Color.orange)
-      .fixedSize(horizontal: false, vertical: true)
       .accessibilityIdentifier("hexPersonalMemoriesStateMessage")
     }
   }

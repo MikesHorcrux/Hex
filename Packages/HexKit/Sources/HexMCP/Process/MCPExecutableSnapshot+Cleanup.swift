@@ -81,6 +81,14 @@ extension MCPExecutableSnapshot {
     }
   }
 
+  static func closeOwnedRegularFiles(
+    _ files: [MCPExecutableSnapshotOwnedFile]
+  ) {
+    for file in files {
+      Darwin.close(file.descriptor)
+    }
+  }
+
   private static func sameOwnedFileIdentity(_ lhs: stat, _ rhs: stat) -> Bool {
     lhs.st_dev == rhs.st_dev
       && lhs.st_ino == rhs.st_ino

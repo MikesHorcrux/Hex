@@ -11,6 +11,7 @@ struct HexChatGPTAuthenticationSettingsView: View {
       Button("Refresh") {
         model.refreshChatGPTAccountStatus()
       }
+      .buttonStyle(.hexSecondaryAction)
       .disabled(model.isChatGPTLoginInProgress || model.isChatGPTLogoutInProgress)
     }
 
@@ -25,6 +26,7 @@ struct HexChatGPTAuthenticationSettingsView: View {
       Button("Sign in with ChatGPT") {
         model.startChatGPTLogin()
       }
+      .buttonStyle(.hexPrimaryAction)
       .disabled(model.isChatGPTLoginInProgress || model.isChatGPTLogoutInProgress)
       .accessibilityIdentifier("startChatGPTSignInButton")
     }
@@ -42,11 +44,13 @@ struct HexChatGPTAuthenticationSettingsView: View {
           Button("Finish Sign-In") {
             model.completeChatGPTLogin()
           }
+          .buttonStyle(.hexPrimaryAction)
           .disabled(model.isChatGPTLoginInProgress)
 
           Button("Cancel", role: .cancel) {
             model.cancelChatGPTLogin()
           }
+          .buttonStyle(.hexSecondaryAction)
         }
       }
       .padding(.vertical, 4)

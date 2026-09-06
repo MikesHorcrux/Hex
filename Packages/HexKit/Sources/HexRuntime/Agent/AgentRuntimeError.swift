@@ -7,7 +7,7 @@ public enum AgentRuntimeError: Error, LocalizedError, Codable, Equatable, Sendab
   case invalidRequest(String)
   case modelUnavailable(ModelID)
   case unsupportedCapability(InferenceCapability)
-  case providerFailure(String)
+  case providerFailure(String, isRetryable: Bool)
   case protocolViolation(String)
   case budgetExceeded(String)
   case authorizationFailure(String)
@@ -21,7 +21,7 @@ public enum AgentRuntimeError: Error, LocalizedError, Codable, Equatable, Sendab
       "Run \(runID) is already active or durably recorded."
     case .invalidConfiguration(let message),
       .invalidRequest(let message),
-      .providerFailure(let message),
+      .providerFailure(let message, _),
       .protocolViolation(let message),
       .budgetExceeded(let message),
       .authorizationFailure(let message),

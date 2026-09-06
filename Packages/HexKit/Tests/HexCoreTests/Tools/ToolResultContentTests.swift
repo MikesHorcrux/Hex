@@ -19,13 +19,15 @@ struct ToolResultContentTests {
             mediaType: "image/jpeg"
           )
         ),
-      ]
+      ],
+      requiresUserAttention: true
     )
 
     let encoded = try JSONEncoder().encode(result)
     let decoded = try JSONDecoder().decode(ToolResult.self, from: encoded)
 
     #expect(decoded == result)
+    #expect(decoded.requiresUserAttention)
   }
 
   @Test
@@ -39,6 +41,29 @@ struct ToolResultContentTests {
     #expect(result.toolCallID == ToolCallID(rawValue: "call-legacy-1"))
     #expect(result.output == .string("done"))
     #expect(result.content.isEmpty)
+    #expect(!result.requiresUserAttention)
+    #expect(result.notExecutedReason == nil)
+    let encoded = try JSONEncoder().encode(result)
+    let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(object["requiresUserAttention"] == nil)
+    #expect(object["notExecutedReason"] == nil)
+  }
+
+  @Test
+  func nonExecutionRoundTripsWithoutClaimingSuccessfulOrRichOutput() throws {
+    let result = ToolResult(
+      toolCallID: ToolCallID(rawValue: "untouched"), status: .failure,
+      output: .string("Not dispatched"), notExecutedReason: .cancelled)
+    #expect(try JSONDecoder().decode(ToolResult.self, from: JSONEncoder().encode(result)) == result)
+    let contradictory = ToolResult(
+      toolCallID: result.toolCallID, status: .success, output: .null, notExecutedReason: .cancelled)
+    #expect(throws: EncodingError.self) { try JSONEncoder().encode(contradictory) }
+    let malformed = Data(
+      #"{"toolCallID":"untouched","status":"success","output":null,"notExecutedReason":"cancelled"}"#
+        .utf8)
+    #expect(throws: DecodingError.self) {
+      try JSONDecoder().decode(ToolResult.self, from: malformed)
+    }
   }
 
   @Test

@@ -5,6 +5,33 @@ import Testing
 @Suite("Gateway client stream capacity regressions")
 struct GatewayClientStreamCapacityRegressionTests {
   @Test
+  func abandoningAnUnconsumedStreamReleasesItsClientAndTransportSlots() async throws {
+    let transport = HangingGatewayTransport()
+    let client = HexGatewayClient(transport: transport)
+    _ = try await client.connect()
+    try await acquireAndDropStream(client)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while true {
+      let clientCount = await client.eventStreams.count
+      let transportCount = await transport.activeStreamCount
+      if clientCount == 0, transportCount == 0 { break }
+      guard ContinuousClock.now < deadline else {
+        Issue.record("An abandoned consumer retained a client or transport subscription slot.")
+        try await client.disconnect()
+        return
+      }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    try await client.disconnect()
+  }
+
+  private func acquireAndDropStream(_ client: HexGatewayClient) async throws {
+    let stream = try await client.eventRecords(
+      for: GatewayTestValues.runID(226), invocationID: GatewayTestValues.invocationID(226))
+    withExtendedLifetime(stream) {}
+  }
+
+  @Test
   func clientEnforcesItsConfiguredLiveStreamCapacity() async throws {
     let configuration = try #require(
       GatewayConfiguration(
@@ -23,7 +50,8 @@ struct GatewayClientStreamCapacityRegressionTests {
       for: runID,
       invocationID: invocationID
     )
-    _ = try await client.eventRecords(for: runID, invocationID: invocationID)
+    let secondStream = try await client.eventRecords(for: runID, invocationID: invocationID)
+    defer { withExtendedLifetime(secondStream) {} }
 
     do {
       _ = try await client.eventRecords(for: runID, invocationID: invocationID)
@@ -49,7 +77,8 @@ struct GatewayClientStreamCapacityRegressionTests {
       await Task.yield()
     }
 
-    _ = try await client.eventRecords(for: runID, invocationID: invocationID)
+    let replacementStream = try await client.eventRecords(for: runID, invocationID: invocationID)
+    defer { withExtendedLifetime(replacementStream) {} }
     #expect(await client.eventStreams.count == configuration.maximumSubscribersPerRun)
     #expect(await transport.activeStreamCount == configuration.maximumSubscribersPerRun)
     try await client.disconnect()
@@ -107,7 +136,7 @@ struct GatewayClientStreamCapacityRegressionTests {
     #expect(await client.eventStreamReservations.isEmpty)
     #expect(await client.eventStreams.count == 1)
     #expect(await transport.activeStreamCount == 1)
-    _ = retainedStream
+    withExtendedLifetime(retainedStream) {}
     try await client.disconnect()
   }
 
@@ -126,14 +155,16 @@ struct GatewayClientStreamCapacityRegressionTests {
     let client = HexGatewayClient(transport: transport, configuration: configuration)
     _ = try await client.connect()
 
-    _ = try await client.eventRecords(
+    let firstStream = try await client.eventRecords(
       for: GatewayTestValues.runID(239),
       invocationID: GatewayTestValues.invocationID(239)
     )
-    _ = try await client.eventRecords(
+    defer { withExtendedLifetime(firstStream) {} }
+    let secondStream = try await client.eventRecords(
       for: GatewayTestValues.runID(240),
       invocationID: GatewayTestValues.invocationID(240)
     )
+    defer { withExtendedLifetime(secondStream) {} }
 
     do {
       _ = try await client.eventRecords(

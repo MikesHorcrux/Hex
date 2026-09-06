@@ -1,5 +1,6 @@
 import Foundation
 import HexCore
+import HexIPC
 import HexMCP
 import Testing
 
@@ -7,6 +8,95 @@ import Testing
 
 @Suite("Resident setup")
 struct HexResidentSetupModelTests {
+  @Test @MainActor
+  func failedLoadCanRetryWithoutDiscardingPersistedSettings() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "persisted-model",
+      workspaceRoot: workspace,
+      authorizationMode: .fullAccess
+    )
+    let store = InitiallyFailingSettingsStore(settings: settings)
+    let model = HexResidentSetupModel(settingsStore: store, secretStore: FakeSecretStore())
+
+    await model.load()
+    #expect(model.errorMessage != nil)
+    #expect(!model.canSave)
+
+    await model.load()
+    #expect(await store.loadCount == 2)
+    #expect(model.errorMessage == nil)
+    #expect(model.modelID == "persisted-model")
+    #expect(model.authorizationMode == .fullAccess)
+    #expect(model.canSave)
+  }
+
+  @Test @MainActor
+  func failedLoadCannotOverwriteExistingSettingsWithDefaults() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let settings = try HexResidentRuntimeSettings(
+      modelID: "persisted-model", workspaceRoot: workspace)
+    let store = InitiallyFailingSettingsStore(settings: settings)
+    let model = HexResidentSetupModel(settingsStore: store, secretStore: FakeSecretStore())
+    await model.load()
+    model.modelID = "draft-model"
+    model.chooseWorkspace(workspace)
+    #expect(model.needsLoadRetry)
+
+    model.save()
+    try await waitForSave(model)
+
+    #expect(await store.saveCount == 0)
+    #expect(model.errorMessage != nil)
+  }
+
+  @Test @MainActor
+  func awaitedSaveReportsAsynchronousFailureAndAllowsRetry() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let store = FakeSettingsStore(failingSaveCount: 1)
+    let model = HexResidentSetupModel(settingsStore: store, secretStore: FakeSecretStore())
+    await model.load()
+    model.modelID = "test-model"
+    model.chooseWorkspace(workspace)
+
+    #expect(!(await model.saveAndWait()))
+    #expect(!model.isSaving)
+    #expect(model.saveGeneration == 0)
+    #expect(model.errorMessage != nil)
+
+    #expect(await model.saveAndWait())
+    #expect(!model.isSaving)
+    #expect(model.saveGeneration == 1)
+    #expect(model.errorMessage == nil)
+  }
+
+  @Test @MainActor
+  func awaitedSaveDoesNotReportSuccessWhenResidentReloadFails() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let store = FakeSettingsStore()
+    let reloader = InitiallyFailingConfigurationReloader()
+    let model = HexResidentSetupModel(
+      settingsStore: store, secretStore: FakeSecretStore(), configurationReloader: reloader
+    )
+    await model.load()
+    model.modelID = "test-model"
+    model.chooseWorkspace(workspace)
+
+    #expect(!(await model.saveAndWait()))
+    #expect(await store.savedSettings?.modelID == "test-model")
+    #expect(model.saveGeneration == 0)
+    #expect(!model.isSaving)
+    #expect(model.errorMessage?.contains("could not apply") == true)
+
+    #expect(await model.saveAndWait())
+    #expect(model.saveGeneration == 1)
+    #expect(reloader.reloadCount == 2)
+  }
+
   @Test @MainActor
   func firstSaveCanPersistNonOpenAIResidentSettingsWithoutACredential() async throws {
     let settingsStore = FakeSettingsStore()
@@ -122,6 +212,70 @@ struct HexResidentSetupModelTests {
   }
 
   @Test @MainActor
+  func successfulSaveReloadsTheResidentAfterSettingsAreDurable() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let settingsStore = FakeSettingsStore()
+    let reloader = RecordingConfigurationReloader(settingsStore: settingsStore)
+    let model = HexResidentSetupModel(
+      settingsStore: settingsStore,
+      secretStore: FakeSecretStore(),
+      configurationReloader: reloader
+    )
+    await model.load()
+    model.modelID = "gpt-5-codex"
+    model.authorizationMode = .fullAccess
+    model.chooseWorkspace(workspace)
+
+    model.save()
+    try await waitForSave(model)
+
+    #expect(reloader.reloadCount == 1)
+    #expect(reloader.observedPersistedAuthorizationMode == .fullAccess)
+    #expect(model.saveGeneration == 1)
+  }
+
+  @Test @MainActor
+  func publishedApprovalModeUsesTheAppliedSnapshotNotTheDraftAndSurvivesFailedApply() async throws {
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let initial = try HexResidentRuntimeSettings(
+      modelID: "test-model", workspaceRoot: workspace, authorizationMode: .approveForMe)
+    let settingsStore = FakeSettingsStore(settings: initial)
+    let reloader = RecordingConfigurationReloader(settingsStore: settingsStore)
+    defer { reloader.finishReload(failing: true) }
+    let model = HexResidentSetupModel(
+      settingsStore: settingsStore, secretStore: FakeSecretStore(), configurationReloader: reloader)
+    await model.load()
+    #expect(model.savedAuthorizationMode == .approveForMe)
+
+    reloader.suspendsReloads = true
+    model.authorizationMode = .askEveryTime
+    model.save()
+    try await reloader.waitUntilSuspended()
+    #expect(model.isSaving)
+    #expect(await settingsStore.savedSettings?.authorizationMode == .askEveryTime)
+    model.authorizationMode = .fullAccess
+    #expect(model.savedAuthorizationMode == .approveForMe)
+    reloader.finishReload()
+    try await waitForSave(model)
+    #expect(model.errorMessage == nil)
+    #expect(model.saveGeneration == 1)
+    #expect(model.authorizationMode == .fullAccess)
+    #expect(model.savedAuthorizationMode == .askEveryTime)
+
+    reloader.suspendsReloads = true
+    model.save()
+    try await reloader.waitUntilSuspended()
+    #expect(await settingsStore.savedSettings?.authorizationMode == .fullAccess)
+    reloader.finishReload(failing: true)
+    try await waitForSave(model)
+    #expect(model.errorMessage?.contains("could not apply") == true)
+    #expect(model.saveGeneration == 1)
+    #expect(model.savedAuthorizationMode == .askEveryTime)
+  }
+
+  @Test @MainActor
   func enablingMissingBrowserControlInstallsItWithoutExposingRuntimeSetup() async throws {
     let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
       "HexManagedTools-\(UUID().uuidString)",
@@ -143,34 +297,89 @@ struct HexResidentSetupModelTests {
 
     #expect(model.playwrightMCPEnabled)
     #expect(model.playwrightAvailability == .ready)
-    #expect(model.statusMessage == "Browser control is ready.")
+    #expect(model.statusMessage == "Browser control is installed.")
     #expect(await installer.installedTools == [.playwright])
   }
 
   @Test @MainActor
-  func screenControlRequestInstallsCapabilityAndUsesVerifiedResult() async throws {
+  func managedToolInstallationBlocksSavingUntilItFinishes() async throws {
     let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
       "HexManagedTools-\(UUID().uuidString)",
       isDirectory: true
     )
     defer { try? FileManager.default.removeItem(at: rootURL) }
-    let installer = FakeManagedToolInstaller(screenRecordingGranted: true)
+    let workspace = try makeWorkspace()
+    defer { try? FileManager.default.removeItem(at: workspace) }
+    let settingsStore = FakeSettingsStore()
+    let installer = SuspendedManagedToolInstaller()
+    let model = HexResidentSetupModel(
+      settingsStore: settingsStore,
+      secretStore: FakeSecretStore(),
+      managedToolLayout: try MCPManagedToolLayout(rootURL: rootURL),
+      managedToolInstaller: installer
+    )
+    await model.load()
+    model.modelID = "gpt-5-codex"
+    model.chooseWorkspace(workspace)
+
+    model.setPlaywrightEnabled(true)
+    try await waitForManagedToolInstaller(installer)
+
+    #expect(model.isInstallingManagedTool)
+    #expect(!model.canSave)
+    model.save()
+    #expect(await settingsStore.saveCount == 0)
+    #expect(
+      model.errorMessage
+        == "Wait for browser or screen control to finish setting up, then continue."
+    )
+
+    await installer.finish()
+    try await waitForManagedToolInstall(model)
+
+    #expect(!model.isInstallingManagedTool)
+    #expect(model.canSave)
+    #expect(model.playwrightMCPEnabled)
+    model.save()
+    try await waitForSave(model)
+    #expect(await settingsStore.savedSettings?.mcpServers == [try .playwright()])
+  }
+
+  @Test @MainActor
+  func screenControlRequestInstallsCapabilityWithoutChangingTheSavedToolChoice() async throws {
+    let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "HexManagedTools-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: rootURL) }
+    let installer = FakeManagedToolInstaller()
+    let permissionService = FakeScreenControlPermissionService(
+      status: GatewayScreenControlPermissionStatus(
+        accessibilityGranted: true,
+        screenRecordingGranted: true
+      )
+    )
     let model = HexResidentSetupModel(
       settingsStore: FakeSettingsStore(),
       secretStore: FakeSecretStore(),
       managedToolLayout: try MCPManagedToolLayout(rootURL: rootURL),
-      managedToolInstaller: installer
+      managedToolInstaller: installer,
+      screenControlPermissionService: permissionService
     )
     await model.load()
 
     model.requestScreenControlPermissions()
     try await waitForScreenControlRequest(model)
 
-    #expect(model.peekabooMCPEnabled)
+    #expect(!model.peekabooMCPEnabled)
+    #expect(model.screenSetupStatus == .disabled)
     #expect(model.peekabooAvailability == .ready)
+    #expect(model.screenControlPermissionStatus?.accessibilityGranted == true)
+    #expect(model.screenControlPermissionStatus?.screenRecordingGranted == true)
     #expect(model.screenControlPermissionsGranted == true)
     #expect(model.statusMessage == "Screen control permissions are ready.")
-    #expect(await installer.screenControlRequestCount == 1)
+    #expect(await installer.installedTools == [.peekaboo])
+    #expect(await permissionService.requestCount == 1)
   }
 
   @Test @MainActor
@@ -359,6 +568,18 @@ struct HexResidentSetupModelTests {
     Issue.record("Browser control installation did not finish within the test budget.")
   }
 
+  private func waitForManagedToolInstaller(
+    _ installer: SuspendedManagedToolInstaller
+  ) async throws {
+    for _ in 0..<100 {
+      if await installer.isWaiting {
+        return
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Managed tool installation did not start within the test budget.")
+  }
+
   @MainActor
   private func waitForScreenControlRequest(_ model: HexResidentSetupModel) async throws {
     for _ in 0..<100 {
@@ -377,11 +598,13 @@ struct HexResidentSetupModelTests {
 
   private actor FakeSettingsStore: HexResidentRuntimeSettingsStore {
     private var settings: HexResidentRuntimeSettings?
+    private var failingSaveCount: Int
     private(set) var savedSettings: HexResidentRuntimeSettings?
     private(set) var saveCount = 0
 
-    init(settings: HexResidentRuntimeSettings? = nil) {
+    init(settings: HexResidentRuntimeSettings? = nil, failingSaveCount: Int = 0) {
       self.settings = settings
+      self.failingSaveCount = failingSaveCount
     }
 
     func load() async throws -> HexResidentRuntimeSettings? {
@@ -389,8 +612,42 @@ struct HexResidentSetupModelTests {
     }
 
     func save(_ settings: HexResidentRuntimeSettings) async throws {
+      if failingSaveCount > 0 {
+        failingSaveCount -= 1
+        throw FakeStoreError.missingSettings
+      }
       self.settings = settings
       savedSettings = settings
+      saveCount += 1
+    }
+  }
+
+  @MainActor
+  private final class InitiallyFailingConfigurationReloader: HexResidentConfigurationReloading {
+    private(set) var reloadCount = 0
+
+    func reloadAfterConfigurationChange() async throws {
+      reloadCount += 1
+      if reloadCount == 1 { throw FakeStoreError.missingSettings }
+    }
+  }
+
+  private actor InitiallyFailingSettingsStore: HexResidentRuntimeSettingsStore {
+    private let settings: HexResidentRuntimeSettings
+    private(set) var loadCount = 0
+    private(set) var saveCount = 0
+
+    init(settings: HexResidentRuntimeSettings) {
+      self.settings = settings
+    }
+
+    func load() async throws -> HexResidentRuntimeSettings? {
+      loadCount += 1
+      if loadCount == 1 { throw FakeStoreError.missingSettings }
+      return settings
+    }
+
+    func save(_ settings: HexResidentRuntimeSettings) async throws {
       saveCount += 1
     }
   }
@@ -424,24 +681,86 @@ struct HexResidentSetupModelTests {
 
   private actor FakeManagedToolInstaller: HexManagedToolInstalling {
     private(set) var installedTools: [MCPManagedTool] = []
-    private(set) var screenControlRequestCount = 0
-    private let screenRecordingGranted: Bool
-
-    init(screenRecordingGranted: Bool = false) {
-      self.screenRecordingGranted = screenRecordingGranted
-    }
 
     func install(_ tool: MCPManagedTool) async throws {
       installedTools.append(tool)
     }
+  }
 
-    func screenControlPermissionStatus() async throws -> Bool {
-      screenRecordingGranted
+  private actor SuspendedManagedToolInstaller: HexManagedToolInstalling {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    var isWaiting: Bool {
+      continuation != nil
     }
 
-    func requestScreenControlPermission() async throws -> Bool {
-      screenControlRequestCount += 1
-      return screenRecordingGranted
+    func install(_ tool: MCPManagedTool) async throws {
+      _ = tool
+      await withCheckedContinuation { continuation in
+        self.continuation = continuation
+      }
+    }
+
+    func finish() {
+      continuation?.resume()
+      continuation = nil
+    }
+  }
+
+  @MainActor
+  private final class RecordingConfigurationReloader: HexResidentConfigurationReloading {
+    private let settingsStore: FakeSettingsStore
+    private(set) var reloadCount = 0
+    private(set) var observedPersistedAuthorizationMode: HexAuthorizationMode?
+    var suspendsReloads = false
+    private var continuation: CheckedContinuation<Void, any Error>?
+
+    init(settingsStore: FakeSettingsStore) {
+      self.settingsStore = settingsStore
+    }
+
+    func reloadAfterConfigurationChange() async throws {
+      reloadCount += 1
+      observedPersistedAuthorizationMode = await settingsStore.savedSettings?.authorizationMode
+      if suspendsReloads {
+        try await withCheckedThrowingContinuation { continuation = $0 }
+      }
+    }
+
+    func waitUntilSuspended() async throws {
+      for _ in 0..<100 {
+        if continuation != nil { return }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      throw FakeStoreError.missingSettings
+    }
+
+    func finishReload(failing: Bool = false) {
+      suspendsReloads = false
+      if failing {
+        continuation?.resume(throwing: FakeStoreError.missingSettings)
+      } else {
+        continuation?.resume()
+      }
+      continuation = nil
+    }
+  }
+
+  private actor FakeScreenControlPermissionService: HexScreenControlPermissionServicing {
+    private let status: GatewayScreenControlPermissionStatus
+    private(set) var requestCount = 0
+
+    init(status: GatewayScreenControlPermissionStatus) {
+      self.status = status
+    }
+
+    func screenControlPermissionStatus() async throws -> GatewayScreenControlPermissionStatus {
+      status
+    }
+
+    func requestScreenControlPermission() async throws -> GatewayScreenControlPermissionStatus {
+      requestCount += 1
+      return status
     }
   }
 }

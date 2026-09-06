@@ -8,7 +8,7 @@ struct HexResidentConfigurationFormView: View {
 
   var body: some View {
     Section {
-      TextField("Model identifier", text: $model.modelID)
+      TextField("Model", text: $model.modelID)
         .accessibilityIdentifier("residentModelField")
 
       HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -22,12 +22,13 @@ struct HexResidentConfigurationFormView: View {
         Button("Choose Folder") {
           isSelectingWorkspace = true
         }
+        .buttonStyle(.hexSecondaryAction)
       }
       .accessibilityElement(children: .contain)
     } header: {
-      Text("Agent workspace")
+      Text("Workspace")
     } footer: {
-      Text("Hex limits its built-in coding tools to this local folder.")
+      Text("Hex keeps its built-in coding work inside this folder.")
     }
     .fileImporter(
       isPresented: $isSelectingWorkspace,

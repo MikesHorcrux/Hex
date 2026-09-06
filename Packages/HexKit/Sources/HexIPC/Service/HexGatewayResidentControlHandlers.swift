@@ -8,6 +8,8 @@ public struct HexGatewayResidentControlHandlers: Sendable {
   public let pauseHeartbeats: (@Sendable () async throws -> GatewayResidentStatus)?
   public let resumeHeartbeats: (@Sendable () async throws -> GatewayResidentStatus)?
   public let listHeartbeats: (@Sendable () async throws -> GatewayHeartbeatScheduleList)?
+  public let listHeartbeatRuns:
+    (@Sendable (GatewayHeartbeatRunListRequest) async throws -> GatewayHeartbeatRunPage)?
   public let addHeartbeat:
     (@Sendable (GatewayHeartbeatScheduleRequest) async throws -> GatewayHeartbeatScheduleList)?
   public let removeHeartbeat:
@@ -33,12 +35,15 @@ public struct HexGatewayResidentControlHandlers: Sendable {
       nil,
     resumeHeartbeat:
       (@Sendable (GatewayHeartbeatScheduleMutation) async throws -> GatewayHeartbeatScheduleList)? =
-      nil
+      nil,
+    listHeartbeatRuns:
+      (@Sendable (GatewayHeartbeatRunListRequest) async throws -> GatewayHeartbeatRunPage)? = nil
   ) {
     self.status = status
     self.pauseHeartbeats = pauseHeartbeats
     self.resumeHeartbeats = resumeHeartbeats
     self.listHeartbeats = listHeartbeats
+    self.listHeartbeatRuns = listHeartbeatRuns
     self.addHeartbeat = addHeartbeat
     self.removeHeartbeat = removeHeartbeat
     self.pauseHeartbeat = pauseHeartbeat

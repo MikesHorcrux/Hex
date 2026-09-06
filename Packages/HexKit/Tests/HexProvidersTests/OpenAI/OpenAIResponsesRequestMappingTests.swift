@@ -7,6 +7,43 @@ import Testing
 @Suite("OpenAI Responses request mapping")
 struct OpenAIResponsesRequestMappingTests {
   @Test
+  func nextTurnIncludesExplicitNonExecutionMeaningInProviderInput() throws {
+    let call = ToolCall(name: "lookup_weather", arguments: ["city": .string("Paris")])
+    let result = ToolResult(
+      toolCallID: call.id, status: .failure, output: .string("Not dispatched"),
+      notExecutedReason: .cancelled)
+    let builder = OpenAIResponsesRequestBuilder(
+      configuration: try OpenAIResponsesTestFixture.configuration())
+    let plan = try builder.build(
+      OpenAIResponsesTestFixture.request(
+        messages: [
+          Message(role: .user, content: [.text("Look up the weather")]),
+          Message(role: .assistant, content: [.toolCall(call)]),
+          Message(role: .tool, content: [.toolResult(result)]),
+          Message(role: .user, content: [.text("Do something else instead")]),
+        ], tools: [weatherTool()]), serverState: nil, localState: nil)
+    guard case .object(let body) = try JSONDecoder().decode(JSONValue.self, from: plan.body),
+      case .array(let input) = body["input"],
+      let mapped = input.first(where: { value in
+        if case .object(let object) = value {
+          return object["type"] == .string("function_call_output")
+        }
+        return false
+      }), case .object(let fields) = mapped, case .string(let output) = fields["output"]
+    else {
+      Issue.record("Expected a provider tool receipt")
+      return
+    }
+    let decoded = try JSONDecoder().decode(JSONValue.self, from: Data(output.utf8))
+    guard case .object(let values) = decoded else {
+      Issue.record("Expected output object")
+      return
+    }
+    #expect(values["execution"] == .string("not_executed"))
+    #expect(values["not_executed_reason"] == .string("cancelled"))
+  }
+
+  @Test
   func mapsEveryNeutralInputAndBothPrivacyModes() async throws {
     let imageURL = try #require(URL(string: "https://images.example.test/cat.png"))
     let call = ToolCall(
@@ -83,6 +120,9 @@ struct OpenAIResponsesRequestMappingTests {
       #expect(body["max_output_tokens"] as? Int == 128)
       #expect(body["temperature"] as? Double == 0.5)
       #expect(body["parallel_tool_calls"] as? Bool == true)
+      let reasoning = try #require(body["reasoning"] as? [String: Any])
+      #expect(reasoning["effort"] as? String == "low")
+      #expect(reasoning["summary"] as? String == "auto")
 
       let toolChoice = try #require(body["tool_choice"] as? [String: Any])
       #expect(toolChoice["type"] as? String == "function")
@@ -102,6 +142,8 @@ struct OpenAIResponsesRequestMappingTests {
       #expect(userContent.map { $0["type"] as? String } == ["input_text", "input_image"])
       #expect(userContent[1]["image_url"] as? String == imageURL.absoluteString)
       #expect(userContent[1]["detail"] as? String == "auto")
+      let assistantContent = try #require(input[2]["content"] as? [[String: Any]])
+      #expect(assistantContent.map { $0["type"] as? String } == ["output_text"])
 
       let outputString = try #require(input[4]["output"] as? String)
       let outputData = Data(outputString.utf8)
@@ -118,6 +160,38 @@ struct OpenAIResponsesRequestMappingTests {
         #expect(body["include"] == nil)
       }
     }
+  }
+
+  @Test
+  func mapsConfiguredReasoningEffortWithoutRequestingSummaries() async throws {
+    let transport = TestOpenAIResponsesTransport(
+      responses: [
+        OpenAIResponsesTestFixture.response(
+          data: try OpenAIResponsesTestFixture.textStream(responseID: "resp_reasoning_effort")
+        )
+      ]
+    )
+    let configuration = try OpenAIResponsesConfiguration(
+      models: [OpenAIResponsesTestFixture.model()],
+      reasoningEffort: .high,
+      requestReasoningSummaries: false
+    )
+    let provider = OpenAIResponsesProvider(
+      configuration: configuration,
+      credentialProvider: TestOpenAICredentialProvider(key: "sk-reasoning-effort"),
+      transport: transport
+    )
+
+    _ = try await OpenAIResponsesTestFixture.collect(
+      provider: provider,
+      request: OpenAIResponsesTestFixture.request()
+    )
+
+    let sent = try #require(await transport.requests().first)
+    let body = try OpenAIResponsesTestFixture.jsonObject(from: sent)
+    let reasoning = try #require(body["reasoning"] as? [String: Any])
+    #expect(reasoning["effort"] as? String == "high")
+    #expect(reasoning["summary"] == nil)
   }
 
   @Test

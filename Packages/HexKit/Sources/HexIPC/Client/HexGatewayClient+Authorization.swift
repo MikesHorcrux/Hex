@@ -27,6 +27,7 @@ extension HexGatewayClient {
     } catch {
       try Task.checkCancellation()
       try requireCurrentConnectedGeneration(connection.generationID)
+      invalidateConnectionIfUnavailable(error, generationID: connection.generationID)
       throw error
     }
 

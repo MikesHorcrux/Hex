@@ -15,9 +15,40 @@ public protocol HexGatewayResidentControlTransport: Sendable {
   func resumeHeartbeats(
     lease: GatewayTransportConnectionLease
   ) async throws -> GatewayResidentStatus
+
+  func listHeartbeats(lease: GatewayTransportConnectionLease) async throws
+    -> GatewayHeartbeatScheduleList
+  func addHeartbeat(
+    _ request: GatewayHeartbeatScheduleRequest, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayHeartbeatScheduleList
+  func removeHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayHeartbeatScheduleList
+  func pauseHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayHeartbeatScheduleList
+  func resumeHeartbeat(
+    _ mutation: GatewayHeartbeatScheduleMutation, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayHeartbeatScheduleList
+  func listHeartbeatRuns(
+    _ request: GatewayHeartbeatRunListRequest, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayHeartbeatRunPage
 }
 
 extension HexGatewayResidentControlTransport {
+  public func listHeartbeatRuns(
+    _ request: GatewayHeartbeatRunListRequest, lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatRunPage {
+    throw GatewayFailure(
+      code: .transportUnavailable,
+      message: "The connected gateway transport does not support scheduled run history.")
+  }
+
   /// Returns the current bounded schedule projection. Implementations that do not expose the
   /// optional heartbeat-management capability fail closed instead of silently returning local data.
   public func listHeartbeats(

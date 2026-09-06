@@ -1,15 +1,19 @@
+import Foundation
 import HexCore
 
 public actor MCPToolExecutor: ToolExecutor {
   private let sessions: [any MCPClientSession]
   private var startedSessions: [any MCPClientSession] = []
   private var startupTask: Task<MCPToolCatalog, any Error>?
-  private var shutdownTask: Task<Void, Never>?
+  private var shutdown: (id: UUID, task: Task<Void, Never>)?
   private var definitions: [ToolDefinition] = []
   private var routes: [String: MCPToolRoute] = [:]
   private var isStarted = false
   private var isStopping = false
-  private var catalogGeneration = UInt64(0)
+  // A list refresh changes future routes, not the ownership of calls already dispatched.
+  // Only a session lifecycle change invalidates their eventual receipts.
+  private var sessionGeneration = UInt64(0)
+  private var catalogRevision = UInt64(0)
 
   public init(sessions: [any MCPClientSession]) throws {
     guard !sessions.isEmpty, sessions.count <= 16 else {
@@ -28,17 +32,17 @@ public actor MCPToolExecutor: ToolExecutor {
   public func start() async throws {
     try Task.checkCancellation()
     guard !isStarted else { return }
-    guard !isStopping, shutdownTask == nil, catalogGeneration < UInt64.max else {
+    guard !isStopping, shutdown == nil, sessionGeneration < UInt64.max else {
       throw MCPToolExecutorError.transitionInProgress
     }
     let generation: UInt64
     let task: Task<MCPToolCatalog, any Error>
     if let currentTask = startupTask {
-      generation = catalogGeneration
+      generation = sessionGeneration
       task = currentTask
     } else {
-      catalogGeneration += 1
-      generation = catalogGeneration
+      sessionGeneration += 1
+      generation = sessionGeneration
       let sessions = self.sessions
       let createdTask = Task {
         try await MCPToolExecutorStartup.run(sessions: sessions)
@@ -48,17 +52,18 @@ public actor MCPToolExecutor: ToolExecutor {
     }
     do {
       let catalog = try await task.value
-      guard catalogGeneration == generation, !isStopping else {
+      guard sessionGeneration == generation, !isStopping else {
         throw MCPToolExecutorError.transitionInProgress
       }
       if isStarted { return }
       definitions = catalog.definitions
       routes = catalog.routes
+      catalogRevision = 0
       startedSessions = sessions.sorted { $0.serverID < $1.serverID }
       isStarted = true
       startupTask = nil
     } catch {
-      if catalogGeneration == generation, !isStarted {
+      if sessionGeneration == generation, !isStarted {
         startupTask = nil
       }
       throw error
@@ -70,27 +75,39 @@ public actor MCPToolExecutor: ToolExecutor {
     guard isStarted, !isStopping else {
       throw MCPToolExecutorError.notStarted
     }
-    guard catalogGeneration < UInt64.max else {
+    guard catalogRevision < UInt64.max else {
       throw MCPToolExecutorError.transitionInProgress
     }
-    let generation = catalogGeneration
+    let generation = sessionGeneration
+    let revision = catalogRevision
     let catalog = try await MCPToolCatalogBuilder.build(sessions: startedSessions)
-    guard catalogGeneration == generation, isStarted, !isStopping else {
+    guard sessionGeneration == generation, catalogRevision == revision, isStarted, !isStopping
+    else {
       throw MCPToolExecutorError.transitionInProgress
     }
     definitions = catalog.definitions
     routes = catalog.routes
-    catalogGeneration += 1
+    catalogRevision += 1
   }
 
   public func stop() async {
-    if let shutdownTask {
-      await shutdownTask.value
-      return
-    }
+    let shutdown = beginShutdown()
+    await shutdown.task.value
+  }
+
+  /// Invalidates the catalog and requests cleanup without waiting for a slow server to exit.
+  ///
+  /// The cleanup task owns the final state transition, so a later discovery either observes an
+  /// active shutdown or a fully restartable executor.
+  func requestStop() {
+    _ = beginShutdown()
+  }
+
+  private func beginShutdown() -> (id: UUID, task: Task<Void, Never>) {
+    if let shutdown { return shutdown }
     isStopping = true
-    if catalogGeneration < UInt64.max {
-      catalogGeneration += 1
+    if sessionGeneration < UInt64.max {
+      sessionGeneration += 1
     }
     let pendingStartup = startupTask
     let connectedSessions = startedSessions
@@ -101,6 +118,7 @@ public actor MCPToolExecutor: ToolExecutor {
     routes = [:]
     isStarted = false
     let allSessions = sessions.sorted { $0.serverID < $1.serverID }
+    let shutdownID = UUID()
     let createdShutdownTask = Task {
       if let pendingStartup {
         if case .success = await pendingStartup.result {
@@ -113,11 +131,10 @@ public actor MCPToolExecutor: ToolExecutor {
           await session.disconnect()
         }
       }
+      self.finishShutdown(id: shutdownID)
     }
-    shutdownTask = createdShutdownTask
-    await createdShutdownTask.value
-    shutdownTask = nil
-    isStopping = false
+    shutdown = (id: shutdownID, task: createdShutdownTask)
+    return (id: shutdownID, task: createdShutdownTask)
   }
 
   public func availableTools() async throws -> [ToolDefinition] {
@@ -154,6 +171,14 @@ public actor MCPToolExecutor: ToolExecutor {
     _ call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> ToolResult {
+    try await execute(call, in: context, willDispatch: {})
+  }
+
+  /// Host-only evidence of crossing the session boundary, distinct from a local routing refusal.
+  func execute(
+    _ call: ToolCall, in context: ToolExecutionContext,
+    willDispatch: @Sendable () -> Void
+  ) async throws -> ToolResult {
     _ = context
     try Task.checkCancellation()
     guard isStarted else {
@@ -162,14 +187,22 @@ public actor MCPToolExecutor: ToolExecutor {
     guard let route = routes[call.name] else {
       throw MCPToolExecutorError.unknownTool
     }
-    let generation = catalogGeneration
+    let generation = sessionGeneration
+    willDispatch()
     let remoteResult = try await route.session.callTool(
       MCPRemoteToolCall(name: route.remoteName, arguments: call.arguments)
     )
-    try Task.checkCancellation()
-    guard catalogGeneration == generation, isStarted, !isStopping else {
+    // A returned receipt may describe completed side effects. Keep validating its session and
+    // payload, but let the runtime persist that known outcome before it honors cancellation.
+    guard sessionGeneration == generation, isStarted, !isStopping else {
       throw MCPToolExecutorError.notStarted
     }
     return try MCPToolResultMapper.map(remoteResult, call: call, route: route)
+  }
+
+  private func finishShutdown(id: UUID) {
+    guard shutdown?.id == id else { return }
+    shutdown = nil
+    isStopping = false
   }
 }

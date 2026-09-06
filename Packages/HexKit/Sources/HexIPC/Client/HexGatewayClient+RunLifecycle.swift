@@ -37,6 +37,7 @@ extension HexGatewayClient {
       try requireCurrentStartAttempt(for: runID, matching: attemptID)
       try Task.checkCancellation()
       invalidateStartAttempt(for: runID, matching: attemptID)
+      invalidateConnectionIfUnavailable(error, generationID: connection.generationID)
       throw error
     }
 
@@ -103,6 +104,7 @@ extension HexGatewayClient {
     } catch {
       try Task.checkCancellation()
       try requireCurrentConnectedGeneration(connection.generationID)
+      invalidateConnectionIfUnavailable(error, generationID: connection.generationID)
       throw error
     }
 
@@ -129,6 +131,9 @@ extension HexGatewayClient {
     guard !isZero(request.runID.rawValue) else {
       throw malformedStartResponseFailure()
     }
+    // The complete immutable request, including its compacted-output inventory, must fit the
+    // client's envelope even when an injected transport performs no encoding of its own.
+    _ = try GatewayWireCodec(configuration: configuration).encode(request)
   }
 
   func validateStartResponse(

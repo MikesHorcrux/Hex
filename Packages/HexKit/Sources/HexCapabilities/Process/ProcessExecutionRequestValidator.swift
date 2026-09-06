@@ -84,7 +84,8 @@ enum ProcessExecutionRequestValidator {
       workingDirectory: workingDirectory,
       environment: request.environment,
       timeoutSeconds: request.timeoutSeconds,
-      expectedIdentity: request.expectedIdentity
+      expectedIdentity: request.expectedIdentity,
+      outputArtifactMetadata: request.outputArtifactMetadata
     )
   }
 

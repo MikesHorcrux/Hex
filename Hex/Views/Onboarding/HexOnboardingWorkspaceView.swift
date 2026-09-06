@@ -7,20 +7,28 @@ struct HexOnboardingWorkspaceView: View {
   var body: some View {
     Form {
       Section {
-        Text(
-          "The workspace is Hex's coding boundary. Built-in read, search, edit, and terminal tools are rooted here."
+        HexInlineNoticeView(
+          message:
+            "Hex keeps its built-in coding work inside the folder you choose. You can change it later.",
+          systemImage: "folder.badge.gearshape",
+          tint: HexBrandPalette.coral
         )
-        .foregroundStyle(.secondary)
       }
 
       HexResidentConfigurationFormView(model: model)
 
       if let errorMessage = model.errorMessage {
-        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-          .foregroundStyle(.orange)
+        HexInlineNoticeView(
+          message: errorMessage,
+          systemImage: "exclamationmark.triangle.fill",
+          tint: .orange
+        )
       }
+      HexResidentSetupLoadRetryView(model: model)
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .tint(HexBrandPalette.coral)
     .task {
       await model.load()
     }

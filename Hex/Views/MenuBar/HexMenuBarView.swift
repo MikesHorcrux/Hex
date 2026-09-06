@@ -166,7 +166,7 @@ struct HexMenuBarView: View {
     case .unavailable:
       .secondary
     case .idle:
-      .green
+      HexBrandPalette.successInk
     case .active:
       .orange
     case .paused:

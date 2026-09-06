@@ -8,6 +8,11 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
   var connection: SQLiteConnection?
   var fileLock: SQLiteJournalFileLock?
   var secureDirectory: SQLiteJournalSecureDirectory?
+  // Whole-journal admission establishes these baselines. Only successful owned commits
+  // update usage; another SQLite connection's commit invalidates the data version.
+  var integrityUsage: SQLiteJournalIntegrityUsage?
+  var integrityDataVersion: Int64?
+  var activeRunStates: [AgentRunID: SQLiteJournalActiveRunState] = [:]
 
   /// Runs repaired during this specific open. A later idempotent open reports an empty array.
   public private(set) var recoveredRuns: [InterruptedAgentRun] = []
@@ -35,6 +40,9 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
     }
     fileLock = nil
     secureDirectory = nil
+    integrityUsage = nil
+    integrityDataVersion = nil
+    activeRunStates.removeAll()
   }
 
   func requireConnection() throws -> SQLiteConnection {
@@ -88,6 +96,9 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
       connection = nil
       self.fileLock = nil
       self.secureDirectory = nil
+      integrityUsage = nil
+      integrityDataVersion = nil
+      activeRunStates.removeAll()
       throw error
     }
   }

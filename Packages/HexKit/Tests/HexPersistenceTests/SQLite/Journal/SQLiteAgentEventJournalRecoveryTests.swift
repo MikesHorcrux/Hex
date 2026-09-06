@@ -6,6 +6,134 @@ import Testing
 
 @Suite("SQLite agent-event journal recovery")
 struct SQLiteAgentEventJournalRecoveryTests {
+  @Test(arguments: [true, false])
+  func closesOnlyProvenNeverStartedCallsAndPreservesTerminalCapacity(tightCapacity: Bool)
+    async throws
+  {
+    let directory = try JournalTestSupport.makeTemporaryDirectory()
+    defer { JournalTestSupport.removeTemporaryDirectory(directory) }
+    let configuration = JournalTestSupport.configuration(in: directory)
+    let runID = AgentRunID()
+    let historical = ToolCall(name: "old", arguments: [:])
+    let started = ToolCall(name: "started", arguments: [:])
+    let undelegated = ToolCall(name: "not_requested", arguments: [:])
+    let requested = ToolCall(name: "waiting_for_approval", arguments: [:])
+    let allowed = ToolCall(name: "allowed_not_started", arguments: [:])
+    let denied = ToolCall(name: "denied", arguments: [:])
+    let marked = ToolCall(name: "already_marked", arguments: [:])
+    let ambiguous = ToolCall(name: "duplicate_declaration", arguments: [:])
+    let nativeOnly = ToolCall(name: "legacy_native_outcome", arguments: [:])
+    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    _ = try await journal.append(.runStarted, to: runID)
+    _ = try await journal.append(
+      .messageAppended(Message(role: .assistant, content: [.toolCall(historical)])), to: runID)
+    await #expect(throws: SQLiteAgentEventJournalError.self) {
+      try await journal.append(
+        .toolFinished(
+          ToolResult(
+            toolCallID: historical.id, status: .failure, output: .null,
+            notExecutedReason: .cancelled)), to: runID)
+    }
+    _ = try await journal.append(
+      .inferenceRequested(
+        InferenceRequest(
+          providerID: ProviderID(rawValue: "test"), modelID: ModelID(rawValue: "test"),
+          messages: [Message(role: .user, content: [.text("current task")])])), to: runID)
+    _ = try await journal.append(
+      .messageAppended(
+        Message(
+          role: .assistant,
+          content: [
+            started, undelegated, requested, allowed, denied, marked, ambiguous, ambiguous,
+            nativeOnly,
+          ]
+          .map(MessageContent.toolCall))), to: runID)
+    for (call, decision) in [
+      (requested, Optional<AuthorizationDecision>.none),
+      (allowed, .allow), (denied, .deny(reason: nil)),
+    ] {
+      let request = AuthorizationRequest(
+        runID: runID, toolCallID: call.id, capability: CapabilityID(rawValue: "test"),
+        operation: "execute", explanation: "test")
+      _ = try await journal.append(.authorizationRequested(request), to: runID)
+      if let decision {
+        _ = try await journal.append(
+          .authorizationDecided(requestID: request.id, decision: decision), to: runID)
+      }
+    }
+    _ = try await journal.append(.toolStarted(started), to: runID)
+    _ = try await journal.append(
+      .messageAppended(
+        Message(
+          role: .tool,
+          content: [
+            .toolResult(
+              ToolResult(
+                toolCallID: nativeOnly.id, status: .success, output: .string("Legacy known output"))
+            )
+          ])), to: runID)
+    for call in [started, ambiguous, nativeOnly] {
+      await #expect(throws: SQLiteAgentEventJournalError.self) {
+        try await journal.append(
+          .toolFinished(
+            ToolResult(
+              toolCallID: call.id, status: .failure, output: .null,
+              notExecutedReason: .runStopped)), to: runID)
+      }
+    }
+    let priorReceipt = ToolResult(
+      toolCallID: marked.id, status: .failure, output: .string("Not started"),
+      notExecutedReason: .cancelled)
+    _ = try await journal.append(.toolFinished(priorReceipt), to: runID)
+    await #expect(throws: SQLiteAgentEventJournalError.self) {
+      try await journal.append(
+        .messageAppended(
+          Message(
+            role: .tool,
+            content: [
+              .toolResult(
+                ToolResult(
+                  toolCallID: marked.id, status: .failure, output: .string("Changed"),
+                  notExecutedReason: .cancelled))
+            ])), to: runID)
+    }
+    let original = try await journal.records(for: runID, after: nil, limit: 100)
+    try await journal.close()
+    let recoveryConfiguration = SQLiteAgentEventJournalConfiguration(
+      databaseURL: configuration.databaseURL,
+      maximumRecoveryRecordCount: tightCapacity ? original.count + 1 : 1_000)
+    let recovered = try await SQLiteAgentEventJournal.open(configuration: recoveryConfiguration)
+    #expect(await recovered.recoveredRuns.first?.unresolvedToolCallIDs == [started.id])
+    let records = try await recovered.records(for: runID, after: nil, limit: 100)
+    #expect(records.last?.event == SQLiteInterruptedRunTerminal.event)
+    #expect(Array(records.prefix(original.count)) == original)
+    let additions = records.dropFirst(original.count).map(\.event)
+    if tightCapacity {
+      #expect(additions == [SQLiteInterruptedRunTerminal.event])
+    } else {
+      let finishes = additions.compactMap { event -> ToolResult? in
+        if case .toolFinished(let result) = event { return result }
+        return nil
+      }
+      #expect(finishes.map(\.toolCallID) == [undelegated.id, requested.id, allowed.id, denied.id])
+      #expect(finishes.allSatisfy { $0.notExecutedReason == .interrupted })
+      let natives = additions.compactMap { event -> ToolResult? in
+        if case .messageAppended(let message) = event,
+          case .toolResult(let result) = message.content.first
+        {
+          return result
+        }
+        return nil
+      }
+      #expect(natives == [priorReceipt] + finishes)
+    }
+    try await recovered.close()
+    let reopened = try await SQLiteAgentEventJournal.open(configuration: recoveryConfiguration)
+    #expect(await reopened.recoveredRuns.isEmpty)
+    #expect(try await reopened.records(for: runID, after: nil, limit: 100) == records)
+    try await reopened.close()
+  }
+
   @Test
   func recoversInterruptedRunsExactlyOnceWithoutReplayingTools() async throws {
     let directory = try JournalTestSupport.makeTemporaryDirectory()

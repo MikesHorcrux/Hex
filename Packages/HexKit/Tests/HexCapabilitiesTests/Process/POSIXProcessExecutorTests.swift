@@ -124,25 +124,49 @@ struct POSIXProcessExecutorTests {
   }
 
   @Test
-  func cancellationKillsTheProcessAndPropagatesCancellation() async throws {
+  func cancellationReapsTheProcessAndReturnsAKnownIncompleteReceipt() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "hex-process-cancel-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let pidFile = directory.appendingPathComponent("process.pid")
     let executor = POSIXProcessExecutor()
     let task = Task {
       try await executor.execute(
         ProcessExecutionRequest(
-          executable: URL(fileURLWithPath: "/bin/sleep"),
-          arguments: ["5"],
+          executable: URL(fileURLWithPath: "/bin/sh"),
+          arguments: [
+            "-c", "printf '%s' \"$$\" > \"$1\"; exec /bin/sleep 10", "fixture", pidFile.path,
+          ],
           workingDirectory: URL(fileURLWithPath: "/private/tmp"),
           timeoutSeconds: 10
         )
       )
     }
 
-    try await Task.sleep(for: .milliseconds(30))
-    task.cancel()
-
-    await #expect(throws: CancellationError.self) {
-      _ = try await task.value
+    let processID: pid_t
+    do {
+      var observedID: pid_t?
+      for _ in 0..<200 where observedID == nil {
+        if let text = try? String(contentsOf: pidFile, encoding: .utf8) {
+          observedID = pid_t(text)
+        }
+        if observedID == nil { try await Task.sleep(for: .milliseconds(5)) }
+      }
+      processID = try #require(observedID)
+    } catch {
+      task.cancel()
+      _ = try? await task.value
+      throw error
     }
+    task.cancel()
+    let result = try await task.value
+    #expect(result.termination == .cancelled)
+    #expect(!result.outputIsComplete)
+    #expect(result.outputArtifact == nil)
+    errno = 0
+    #expect(Darwin.kill(processID, 0) < 0)
+    #expect(errno == ESRCH)
   }
 
   @Test

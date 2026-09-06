@@ -5,6 +5,7 @@ extension HexGatewayService {
     _ untrustedRequest: GatewayHandshakeRequest
   ) throws -> GatewayHandshakeResponse {
     let request = try codec.roundTrip(untrustedRequest)
+    try requireAcceptingAdmissions()
     guard request.minimumVersion <= request.maximumVersion else {
       throw GatewayFailure(
         code: .malformedVersionRange,

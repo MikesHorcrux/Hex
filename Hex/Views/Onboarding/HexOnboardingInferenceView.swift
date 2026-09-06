@@ -7,13 +7,14 @@ struct HexOnboardingInferenceView: View {
 
   var body: some View {
     Form {
-      Section {
-        Text("Choose the model engine. Hex—not the provider SDK—owns the agent loop and tools.")
-          .foregroundStyle(.secondary)
-      }
-      HexInferenceBackendFormView(model: model)
+      HexInferenceBackendFormView(
+        model: model,
+        showsAdvancedConfiguration: false
+      )
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .tint(HexBrandPalette.coral)
     .task {
       await model.load()
     }

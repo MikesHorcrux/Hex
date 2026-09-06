@@ -18,9 +18,15 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         ) async throws -> Void
       )?
     private let residentControlHandlers: HexGatewayResidentControlHandlers
+    private let toolServerControlHandlers: HexGatewayToolServerControlHandlers
     private let accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers
+    private let screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers
+    private let modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])?
+    private let artifactReadHandler:
+      (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)?
     private var activeLease: GatewayTransportConnectionLease?
     private var sessionID: GatewaySessionID?
+    private var selectedProtocolVersion: GatewayProtocolVersion?
     private var subscriptions: [GatewayXPCSubscriptionID: Task<Void, Never>] = [:]
     private var authorizationCommitGate: HexGatewayAuthorizationCommitGate
 
@@ -36,13 +42,22 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
           ) async throws -> Void
         )?,
       residentControlHandlers: HexGatewayResidentControlHandlers,
-      accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers
+      toolServerControlHandlers: HexGatewayToolServerControlHandlers,
+      accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers,
+      screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers,
+      modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])?,
+      artifactReadHandler:
+        (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)?
     ) {
       self.service = service
       codec = GatewayWireCodec(configuration: configuration)
       self.authorizationDecisionHandler = authorizationDecisionHandler
       self.residentControlHandlers = residentControlHandlers
+      self.toolServerControlHandlers = toolServerControlHandlers
       self.accessibilityPermissionHandlers = accessibilityPermissionHandlers
+      self.screenControlPermissionHandlers = screenControlPermissionHandlers
+      self.modelCatalogHandler = modelCatalogHandler
+      self.artifactReadHandler = artifactReadHandler
       authorizationCommitGate = HexGatewayAuthorizationCommitGate()
     }
 
@@ -99,7 +114,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
                 return
               }
               let data = try codec.encode(event)
-              await sink.receiveEvent(data)
+              try await sink.receiveEvent(data)
             }
             guard !Task.isCancelled else {
               return
@@ -161,7 +176,29 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         let response = try await service.handshake(request)
         activeLease = envelope.lease
         sessionID = response.sessionID
+        selectedProtocolVersion = response.selectedVersion
         return try successResponse(operation: .handshake, value: response)
+
+      case .toolServerHealth:
+        try requireEmptyBody(for: envelope)
+        return try await toolServerOperation(envelope) { _ in
+          guard let handler = self.toolServerControlHandlers.list else {
+            throw Self.toolServerControlsUnavailable()
+          }
+          return try await handler().validated()
+        }
+
+      case .refreshToolServer:
+        let request = try codec.decode(GatewayToolServerRequest.self, from: envelope.body)
+          .validated()
+        return try await toolServerOperation(envelope) { sessionID in
+          guard let handler = self.toolServerControlHandlers.refresh else {
+            throw Self.toolServerControlsUnavailable()
+          }
+          return try await self.service.withIdleToolMaintenance(sessionID: sessionID) {
+            try await handler(request).validated(for: request)
+          }
+        }
 
       case .startRun:
         let sessionID = try currentSession(for: envelope)
@@ -169,11 +206,60 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         let response = try await service.startRun(request, sessionID: sessionID)
         return try successResponse(operation: .startRun, value: response)
 
+      case .recoverRun:
+        let sessionID = try currentSession(for: envelope)
+        let request = try codec.decode(GatewayRunRecoveryRequest.self, from: envelope.body)
+        let response = try await service.recoverRun(request, sessionID: sessionID)
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .recoverRun, value: response)
+
+      case .readRunHistory:
+        let sessionID = try currentSession(for: envelope)
+        let request = try codec.decode(GatewayRunHistoryRequest.self, from: envelope.body)
+        let response = try await service.readRunHistory(request, sessionID: sessionID)
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .readRunHistory, value: response)
+
       case .cancelRun:
         let sessionID = try currentSession(for: envelope)
         let request = try codec.decode(GatewayCancelRunRequest.self, from: envelope.body)
         let response = try await service.cancelRun(request, sessionID: sessionID)
         return try successResponse(operation: .cancelRun, value: response)
+
+      case .availableModels:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let modelCatalogHandler else {
+          throw GatewayFailure(
+            code: .transportUnavailable, message: "Model discovery is unavailable.")
+        }
+        let models = try await modelCatalogHandler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .availableModels, value: models)
+
+      case .readArtifact:
+        let sessionID = try currentSession(for: envelope)
+        let request = try codec.decode(GatewayArtifactReadRequest.self, from: envelope.body)
+        try GatewayArtifactReadValidation.request(request)
+        try await service.requireSession(sessionID)
+        _ = try currentSession(for: envelope)
+        let response: GatewayArtifactReadResponse
+        do {
+          if let artifactReadHandler {
+            response = try await artifactReadHandler(request)
+          } else {
+            response = try await service.readArtifact(request, sessionID: sessionID)
+          }
+        } catch {
+          try await service.requireSession(sessionID)
+          _ = try currentSession(for: envelope)
+          throw GatewayArtifactReadValidation.failure(error)
+        }
+        try Task.checkCancellation()
+        try await service.requireSession(sessionID)
+        _ = try currentSession(for: envelope)
+        try GatewayArtifactReadValidation.response(response, request: request)
+        return try successResponse(operation: .readArtifact, value: response)
 
       case .submitAuthorizationDecision:
         _ = try currentSession(for: envelope)
@@ -222,6 +308,32 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         let status = try await handler()
         _ = try currentSession(for: envelope)
         return try successResponse(operation: .requestAccessibilityPermission, value: status)
+
+      case .screenControlPermissionStatus:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = screenControlPermissionHandlers.status else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose screen-control permission status."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .screenControlPermissionStatus, value: status)
+
+      case .requestScreenControlPermission:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = screenControlPermissionHandlers.request else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose screen-control permission requests."
+          )
+        }
+        let status = try await handler()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .requestScreenControlPermission, value: status)
 
       case .status:
         _ = try currentSession(for: envelope)
@@ -274,6 +386,20 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         _ = try schedules.validated()
         _ = try currentSession(for: envelope)
         return try successResponse(operation: .listHeartbeats, value: schedules)
+
+      case .listHeartbeatRuns:
+        _ = try currentSession(for: envelope)
+        let request = try codec.decode(GatewayHeartbeatRunListRequest.self, from: envelope.body)
+          .validated()
+        guard let handler = residentControlHandlers.listHeartbeatRuns else {
+          throw GatewayFailure(
+            code: .transportUnavailable,
+            message: "The resident gateway does not expose scheduled run history.")
+        }
+        let page = try await handler(request).validated(for: request)
+        try Task.checkCancellation()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .listHeartbeatRuns, value: page)
 
       case .addHeartbeat:
         _ = try currentSession(for: envelope)
@@ -365,10 +491,14 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
             message: "The XPC handshake envelope contains connection-only fields."
           )
         }
-      case .startRun, .cancelRun, .submitAuthorizationDecision, .accessibilityPermissionStatus,
-        .requestAccessibilityPermission, .status, .pauseHeartbeats, .resumeHeartbeats,
-        .listHeartbeats, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat, .resumeHeartbeat,
-        .disconnect:
+      case .startRun, .cancelRun, .recoverRun, .readRunHistory, .readArtifact, .availableModels,
+        .toolServerHealth, .refreshToolServer,
+        .submitAuthorizationDecision,
+        .accessibilityPermissionStatus,
+        .requestAccessibilityPermission, .screenControlPermissionStatus,
+        .requestScreenControlPermission, .status, .pauseHeartbeats, .resumeHeartbeats,
+        .listHeartbeats, .listHeartbeatRuns, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat,
+        .resumeHeartbeat, .disconnect:
         guard envelope.sessionID != nil, envelope.subscriptionID == nil else {
           throw GatewayFailure(
             code: .malformedPayload,
@@ -404,6 +534,37 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
           isRetryable: true
         )
       }
+    }
+
+    private func toolServerOperation<Response: Codable & Sendable>(
+      _ envelope: GatewayXPCRequestEnvelope,
+      operation: @escaping @Sendable (GatewaySessionID) async throws -> Response
+    ) async throws -> Data {
+      try Task.checkCancellation()
+      let expectedSession = try currentSession(for: envelope)
+      guard let selectedProtocolVersion,
+        selectedProtocolVersion >= GatewayProtocolVersion(major: 1, minor: 13)
+      else { throw Self.toolServerControlsUnavailable() }
+      try await service.requireSession(expectedSession)
+      try Task.checkCancellation()
+      guard try currentSession(for: envelope) == expectedSession else {
+        throw Self.toolServerControlsUnavailable()
+      }
+      let result = try await operation(expectedSession)
+      try Task.checkCancellation()
+      guard try currentSession(for: envelope) == expectedSession else {
+        throw Self.toolServerControlsUnavailable()
+      }
+      try await service.requireSession(expectedSession)
+      try Task.checkCancellation()
+      guard try currentSession(for: envelope) == expectedSession else {
+        throw Self.toolServerControlsUnavailable()
+      }
+      return try successResponse(operation: envelope.operation, value: result)
+    }
+
+    private static func toolServerControlsUnavailable() -> GatewayFailure {
+      GatewayFailure(code: .transportUnavailable, message: "Tool server controls are unavailable.")
     }
 
     private func currentSession(for envelope: GatewayXPCRequestEnvelope) throws -> GatewaySessionID
@@ -490,26 +651,33 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
 
   private let state: State
 
-  public init(
+  public convenience init(
     service: HexGatewayService,
     configuration: GatewayConfiguration = .standard,
     residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable,
-    accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers = .unavailable
+    accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers = .unavailable,
+    screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers = .unavailable,
+    modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])? = nil,
+    artifactReadHandler:
+      (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)? = nil
   ) {
-    state = State(
+    self.init(
       service: service,
       configuration: configuration,
       authorizationDecisionHandler: nil,
       residentControlHandlers: residentControlHandlers,
-      accessibilityPermissionHandlers: accessibilityPermissionHandlers
+      accessibilityPermissionHandlers: accessibilityPermissionHandlers,
+      screenControlPermissionHandlers: screenControlPermissionHandlers,
+      modelCatalogHandler: modelCatalogHandler,
+      artifactReadHandler: artifactReadHandler,
+      toolServerControlHandlers: .unavailable
     )
-    super.init()
   }
 
   /// Creates an exported service with a handler owned by the resident composition root. The
   /// handler receives the complete request echoed by the app and the active connection's commit
   /// gate; it must pass that gate to the broker so invalidation cannot race the final commit.
-  public init(
+  public convenience init(
     service: HexGatewayService,
     configuration: GatewayConfiguration = .standard,
     authorizationDecisionHandler:
@@ -519,15 +687,52 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         HexGatewayAuthorizationCommitGate
       ) async throws -> Void,
     residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable,
-    accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers = .unavailable
+    accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers = .unavailable,
+    screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers = .unavailable,
+    modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])? = nil,
+    artifactReadHandler:
+      (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)? = nil
   ) {
-    state = State(
+    self.init(
       service: service,
       configuration: configuration,
       authorizationDecisionHandler: authorizationDecisionHandler,
       residentControlHandlers: residentControlHandlers,
-      accessibilityPermissionHandlers: accessibilityPermissionHandlers
+      accessibilityPermissionHandlers: accessibilityPermissionHandlers,
+      screenControlPermissionHandlers: screenControlPermissionHandlers,
+      modelCatalogHandler: modelCatalogHandler,
+      artifactReadHandler: artifactReadHandler,
+      toolServerControlHandlers: .unavailable
     )
+  }
+
+  public init(
+    service: HexGatewayService,
+    configuration: GatewayConfiguration = .standard,
+    authorizationDecisionHandler:
+      (
+        @Sendable (
+          AuthorizationRequest, GatewayAuthorizationDecisionChoice,
+          HexGatewayAuthorizationCommitGate
+        )
+          async throws -> Void
+      )? = nil,
+    residentControlHandlers: HexGatewayResidentControlHandlers = .unavailable,
+    accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers = .unavailable,
+    screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers = .unavailable,
+    modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])? = nil,
+    artifactReadHandler:
+      (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)? = nil,
+    toolServerControlHandlers: HexGatewayToolServerControlHandlers
+  ) {
+    state = State(
+      service: service, configuration: configuration,
+      authorizationDecisionHandler: authorizationDecisionHandler,
+      residentControlHandlers: residentControlHandlers,
+      toolServerControlHandlers: toolServerControlHandlers,
+      accessibilityPermissionHandlers: accessibilityPermissionHandlers,
+      screenControlPermissionHandlers: screenControlPermissionHandlers,
+      modelCatalogHandler: modelCatalogHandler, artifactReadHandler: artifactReadHandler)
     super.init()
   }
 

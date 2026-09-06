@@ -7,6 +7,8 @@ extension OpenAIResponsesProvider {
   ) async throws -> InferenceStream {
     try Task.checkCancellation()
     try ensureResponseIdentifierTrackingAvailable()
+    let models = try await availableModels()
+    try Task.checkCancellation()
 
     let continuationKey = request.previousProviderResponseID
     let serverState: OpenAIServerContinuationState?
@@ -46,7 +48,7 @@ extension OpenAIResponsesProvider {
 
     let plan: OpenAIResponsesRequestPlan
     do {
-      plan = try OpenAIResponsesRequestBuilder(configuration: configuration).build(
+      plan = try OpenAIResponsesRequestBuilder(configuration: configuration, models: models).build(
         request,
         serverState: serverState,
         localState: localState
@@ -146,9 +148,13 @@ extension OpenAIResponsesProvider {
       .first?
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
-    guard mediaType == "text/event-stream" else {
+    let acceptsMissingCodexMediaType =
+      configuration.service == .chatGPTCodexSubscription && mediaType == nil
+    guard mediaType == "text/event-stream" || acceptsMissingCodexMediaType else {
       await response.cancelAndWait()
-      throw OpenAIResponsesProviderError.invalidContentType
+      throw OpenAIResponsesProviderError.invalidContentType(
+        receivedMediaType: reportedMediaType(mediaType)
+      )
     }
 
     let (bufferingLimit, bufferingOverflow) = configuration.maximumStreamEvents
@@ -183,6 +189,19 @@ extension OpenAIResponsesProvider {
     )
   }
 
+  private func reportedMediaType(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let bytes = value.utf8
+    guard
+      !bytes.isEmpty,
+      bytes.count <= 128,
+      bytes.allSatisfy({ (0x21...0x7E).contains($0) })
+    else {
+      return nil
+    }
+    return value
+  }
+
   func consume(
     _ body: AsyncThrowingStream<Data, any Error>,
     request: InferenceRequest,
@@ -201,10 +220,15 @@ extension OpenAIResponsesProvider {
 
       for try await chunk in body {
         try Task.checkCancellation()
-        let serverEvents = try parser.feed(chunk)
+        let serverEvents: [ServerSentEvent]
+        do {
+          serverEvents = try parser.feed(chunk)
+        } catch OpenAIResponsesProviderError.streamLimitExceeded {
+          throw OpenAIResponsesProviderError.streamFramingLimitExceeded(.unspecified)
+        }
         for serverEvent in serverEvents {
           try Task.checkCancellation()
-          let processed = try processor.process(serverEvent)
+          let processed = try processServerEvent(serverEvent, with: &processor)
           if processed.terminalResult != nil {
             guard pendingTerminal == nil else {
               throw OpenAIResponsesProviderError.malformedStream
@@ -213,7 +237,11 @@ extension OpenAIResponsesProvider {
           } else {
             for event in processed.events {
               try reserveIdentifierIfStarted(event)
-              try yield(event, to: continuation)
+              do {
+                try yield(event, to: continuation)
+              } catch OpenAIResponsesProviderError.streamLimitExceeded {
+                throw OpenAIResponsesProviderError.streamDeliveryLimitExceeded
+              }
             }
           }
         }
@@ -221,9 +249,15 @@ extension OpenAIResponsesProvider {
 
       try Task.checkCancellation()
 
-      for serverEvent in try parser.finish() {
+      let finalServerEvents: [ServerSentEvent]
+      do {
+        finalServerEvents = try parser.finish()
+      } catch OpenAIResponsesProviderError.streamLimitExceeded {
+        throw OpenAIResponsesProviderError.streamFramingLimitExceeded(.unspecified)
+      }
+      for serverEvent in finalServerEvents {
         try Task.checkCancellation()
-        let processed = try processor.process(serverEvent)
+        let processed = try processServerEvent(serverEvent, with: &processor)
         if processed.terminalResult != nil {
           guard pendingTerminal == nil else {
             throw OpenAIResponsesProviderError.malformedStream
@@ -247,7 +281,11 @@ extension OpenAIResponsesProvider {
         result: result
       )
       for event in pendingTerminal.events {
-        try yield(event, to: continuation)
+        do {
+          try yield(event, to: continuation)
+        } catch OpenAIResponsesProviderError.streamLimitExceeded {
+          throw OpenAIResponsesProviderError.streamDeliveryLimitExceeded
+        }
       }
       installContinuationCommit(commit)
       continuation.finish()
@@ -270,6 +308,49 @@ extension OpenAIResponsesProvider {
       throw OpenAIResponsesProviderError.malformedStream
     }
     try reserveResponseIdentifier(identifier)
+  }
+
+  func processServerEvent(
+    _ event: ServerSentEvent,
+    with processor: inout OpenAIResponsesStreamProcessor
+  ) throws -> OpenAIResponsesProcessedEvent {
+    do {
+      return try processor.process(event)
+    } catch OpenAIResponsesProviderError.streamLimitExceeded {
+      throw OpenAIResponsesProviderError.streamEventLimitExceeded
+    } catch {
+      let eventType = reportedEventType(event.data)
+      let eventName = reportedEventName(event.name)
+      let rejectionCode = processor.rejectionCode
+      logger.error(
+        "Rejected Responses stream event type=\(eventType, privacy: .public) name=\(eventName, privacy: .public) code=\(rejectionCode, privacy: .public) bytes=\(event.data.count, privacy: .public)"
+      )
+      throw error
+    }
+  }
+
+  private func reportedEventType(_ data: Data) -> String {
+    guard
+      let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+      case .object(let object) = value,
+      case .string(let type)? = object["type"]
+    else {
+      return "unreadable"
+    }
+    return reportedEventName(type)
+  }
+
+  private func reportedEventName(_ value: String?) -> String {
+    guard let value else { return "none" }
+    let bytes = value.utf8
+    guard
+      !bytes.isEmpty,
+      bytes.count <= 128,
+      bytes.allSatisfy({ (0x21...0x7E).contains($0) })
+    else {
+      return "invalid"
+    }
+    return value
   }
 
   func yield(

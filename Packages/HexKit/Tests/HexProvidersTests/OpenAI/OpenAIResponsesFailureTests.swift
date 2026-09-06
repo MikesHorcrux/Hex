@@ -7,6 +7,45 @@ import Testing
 @Suite("OpenAI Responses failure boundaries")
 struct OpenAIResponsesFailureTests {
   @Test
+  func classifiesOnlyTransientProviderFailuresAsRetryable() {
+    #expect(!OpenAIResponsesProviderError.invalidRequest.isRetryable)
+    #expect(!OpenAIResponsesProviderError.credentialUnavailable.isRetryable)
+    #expect(!OpenAIResponsesProviderError.httpFailure(statusCode: 400).isRetryable)
+    #expect(OpenAIResponsesProviderError.httpFailure(statusCode: 429).isRetryable)
+    #expect(OpenAIResponsesProviderError.httpFailure(statusCode: 503).isRetryable)
+    #expect(OpenAIResponsesProviderError.transportFailed.isRetryable)
+  }
+
+  @Test
+  func reportsUnexpectedMediaTypeWithoutReadingTheResponseBody() async throws {
+    let transport = TestOpenAIResponsesTransport(
+      responses: [
+        OpenAIResponsesTestFixture.response(
+          data: Data("private response body".utf8),
+          statusCode: 200,
+          contentType: "application/json; charset=utf-8"
+        )
+      ]
+    )
+    let provider = OpenAIResponsesProvider(
+      configuration: try OpenAIResponsesTestFixture.configuration(),
+      credentialProvider: TestOpenAICredentialProvider(key: "sk-client-secret"),
+      transport: transport
+    )
+
+    do {
+      _ = try await provider.stream(OpenAIResponsesTestFixture.request())
+      Issue.record("Expected an unexpected content type failure.")
+    } catch let error as OpenAIResponsesProviderError {
+      #expect(error.localizedDescription.contains("application/json"))
+      #expect(!error.localizedDescription.contains("private response body"))
+      #expect(!error.localizedDescription.contains("sk-client-secret"))
+    } catch {
+      Issue.record("Expected a redacted provider error.")
+    }
+  }
+
+  @Test
   func rejectsCredentialExfiltrationEndpointsDuringConfiguration() throws {
     let invalidEndpoints = [
       "https://attacker.example.test/v1/responses",
@@ -286,7 +325,7 @@ struct OpenAIResponsesFailureTests {
         configuration: configuration,
         splitAt: eventOffsets
       )
-        == .streamLimitExceeded
+        == .streamEventLimitExceeded
     )
   }
 
@@ -302,7 +341,7 @@ struct OpenAIResponsesFailureTests {
       for: Data(repeating: 0x61, count: 33),
       configuration: lineConfiguration
     )
-    #expect(lineError == .streamLimitExceeded)
+    #expect(lineError == .streamFramingLimitExceeded(.lineBytes))
 
     let eventConfiguration = try OpenAIResponsesTestFixture.configuration(
       maximumSSELineBytes: 80,
@@ -319,7 +358,7 @@ struct OpenAIResponsesFailureTests {
       for: oversizedEvent,
       configuration: eventConfiguration
     )
-    #expect(eventError == .streamLimitExceeded)
+    #expect(eventError == .streamFramingLimitExceeded(.eventBytes))
 
     let responseConfiguration = try OpenAIResponsesTestFixture.configuration(
       maximumSSELineBytes: 64,
@@ -335,7 +374,7 @@ struct OpenAIResponsesFailureTests {
       for: oversizedResponse,
       configuration: responseConfiguration
     )
-    #expect(responseError == .streamLimitExceeded)
+    #expect(responseError == .streamFramingLimitExceeded(.responseBytes))
 
     let argumentsConfiguration = try OpenAIResponsesTestFixture.configuration(
       maximumToolArgumentBytes: 8
@@ -349,7 +388,7 @@ struct OpenAIResponsesFailureTests {
       configuration: argumentsConfiguration,
       tools: [weatherTool()]
     )
-    #expect(argumentError == .streamLimitExceeded)
+    #expect(argumentError == .streamEventLimitExceeded)
   }
 
   @Test

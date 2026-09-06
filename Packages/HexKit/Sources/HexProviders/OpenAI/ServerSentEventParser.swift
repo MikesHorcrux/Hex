@@ -23,7 +23,7 @@ struct ServerSentEventParser {
   mutating func feed(_ data: Data) throws -> [ServerSentEvent] {
     let (newResponseBytes, overflowed) = responseBytes.addingReportingOverflow(data.count)
     guard !overflowed, newResponseBytes <= maximumResponseBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
+      throw OpenAIResponsesProviderError.streamFramingLimitExceeded(.responseBytes)
     }
     responseBytes = newResponseBytes
 
@@ -47,7 +47,7 @@ struct ServerSentEventParser {
         }
       } else {
         guard lineBuffer.count < maximumLineBytes else {
-          throw OpenAIResponsesProviderError.streamLimitExceeded
+          throw OpenAIResponsesProviderError.streamFramingLimitExceeded(.lineBytes)
         }
         lineBuffer.append(byte)
       }
@@ -110,7 +110,7 @@ struct ServerSentEventParser {
         !valueOverflow,
         newCount <= maximumEventBytes
       else {
-        throw OpenAIResponsesProviderError.streamLimitExceeded
+        throw OpenAIResponsesProviderError.streamFramingLimitExceeded(.eventBytes)
       }
       if hasDataField {
         eventData.append(0x0A)
@@ -138,7 +138,7 @@ struct ServerSentEventParser {
     }
 
     guard eventCount < maximumEvents else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
+      throw OpenAIResponsesProviderError.streamFramingLimitExceeded(.eventCount)
     }
     eventCount += 1
 

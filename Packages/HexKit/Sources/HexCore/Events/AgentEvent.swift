@@ -3,6 +3,8 @@
 public enum AgentEvent: Codable, Equatable, Sendable {
   case runStarted
   case messageAppended(Message)
+  case contextCompactionStarted
+  case contextCompacted(AgentContextCompaction)
   case inferenceRequested(InferenceRequest)
   case inferenceEvent(InferenceStreamEvent)
   case authorizationRequested(AuthorizationRequest)

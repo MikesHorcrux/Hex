@@ -7,71 +7,88 @@ struct HexMCPIntegrationsView: View {
 
   var body: some View {
     Section {
-      Toggle(
-        "Browser control",
-        isOn: Binding(
-          get: { model.playwrightMCPEnabled },
-          set: { model.setPlaywrightEnabled($0) }
-        )
-      )
-      .accessibilityIdentifier("residentPlaywrightMCPToggle")
-      .disabled(model.isInstallingPlaywright)
+      VStack(alignment: .leading, spacing: 7) {
+        Toggle(
+          isOn: Binding(
+            get: { model.playwrightMCPEnabled },
+            set: { model.setPlaywrightEnabled($0) }
+          )
+        ) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Browser control")
+            Text("Open pages, click, type, and read the web in a private browser profile.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+        .accessibilityIdentifier("residentPlaywrightMCPToggle")
+        .disabled(model.isInstallingManagedTool)
 
-      if model.isInstallingPlaywright {
-        Label("Downloading browser control…", systemImage: "arrow.down.circle")
-          .foregroundStyle(.secondary)
-      } else if model.playwrightAvailability == .ready {
-        Label("Browser control is ready", systemImage: "checkmark.circle.fill")
-          .foregroundStyle(.green)
+        if model.isInstallingPlaywright {
+          Label("Downloading and checking browser control…", systemImage: "arrow.down.circle")
+            .font(.caption)
+            .foregroundStyle(HexBrandPalette.accentInk)
+        } else if model.playwrightAvailability == .ready {
+          Label("Installed", systemImage: "checkmark.circle.fill")
+            .font(.caption)
+            .foregroundStyle(HexBrandPalette.successInk)
+        } else {
+          Label("Downloads automatically when enabled", systemImage: "arrow.down.circle")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
+      .padding(.vertical, 4)
 
-      Text(
-        "Hex uses an isolated browser profile. If browser control is not installed, Hex downloads "
-          + "and verifies it automatically."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 7) {
+        Toggle(
+          isOn: Binding(
+            get: { model.peekabooMCPEnabled },
+            set: { model.setPeekabooEnabled($0) }
+          )
+        ) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Screen control")
+            Text("See and operate Mac apps after you approve the required macOS access.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+        .accessibilityIdentifier("residentPeekabooMCPToggle")
+        .disabled(model.isInstallingManagedTool)
 
-      Divider()
-
-      Toggle(
-        "Screen control",
-        isOn: Binding(
-          get: { model.peekabooMCPEnabled },
-          set: { model.setPeekabooEnabled($0) }
-        )
-      )
-      .accessibilityIdentifier("residentPeekabooMCPToggle")
-      .disabled(model.isInstallingPeekaboo)
-
-      if model.isInstallingPeekaboo {
-        Label("Downloading screen control…", systemImage: "arrow.down.circle")
-          .foregroundStyle(.secondary)
-      } else if model.peekabooAvailability == .ready {
-        Label("Screen control is ready", systemImage: "checkmark.circle.fill")
-          .foregroundStyle(.green)
+        if model.isInstallingPeekaboo {
+          Label("Downloading and checking screen control…", systemImage: "arrow.down.circle")
+            .font(.caption)
+            .foregroundStyle(HexBrandPalette.accentInk)
+        } else if model.peekabooAvailability == .ready {
+          Label("Installed", systemImage: "checkmark.circle.fill")
+            .font(.caption)
+            .foregroundStyle(HexBrandPalette.successInk)
+        } else {
+          Label("Downloads automatically when enabled", systemImage: "arrow.down.circle")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
+      .padding(.vertical, 4)
 
-      Text(
-        "Screen control lets Hex observe and operate Mac apps. Hex installs its private component "
-          + "automatically and still asks before protected actions."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-
-      Divider()
-
-      Toggle("Xcode control", isOn: $model.xcodeMCPEnabled)
-        .accessibilityIdentifier("residentXcodeMCPToggle")
-
-      Text(
-        "When Xcode is open, Hex can use its built-in automation connection."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
+      Toggle(isOn: $model.xcodeMCPEnabled) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Xcode control")
+          Text("Work with the project that is open in Xcode.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .accessibilityIdentifier("residentXcodeMCPToggle")
+      .padding(.vertical, 4)
     } header: {
-      Text("Agent Tools")
+      Text("Built-in tools")
+    } footer: {
+      Text(
+        "Hex installs missing browser and screen-control components for you. macOS permission prompts remain separate and visible."
+      )
     }
   }
-
 }

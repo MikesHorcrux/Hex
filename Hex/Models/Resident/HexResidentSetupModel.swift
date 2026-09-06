@@ -1,5 +1,6 @@
 import Foundation
 import HexCore
+import HexIPC
 import HexMCP
 import Observation
 
@@ -13,6 +14,8 @@ final class HexResidentSetupModel {
   var playwrightMCPEnabled = false
   var xcodeMCPEnabled = false
   var authorizationMode = HexAuthorizationMode.askEveryTime
+  /// Loaded saved policy, or the exact policy whose save/apply completed. Never the editable draft.
+  private(set) var savedAuthorizationMode: HexAuthorizationMode?
   private(set) var httpMCPServers: [HexHTTPMCPServer] = []
 
   private(set) var isLoading = false
@@ -23,7 +26,7 @@ final class HexResidentSetupModel {
   private(set) var isInstallingPeekaboo = false
   private(set) var isInstallingPlaywright = false
   private(set) var isRequestingScreenControl = false
-  private(set) var screenControlPermissionsGranted: Bool?
+  private(set) var screenControlPermissionStatus: GatewayScreenControlPermissionStatus?
   private(set) var statusMessage: String?
   private(set) var errorMessage: String?
   private(set) var saveGeneration = 0
@@ -32,7 +35,10 @@ final class HexResidentSetupModel {
   private let secretStore: (any HexSecretStore)?
   private let managedToolLayout: MCPManagedToolLayout?
   private let managedToolInstaller: (any HexManagedToolInstalling)?
+  private let screenControlPermissionService: (any HexScreenControlPermissionServicing)?
+  private let configurationReloader: (any HexResidentConfigurationReloading)?
   private var hasLoaded = false
+  private var hasAttemptedLoad = false
   private var loadedMCPServers: [HexResidentMCPServerSettings] = []
 
   init(
@@ -40,13 +46,48 @@ final class HexResidentSetupModel {
     settingsStore: (any HexResidentRuntimeSettingsStore)? = nil,
     secretStore: (any HexSecretStore)? = nil,
     managedToolLayout: MCPManagedToolLayout? = nil,
-    managedToolInstaller: (any HexManagedToolInstalling)? = nil
+    managedToolInstaller: (any HexManagedToolInstalling)? = nil,
+    screenControlPermissionService: (any HexScreenControlPermissionServicing)? = nil,
+    configurationReloader: (any HexResidentConfigurationReloading)? = nil
   ) {
     modelID = initialModelID
     self.settingsStore = settingsStore
     self.secretStore = secretStore
     self.managedToolLayout = managedToolLayout
     self.managedToolInstaller = managedToolInstaller
+    self.screenControlPermissionService = screenControlPermissionService
+    self.configurationReloader = configurationReloader
+  }
+
+  var screenControlPermissionsGranted: Bool? {
+    screenControlPermissionStatus?.isGranted
+  }
+
+  var isInstallingManagedTool: Bool {
+    isInstallingPeekaboo || isInstallingPlaywright
+  }
+
+  var needsLoadRetry: Bool {
+    hasAttemptedLoad && !hasLoaded && !isLoading
+  }
+
+  var browserSetupStatus: HexCapabilitySetupStatus {
+    .browser(
+      enabled: playwrightMCPEnabled,
+      savedEnabled: loadedMCPServers.contains { $0.transport == .playwright && $0.isEnabled },
+      installed: playwrightAvailability == .ready,
+      installing: isInstallingPlaywright
+    )
+  }
+
+  var screenSetupStatus: HexCapabilitySetupStatus {
+    .screen(
+      enabled: peekabooMCPEnabled,
+      savedEnabled: loadedMCPServers.contains { $0.transport == .peekaboo && $0.isEnabled },
+      installed: peekabooAvailability == .ready,
+      checking: isRequestingScreenControl || isInstallingPeekaboo,
+      permissionsGranted: screenControlPermissionsGranted
+    )
   }
 
   var workspaceDisplayName: String {
@@ -54,12 +95,13 @@ final class HexResidentSetupModel {
   }
 
   var canSave: Bool {
-    hasLoaded && !isLoading && !isSaving && settingsStore != nil && secretStore != nil
+    hasLoaded && !isLoading && !isSaving && !isInstallingManagedTool
+      && settingsStore != nil && secretStore != nil
   }
 
   var hasValidCoreSettings: Bool {
     let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard Self.isValidModelID(normalizedModelID), let workspaceRoot else {
+    guard hasLoaded, Self.isValidModelID(normalizedModelID), let workspaceRoot else {
       return false
     }
     return Self.isValidWorkspaceRoot(workspaceRoot)
@@ -67,7 +109,7 @@ final class HexResidentSetupModel {
 
   func load() async {
     guard !hasLoaded, !isLoading else { return }
-    hasLoaded = true
+    hasAttemptedLoad = true
     isLoading = true
     defer { isLoading = false }
 
@@ -83,10 +125,14 @@ final class HexResidentSetupModel {
     }
 
     do {
-      if let settings = try await settingsStore.load() {
+      let settings = try await settingsStore.load()
+      let storedAPIKeyExists = try await secretStore.exists(.openAIAPIKey)
+      try Task.checkCancellation()
+      if let settings {
         modelID = settings.modelID
         workspaceRoot = settings.workspaceRoot
         authorizationMode = settings.authorizationMode
+        savedAuthorizationMode = settings.authorizationMode
         loadedMCPServers = settings.mcpServers
         httpMCPServers = settings.mcpServers.compactMap { setting in
           guard setting.transport == .streamableHTTP, let endpointURL = setting.endpointURL else {
@@ -108,7 +154,8 @@ final class HexResidentSetupModel {
           $0.serverID == "xcode" && $0.transport == .xcode && $0.isEnabled
         }
       }
-      hasStoredAPIKey = try await secretStore.exists(.openAIAPIKey)
+      hasStoredAPIKey = storedAPIKeyExists
+      hasLoaded = true
       errorMessage = nil
       statusMessage = "Resident settings are ready to edit."
     } catch {
@@ -149,21 +196,24 @@ final class HexResidentSetupModel {
   }
 
   func refreshScreenControlPermissions() async {
-    guard peekabooAvailability == .ready, let managedToolInstaller else {
-      screenControlPermissionsGranted = nil
+    guard peekabooAvailability == .ready, let screenControlPermissionService else {
+      screenControlPermissionStatus = nil
       return
     }
     do {
-      screenControlPermissionsGranted =
-        try await managedToolInstaller
-        .screenControlPermissionStatus()
+      screenControlPermissionStatus =
+        try await screenControlPermissionService.screenControlPermissionStatus()
     } catch {
-      screenControlPermissionsGranted = nil
+      screenControlPermissionStatus = nil
     }
   }
 
   func requestScreenControlPermissions() {
-    guard !isRequestingScreenControl, let managedToolInstaller else {
+    guard
+      !isRequestingScreenControl,
+      let managedToolInstaller,
+      let screenControlPermissionService
+    else {
       errorMessage = "Screen control is unavailable in this build."
       return
     }
@@ -172,17 +222,19 @@ final class HexResidentSetupModel {
     Task { [weak self] in
       guard let self else { return }
       do {
-        let isGranted = try await managedToolInstaller.requestScreenControlPermission()
+        try await managedToolInstaller.install(.peekaboo)
+        let permissionStatus =
+          try await screenControlPermissionService.requestScreenControlPermission()
         peekabooAvailability = .ready
-        peekabooMCPEnabled = true
-        screenControlPermissionsGranted = isGranted
+        screenControlPermissionStatus = permissionStatus
         statusMessage =
-          isGranted
+          permissionStatus.isGranted
           ? "Screen control permissions are ready."
           : "Allow the requested Mac permissions in System Settings, then return to Hex."
       } catch is CancellationError {
         // The owning view disappeared; preserve the last verified state.
       } catch {
+        screenControlPermissionStatus = nil
         errorMessage = Self.safeManagedToolMessage(error)
         statusMessage = nil
       }
@@ -209,7 +261,7 @@ final class HexResidentSetupModel {
       do {
         try await managedToolInstaller.install(tool)
         setManagedTool(tool, enabled: true, availability: .ready)
-        statusMessage = "\(displayName(for: tool)) is ready."
+        statusMessage = "\(displayName(for: tool)) is installed."
         errorMessage = nil
       } catch is CancellationError {
         // The owning view disappeared; do not convert cancellation into an installation failure.
@@ -302,32 +354,55 @@ final class HexResidentSetupModel {
   }
 
   func save() {
-    guard !isSaving else { return }
+    guard let request = prepareSave() else { return }
+    Task { [weak self] in
+      _ = await self?.persist(request)
+    }
+  }
+
+  /// Completes only after persistence and the resident reload have both succeeded.
+  func saveAndWait() async -> Bool {
+    guard let request = prepareSave() else { return false }
+    return await persist(request)
+  }
+
+  private func prepareSave() -> SaveRequest? {
+    guard !isSaving, !Task.isCancelled else { return nil }
+    guard hasLoaded else {
+      errorMessage = "Load the saved resident settings before making changes."
+      statusMessage = nil
+      return nil
+    }
+    guard !isInstallingManagedTool else {
+      errorMessage = "Wait for browser or screen control to finish setting up, then continue."
+      statusMessage = nil
+      return nil
+    }
     errorMessage = nil
     statusMessage = nil
 
     let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
     guard Self.isValidModelID(normalizedModelID) else {
       errorMessage = "Enter a model identifier before saving."
-      return
+      return nil
     }
     guard let workspaceRoot, Self.isValidWorkspaceRoot(workspaceRoot) else {
       errorMessage = "Choose an existing local workspace folder before saving."
-      return
+      return nil
     }
 
     let normalizedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let settingsStore, let secretStore else {
+    guard settingsStore != nil, secretStore != nil else {
       errorMessage = "Resident setup is unavailable in this build."
-      return
+      return nil
     }
     guard !playwrightMCPEnabled || playwrightAvailability == .ready else {
       errorMessage = "Browser control is not ready yet."
-      return
+      return nil
     }
     guard !peekabooMCPEnabled || peekabooAvailability == .ready else {
       errorMessage = "Screen control is not ready yet."
-      return
+      return nil
     }
 
     let settings: HexResidentRuntimeSettings
@@ -363,36 +438,54 @@ final class HexResidentSetupModel {
       )
     } catch {
       errorMessage = Self.safeMessage(for: error)
-      return
+      return nil
     }
 
     isSaving = true
-    Task { [weak self] in
-      guard let self else { return }
-      do {
-        // Settings and Keychain are separate stores; saving settings first keeps a failed settings
-        // write from replacing a credential that the currently running gateway may still use.
-        try await settingsStore.save(settings)
-        if !normalizedAPIKey.isEmpty {
-          try await secretStore.save(normalizedAPIKey, for: .openAIAPIKey)
-        }
-        hasStoredAPIKey = try await secretStore.exists(.openAIAPIKey)
-        apiKey = ""
-        modelID = normalizedModelID
-        self.workspaceRoot = workspaceRoot
-        loadedMCPServers = settings.mcpServers
-        saveGeneration += 1
-        statusMessage = "Resident settings saved."
-        errorMessage = nil
-        isSaving = false
-      } catch is CancellationError {
-        isSaving = false
-      } catch {
-        errorMessage = Self.safeMessage(for: error)
-        statusMessage = nil
-        isSaving = false
+    return SaveRequest(settings: settings, apiKey: normalizedAPIKey)
+  }
+
+  private func persist(_ request: SaveRequest) async -> Bool {
+    defer { isSaving = false }
+    guard let settingsStore, let secretStore else { return false }
+    var isReloading = false
+    do {
+      try Task.checkCancellation()
+      // Keep settings and credential persistence separate; a failed settings write cannot replace
+      // a credential still used by the resident. The awaited result covers both stores and reload.
+      try await settingsStore.save(request.settings)
+      if !request.apiKey.isEmpty {
+        try await secretStore.save(request.apiKey, for: .openAIAPIKey)
       }
+      hasStoredAPIKey = try await secretStore.exists(.openAIAPIKey)
+      apiKey = ""
+      modelID = request.settings.modelID
+      workspaceRoot = request.settings.workspaceRoot
+      loadedMCPServers = request.settings.mcpServers
+      try Task.checkCancellation()
+      isReloading = true
+      try await configurationReloader?.reloadAfterConfigurationChange()
+      try Task.checkCancellation()
+      savedAuthorizationMode = request.settings.authorizationMode
+      saveGeneration += 1
+      statusMessage = "Resident settings saved."
+      errorMessage = nil
+      return true
+    } catch is CancellationError {
+      return false
+    } catch {
+      errorMessage =
+        isReloading
+        ? "Settings were saved, but Hex Agent could not apply them. Try saving again."
+        : Self.safeMessage(for: error)
+      statusMessage = nil
+      return false
     }
+  }
+
+  private struct SaveRequest: Sendable {
+    let settings: HexResidentRuntimeSettings
+    let apiKey: String
   }
 
   private static func isValidModelID(_ value: String) -> Bool {

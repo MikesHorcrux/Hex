@@ -428,10 +428,10 @@ struct LocalMCPClientSessionTests {
 
     try await executor.start()
     let definitions = try await executor.availableTools()
-    #expect(definitions.map(\.name) == ["mcp.fixture.echo"])
+    #expect(definitions.map(\.name) == ["mcp_7_fixture_echo"])
 
     let call = ToolCall(
-      name: "mcp.fixture.echo",
+      name: "mcp_7_fixture_echo",
       arguments: ["text": .string("hello")]
     )
     let result = try await executor.execute(
@@ -461,12 +461,12 @@ struct LocalMCPClientSessionTests {
     let executor = try MCPToolExecutor(sessions: [session])
     try await executor.start()
 
-    #expect(try await executor.availableTools().map(\.name) == ["mcp.fixture.ordinary_job"])
+    #expect(try await executor.availableTools().map(\.name) == ["mcp_7_fixture_ordinary_job"])
     await #expect(throws: MCPClientSessionError.toolsUnavailable) {
       try await session.callTool(MCPRemoteToolCall(name: "long_job", arguments: [:]))
     }
     let result = try await executor.execute(
-      ToolCall(name: "mcp.fixture.ordinary_job", arguments: [:]),
+      ToolCall(name: "mcp_7_fixture_ordinary_job", arguments: [:]),
       in: ToolExecutionContext(runID: AgentRunID())
     )
 

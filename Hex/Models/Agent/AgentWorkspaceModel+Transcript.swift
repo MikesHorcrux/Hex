@@ -2,7 +2,7 @@ import HexCore
 
 extension AgentWorkspaceModel {
   func append(_ message: Message) {
-    guard pendingInitialMessageIDs.remove(message.id) == nil else {
+    guard !pendingInitialMessageIDs.contains(message.id) else {
       return
     }
 
@@ -24,7 +24,21 @@ extension AgentWorkspaceModel {
         transcript.append(ConversationItem(role: .assistant, text: text))
       }
     case .tool:
-      transcript.append(ConversationItem(role: .tool, text: text))
+      let results = message.content.compactMap { part -> ToolResult? in
+        if case .toolResult(let result) = part { return result }
+        return nil
+      }
+      // A toolFinished event is followed by its native message. Preserve both journal facts, but
+      // show one result row. The saved call ID also makes this work after a restart between them.
+      if results.count == 1, let result = results.first,
+        transcript.last?.toolCallID == result.toolCallID
+      {
+        return
+      }
+      transcript.append(
+        ConversationItem(
+          role: .tool, text: text, artifacts: results.flatMap(\.artifacts),
+          toolCallID: results.count == 1 ? results.first?.toolCallID : nil))
     case .system, .developer:
       transcript.append(ConversationItem(role: .event, text: text))
     }
@@ -38,6 +52,7 @@ extension AgentWorkspaceModel {
       let index = transcript.firstIndex(where: { $0.id == streamingAssistantItemID })
     {
       transcript[index].text.append(text)
+      transcript[index].isStreaming = true
       return
     }
 
@@ -60,22 +75,36 @@ extension AgentWorkspaceModel {
     persistConversationArchive()
   }
 
+  /// A dropped stream is not a completed assistant message. Keep the row identity for same-run
+  /// suffix replay, but stop its activity indicator while the connection is unavailable.
+  func pauseStreamingAssistant() {
+    if let streamingAssistantItemID,
+      let index = transcript.firstIndex(where: { $0.id == streamingAssistantItemID })
+    {
+      transcript[index].isStreaming = false
+    }
+    updateCurrentConversation()
+    persistConversationArchive()
+  }
+
   func appendEvent(_ text: String) {
     transcript.append(ConversationItem(role: .event, text: text))
     updateCurrentConversation()
     persistConversationArchive()
   }
 
-  func appendTool(_ text: String) {
-    transcript.append(ConversationItem(role: .tool, text: text))
+  func appendTool(
+    _ text: String, artifacts: [ArtifactReference] = [], toolCallID: ToolCallID? = nil
+  ) {
+    transcript.append(
+      ConversationItem(
+        role: .tool, text: text, artifacts: artifacts, toolCallID: toolCallID))
     updateCurrentConversation()
     persistConversationArchive()
   }
 
   func toolResultText(_ result: ToolResult) -> String {
-    let status = result.status == .success ? "Succeeded" : "Failed"
-    let output = HexJSONValueFormatter.string(from: result.output)
-    return "\(status) · \(output)"
+    AgentMessagePresentation.toolResultText(result)
   }
 
   func stopReasonLabel(_ reason: InferenceStopReason) -> String {
@@ -94,19 +123,7 @@ extension AgentWorkspaceModel {
   }
 
   private func messageText(_ message: Message) -> String {
-    message.content.compactMap { content in
-      switch content {
-      case .text(let text):
-        text
-      case .toolCall(let call):
-        "Tool call · \(call.name)"
-      case .toolResult(let result):
-        toolResultText(result)
-      case .image:
-        "[Image]"
-      }
-    }
-    .joined(separator: "\n")
+    AgentMessagePresentation.text(message)
   }
 
 }

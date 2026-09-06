@@ -8,6 +8,7 @@ extension HexGatewayService {
     let sessionID = try codec.roundTrip(untrustedSessionID)
     let request = try codec.roundTrip(untrustedRequest)
     try requireSession(sessionID)
+    try requireAcceptingAdmissions()
     try requireValidGatewayIdentity(
       request.runID.rawValue,
       message: "The gateway start request contains an invalid run identity."
@@ -30,6 +31,7 @@ extension HexGatewayService {
       )
     }
 
+    guard toolMaintenance == nil else { throw toolMaintenanceFailure() }
     if let activeRunID {
       return try codec.roundTrip(
         GatewayStartRunResponse(
@@ -39,6 +41,13 @@ extension HexGatewayService {
       )
     }
 
+    guard liveDriverTasks.count < configuration.maximumRememberedRuns else {
+      throw GatewayFailure(
+        code: .capacityExceeded,
+        message: "The gateway is waiting for earlier run drivers to finish cleanup.",
+        isRetryable: true
+      )
+    }
     evictCompletedRunsToMakeRoom()
     guard runs.count < configuration.maximumRememberedRuns else {
       throw GatewayFailure(
@@ -91,6 +100,14 @@ extension HexGatewayService {
           )
         )
       }
+    }
+
+    liveDriverTasks[invocationID] = task
+    // Observing task.value (rather than a terminal event or driver callback) makes shutdown's
+    // completion receipt prove that all driver code has actually exited.
+    Task {
+      await task.value
+      self.driverTaskExited(invocationID)
     }
 
     if var installedState = runs[request.runID],

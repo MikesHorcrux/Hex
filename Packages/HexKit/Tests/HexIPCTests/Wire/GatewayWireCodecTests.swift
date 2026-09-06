@@ -6,6 +6,102 @@ import Testing
 @Suite("Gateway wire codec")
 struct GatewayWireCodecTests {
   @Test
+  func approvalModeIsExactRequestAuthorityAndLegacyRequestsKeepTheirOriginalBytes() throws {
+    let codec = GatewayWireCodec(configuration: .standard)
+    let original = GatewayTestValues.request(runID: GatewayTestValues.runID())
+    let legacyBytes = try codec.encode(original)
+    #expect(
+      try codec.decode(GatewayStartRunRequest.self, from: legacyBytes).authorizationMode == nil)
+    for mode in HexAuthorizationMode.allCases {
+      let selected = GatewayStartRunRequest(
+        runID: original.runID, modelID: original.modelID, initialMessages: original.initialMessages,
+        options: original.options, toolChoice: original.toolChoice,
+        workingDirectory: original.workingDirectory, authorizationMode: mode)
+      #expect(selected != original)
+      #expect(try codec.roundTrip(selected) == selected)
+      #expect(try codec.roundTrip(selected).authorizationMode == mode)
+    }
+    var encoded = try #require(
+      JSONSerialization.jsonObject(with: legacyBytes) as? [String: Any])
+    #expect(encoded["authorizationMode"] == nil)
+    #expect(
+      try codec.encode(codec.decode(GatewayStartRunRequest.self, from: legacyBytes)) == legacyBytes)
+    encoded["authorizationMode"] = "invented-full-access"
+    try expectMalformedPayload(
+      GatewayStartRunRequest.self, data: JSONSerialization.data(withJSONObject: encoded),
+      codec: codec)
+  }
+
+  @Test
+  func startRequestInventorySurvivesWireRoundTripAndParticipatesInExactRequestIdentity() throws {
+    let codec = GatewayWireCodec(configuration: .standard)
+    let original = GatewayTestValues.request(runID: GatewayTestValues.runID())
+    let artifact = inventoryReference()
+    let carrying = GatewayStartRunRequest(
+      runID: original.runID, modelID: original.modelID, initialMessages: original.initialMessages,
+      options: original.options, toolChoice: original.toolChoice,
+      workingDirectory: original.workingDirectory, availableArtifacts: [artifact])
+    #expect(carrying != original)
+    #expect(try codec.roundTrip(carrying) == carrying)
+    #expect(try codec.roundTrip(carrying).availableArtifacts == [artifact])
+
+    let legacyBytes = try codec.encode(original)
+    let legacyObject = try #require(
+      JSONSerialization.jsonObject(with: legacyBytes) as? [String: Any])
+    #expect(legacyObject["availableArtifacts"] == nil)
+    let decodedLegacy = try codec.decode(GatewayStartRunRequest.self, from: legacyBytes)
+    #expect(decodedLegacy.availableArtifacts.isEmpty)
+    #expect(try codec.encode(decodedLegacy) == legacyBytes)
+  }
+
+  @Test
+  func inventoryBytesCountAgainstTheSameStartRequestEnvelopeLimit() throws {
+    let original = GatewayTestValues.request(runID: GatewayTestValues.runID())
+    let baseBytes = try GatewayWireCodec(configuration: .standard).encode(original)
+    let configuration = try #require(
+      GatewayConfiguration(
+        maximumWireBytes: baseBytes.count, maximumRetainedRecordsPerRun: 1,
+        subscriberBufferCapacity: 1))
+    let codec = GatewayWireCodec(configuration: configuration)
+    #expect(try codec.encode(original) == baseBytes)
+    let carrying = GatewayStartRunRequest(
+      runID: original.runID, modelID: original.modelID, initialMessages: original.initialMessages,
+      options: original.options, toolChoice: original.toolChoice,
+      workingDirectory: original.workingDirectory, availableArtifacts: [inventoryReference()])
+    do {
+      _ = try codec.encode(carrying)
+      Issue.record("Expected retained output inventory to count against the request envelope.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .payloadTooLarge)
+    }
+  }
+
+  @Test
+  func malformedAndConflictingInventoriesCannotBeDecodedAsTrustedRequestData() throws {
+    let codec = GatewayWireCodec(configuration: .standard)
+    let original = GatewayTestValues.request(runID: GatewayTestValues.runID())
+    let artifact = inventoryReference()
+    let conflicting = ArtifactReference(
+      id: artifact.id, runID: artifact.runID, mediaType: artifact.mediaType,
+      byteCount: artifact.byteCount, sha256: String(repeating: "b", count: 64), isComplete: true)
+    var requestObject = try #require(
+      JSONSerialization.jsonObject(with: codec.encode(original)) as? [String: Any])
+    for inventory in [[artifact, conflicting], Array(repeating: artifact, count: 257)] {
+      requestObject["availableArtifacts"] = try JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(inventory))
+      try expectMalformedPayload(
+        GatewayStartRunRequest.self, data: JSONSerialization.data(withJSONObject: requestObject),
+        codec: codec)
+    }
+  }
+
+  private func inventoryReference() -> ArtifactReference {
+    ArtifactReference(
+      id: UUID(), runID: GatewayTestValues.runID(9), mediaType: "text/plain", byteCount: 42,
+      sha256: String(repeating: "a", count: 64), isComplete: true)
+  }
+
+  @Test
   func standardEnvelopeFitsRuntimeEventsWithBoundedReplayAndForwarding() throws {
     let configuration = GatewayConfiguration.standard
     let runtimeStandardJournalEventBytes = 7_340_032
@@ -18,12 +114,12 @@ struct GatewayWireCodecTests {
     )
     #expect(configuration.maximumRetainedRecordsPerRun == 8)
     #expect(configuration.maximumRetainedWireBytesPerRun == 33_554_432)
-    #expect(configuration.subscriberBufferCapacity == 8)
+    #expect(configuration.subscriberBufferCapacity == 256)
     #expect(configuration.maximumSubscribersPerRun == 2)
     #expect(configuration.maximumRememberedRuns == 4)
 
     let bufferedWireBytesPerSubscriber =
-      configuration.maximumWireBytes * configuration.subscriberBufferCapacity
+      configuration.maximumBufferedWireBytesPerSubscriber
     let serviceSubscriberWireBytes =
       bufferedWireBytesPerSubscriber * configuration.maximumSubscribersPerRun
     let transportSubscriberWireBytes = serviceSubscriberWireBytes

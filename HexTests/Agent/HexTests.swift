@@ -42,6 +42,12 @@ struct HexTests {
   }
 
   @Test @MainActor
+  func previewDefaultsDoNotResolveTheLiveConversationStore() {
+    let model = AgentWorkspaceModel(client: PreviewHexAgentClient())
+    #expect(model.conversationStore == nil)
+  }
+
+  @Test @MainActor
   func previewRunPausesOnExactAuthorizationRequest() async throws {
     let model = AgentWorkspaceModel(client: PreviewHexAgentClient())
     await model.connect()

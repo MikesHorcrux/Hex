@@ -21,9 +21,21 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
 
   public init(
     makeOpenAIProvider: OpenAIProviderBuilder? = nil,
-    makeMLXProvider: MLXProviderBuilder? = nil
+    makeMLXProvider: MLXProviderBuilder? = nil,
+    makeChatGPTModelCatalog:
+      @escaping @Sendable (any OpenAIResponsesAuthorizationProvider) ->
+      any OpenAIModelCatalogLoading = {
+        OpenAIChatGPTModelCatalog(authorizationProvider: $0)
+      }
   ) {
-    self.makeOpenAIProvider = makeOpenAIProvider ?? Self.makeDefaultOpenAIProvider
+    self.makeOpenAIProvider =
+      makeOpenAIProvider ?? { settings, authorization in
+        try Self.makeDefaultOpenAIProvider(
+          settings: settings, authorizationProvider: authorization,
+          modelCatalog: settings.authenticationMethod == .chatGPT
+            ? makeChatGPTModelCatalog(authorization) : nil
+        )
+      }
     self.makeMLXProvider = makeMLXProvider
   }
 
@@ -63,7 +75,8 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
 
   private static func makeDefaultOpenAIProvider(
     settings: HexOpenAIBackendSettings,
-    authorizationProvider: any OpenAIResponsesAuthorizationProvider
+    authorizationProvider: any OpenAIResponsesAuthorizationProvider,
+    modelCatalog: (any OpenAIModelCatalogLoading)?
   ) throws -> any InferenceProvider {
     let providerID = ProviderID(rawValue: "openai")
     let model = ModelDescriptor(
@@ -89,7 +102,8 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
     )
     return OpenAIResponsesProvider(
       configuration: configuration,
-      authorizationProvider: authorizationProvider
+      authorizationProvider: authorizationProvider,
+      modelCatalog: modelCatalog
     )
   }
 }

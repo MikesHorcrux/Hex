@@ -5,12 +5,16 @@ import HexCore
 /// transport owns no gateway state: the connection factory and the Data-only XPC endpoint are
 /// injected, which keeps lifecycle tests independent of launchd and Mach-service registration.
 public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDecisionTransport,
-  HexGatewayResidentControlTransport, HexGatewayAccessibilityPermissionTransport
+  HexGatewayResidentControlTransport, HexGatewayAccessibilityPermissionTransport,
+  HexGatewayScreenControlPermissionTransport, HexGatewayModelCatalogTransport,
+  HexGatewayRunRecoveryTransport, HexGatewayArtifactReadTransport,
+  HexGatewayToolServerControlTransport
 {
   private struct ConnectionState: Sendable {
     let generation: UUID
     let lease: GatewayTransportConnectionLease
     let sessionID: GatewaySessionID
+    let selectedVersion: GatewayProtocolVersion
     let connection: any HexGatewayXPCConnection
   }
 
@@ -94,6 +98,7 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
         generation: UUID(),
         lease: lease,
         sessionID: response.sessionID,
+        selectedVersion: response.selectedVersion,
         connection: connection
       )
       return response
@@ -129,6 +134,40 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
         as: GatewayStartRunResponse.self
       )
     } catch {
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  public func recoverRun(
+    _ request: GatewayRunRecoveryRequest, lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayRunRecoveryResponse {
+    try await recoveryRequest(
+      request, operation: .recoverRun, lease: lease, response: GatewayRunRecoveryResponse.self)
+  }
+
+  public func readRunHistory(
+    _ request: GatewayRunHistoryRequest, lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayRunHistoryPage {
+    try await recoveryRequest(
+      request, operation: .readRunHistory, lease: lease, response: GatewayRunHistoryPage.self)
+  }
+
+  private func recoveryRequest<Request: Encodable & Sendable, Response: Codable & Sendable>(
+    _ request: Request, operation: GatewayXPCOperation, lease: GatewayTransportConnectionLease,
+    response: Response.Type
+  ) async throws -> Response {
+    try Task.checkCancellation()
+    let state = try requireConnected(lease: lease)
+    do {
+      let body = try codec.encode(request)
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: operation, lease: lease, sessionID: state.sessionID, body: body))
+      let raw = try await state.connection.request(envelope)
+      try Task.checkCancellation()
+      try requireCurrentConnection(state)
+      return try decodeResponse(raw, operation: operation, as: response)
+    } catch is CancellationError { throw CancellationError() } catch {
       throw codec.canonicalFailure(from: error)
     }
   }
@@ -213,6 +252,111 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
     )
   }
 
+  public func screenControlPermissionStatus(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayScreenControlPermissionStatus {
+    try await screenControlPermissionResponse(
+      operation: .screenControlPermissionStatus,
+      lease: lease
+    )
+  }
+
+  public func availableModels(lease: GatewayTransportConnectionLease) async throws
+    -> [ModelDescriptor]
+  {
+    let state = try requireConnected(lease: lease)
+    do {
+      try Task.checkCancellation()
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: .availableModels, lease: lease, sessionID: state.sessionID, body: Data()
+        ))
+      let rawResponse = try await state.connection.request(envelope)
+      try requireCurrentConnection(state)
+      return try decodeResponse(
+        rawResponse, operation: .availableModels, as: [ModelDescriptor].self)
+    } catch {
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  public func toolServerHealth(lease: GatewayTransportConnectionLease) async throws
+    -> GatewayToolServerHealth
+  {
+    try await toolServerResponse(
+      operation: .toolServerHealth, body: Data(), lease: lease,
+      as: GatewayToolServerHealth.self
+    ).validated()
+  }
+
+  public func refreshToolServer(
+    _ request: GatewayToolServerRequest, lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayToolServerStatus {
+    let request = try request.validated()
+    return try await toolServerResponse(
+      operation: .refreshToolServer, body: codec.encode(request), lease: lease,
+      as: GatewayToolServerStatus.self
+    ).validated(for: request)
+  }
+
+  private func toolServerResponse<Response: Codable & Sendable>(
+    operation: GatewayXPCOperation, body: Data, lease: GatewayTransportConnectionLease,
+    as responseType: Response.Type
+  ) async throws -> Response {
+    try Task.checkCancellation()
+    let state = try requireConnected(lease: lease)
+    guard state.selectedVersion >= GatewayProtocolVersion(major: 1, minor: 13) else {
+      throw GatewayFailure(
+        code: .transportUnavailable,
+        message: "Tool server controls require an updated resident agent.")
+    }
+    do {
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: operation, lease: lease, sessionID: state.sessionID, body: body))
+      let raw = try await state.connection.request(envelope)
+      try Task.checkCancellation()
+      try requireCurrentConnection(state)
+      return try decodeResponse(raw, operation: operation, as: responseType)
+    } catch is CancellationError { throw CancellationError() } catch {
+      try requireCurrentConnection(state)
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  public func readArtifact(
+    _ request: GatewayArtifactReadRequest, lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayArtifactReadResponse {
+    try Task.checkCancellation()
+    try GatewayArtifactReadValidation.request(request)
+    let state = try requireConnected(lease: lease)
+    do {
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: .readArtifact, lease: lease, sessionID: state.sessionID,
+          body: codec.encode(request)))
+      let rawResponse = try await state.connection.request(envelope)
+      try Task.checkCancellation()
+      try requireCurrentConnection(state)
+      let response = try decodeResponse(
+        rawResponse, operation: .readArtifact, as: GatewayArtifactReadResponse.self)
+      try GatewayArtifactReadValidation.response(response, request: request)
+      return response
+    } catch is CancellationError { throw CancellationError() } catch {
+      try requireCurrentConnection(state)
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  public func requestScreenControlPermission(
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayScreenControlPermissionStatus {
+    try await screenControlPermissionResponse(
+      operation: .requestScreenControlPermission,
+      lease: lease
+    )
+  }
+
   public func pauseHeartbeats(
     lease: GatewayTransportConnectionLease
   ) async throws -> GatewayResidentStatus {
@@ -233,6 +377,16 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
       body: Data(),
       lease: lease
     )
+  }
+
+  public func listHeartbeatRuns(
+    _ request: GatewayHeartbeatRunListRequest, lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayHeartbeatRunPage {
+    let request = try request.validated()
+    return try await recoveryRequest(
+      request, operation: .listHeartbeatRuns, lease: lease,
+      response: GatewayHeartbeatRunPage.self
+    ).validated(for: request)
   }
 
   public func addHeartbeat(
@@ -318,9 +472,9 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
       throw codec.canonicalFailure(from: error)
     }
 
-    let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream(
-      bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
-    )
+    let pair = GatewayBufferedStream<GatewayEventEnvelope>.makeStream(
+      bufferCapacity: configuration.subscriberBufferCapacity,
+      maximumBufferedBytes: configuration.maximumBufferedWireBytesPerSubscriber)
     let continuation = pair.continuation
     let upstream = subscription.stream
     let codec = self.codec
@@ -337,7 +491,7 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
             )
           }
           let envelope = try codec.decode(GatewayEventEnvelope.self, from: rawEvent)
-          switch continuation.yield(envelope) {
+          switch continuation.yield(envelope, wireBytes: rawEvent.count) {
           case .enqueued:
             continue
           case .dropped, .terminated:
@@ -510,6 +664,33 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
         rawResponse,
         operation: operation,
         as: GatewayAccessibilityPermissionStatus.self
+      )
+    } catch {
+      throw codec.canonicalFailure(from: error)
+    }
+  }
+
+  private func screenControlPermissionResponse(
+    operation: GatewayXPCOperation,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> GatewayScreenControlPermissionStatus {
+    let state = try requireConnected(lease: lease)
+    do {
+      try Task.checkCancellation()
+      let envelope = try encodeEnvelope(
+        GatewayXPCRequestEnvelope(
+          operation: operation,
+          lease: lease,
+          sessionID: state.sessionID,
+          body: Data()
+        )
+      )
+      let rawResponse = try await state.connection.request(envelope)
+      try requireCurrentConnection(state)
+      return try decodeResponse(
+        rawResponse,
+        operation: operation,
+        as: GatewayScreenControlPermissionStatus.self
       )
     } catch {
       throw codec.canonicalFailure(from: error)

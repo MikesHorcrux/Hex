@@ -1,6 +1,12 @@
 import HexIPC
 
 extension HexGatewayClientAdapter {
+  func listHeartbeatRuns(_ request: GatewayHeartbeatRunListRequest) async throws
+    -> GatewayHeartbeatRunPage
+  {
+    try await client.listHeartbeatRuns(request)
+  }
+
   func listHeartbeatSchedules() async throws -> GatewayHeartbeatScheduleList {
     try await client.listHeartbeats()
   }

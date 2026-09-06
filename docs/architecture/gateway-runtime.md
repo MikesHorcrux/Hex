@@ -53,9 +53,10 @@ the plist identity, `MachServices`, and `BundleProgram` path, verifies the neste
 and checks the outer app against the resident app's exact Apple code-signing requirement before
 launching only the canonical Debug UI. The UI must consume the dedicated `--hex-verify-no-connect` argument
 passed by this mode and suppress its normal startup gateway connection; otherwise a registered
-resident service could be awakened during verification. The script never calls `SMAppService`,
-`launchctl`, or any installation command. Its normal run modes open Hex, whose ordinary XPC startup
-may awaken a service that the user previously registered; `--verify` makes no resident contact.
+resident service could be awakened during verification. The script never registers a service or
+calls `SMAppService`. Normal run modes inspect an already registered helper's bundle identity and
+program, then use `launchctl kickstart -k` to load the newly built executable before opening Hex.
+The loaded executable inode must match the canonical bundle. `--verify` makes no resident contact.
 
 ## Registration and distribution boundary
 
@@ -63,9 +64,30 @@ The staged Debug app exposes resident registration only after a read-only prefli
 persisted model and workspace, the presence (not the value) of the selected OpenAI API-key or
 ChatGPT OAuth credential when OpenAI is selected, the executable helper, and the LaunchAgent
 identity and service contract. Registration and unregistration happen
-only when the user presses the corresponding menu-bar control. If macOS requires approval, Hex links
-the user to Login Items settings. A registered helper can always be disabled even if its configuration
-later becomes invalid.
+only from an explicit user-facing activation, disable, or repair action. If macOS requires approval,
+Hex links the user to Login Items settings. A registered helper can always be disabled even if its
+configuration later becomes invalid. Because `SMAppService.status == .enabled` records the user's
+choice rather than process liveness, an enabled helper that cannot answer XPC exposes a repair action.
+Repair awaits `unregister()` before calling `register()`, which is the supported re-registration
+sequence for a replaced or missing LaunchAgent job.
+
+## macOS permission ownership
+
+The process that uses a protected Mac capability also owns its permission check. Hex asks the
+resident gateway for its Accessibility status over authenticated XPC; it never treats a failed XPC
+lookup as a denied permission. Screen-control status and requests follow the same boundary. The UI
+downloads and validates the optional screen-control component, while `HexGateway` launches its
+permission commands through the bounded MCP executable-snapshot path and returns separate
+Accessibility and Screen Recording results. This keeps setup and later tool execution under the same
+stable, signed responsible process.
+
+Browser control needs no separate macOS privacy grant. Full Disk Access has no general public grant
+or reliable status API, so Hex reveals the bundled `HexGateway.app` and opens the correct System
+Settings pane for the user's manual choice; it does not infer success from opening that pane.
+
+Personality setup is optional. When no profile has ever been created, the gateway runs with Hex's
+operating contract and no personality context. A present but malformed profile remains a durable
+state error and fails before runtime events are written rather than silently discarding user data.
 
 Non-secret settings are versioned JSON beneath the user's Application Support directory. The store
 uses bounded reads, owner-only files, no-follow descriptors, an OS lock, atomic replacement, and

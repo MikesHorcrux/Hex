@@ -97,7 +97,8 @@ public actor LocalMCPClientSession: MCPClientSession {
     let supportsTaskAugmentedToolCalls =
       initialization?.protocolVersion == .november2025
       && initialization?.supportsTaskAugmentedToolCalls == true
-    discoveredToolTaskSupport = nil
+    // Keep the last fully validated catalog callable while replacement pages are in flight.
+    // Publish task support only at the final page; session invalidation still clears it on failure.
 
     for _ in 0..<configuration.maximumToolPages {
       try Task.checkCancellation()
@@ -173,7 +174,9 @@ public actor LocalMCPClientSession: MCPClientSession {
         "arguments": .object(call.arguments),
       ])
     )
-    try requireReady(generation: generation)
+    // Cancellation forbids new dispatch, not preservation of an already returned receipt.
+    // A replaced/disconnected session and an invalid result still fail closed below.
+    try requireSameReadySession(generation: generation)
     do {
       return try MCPRemoteToolResultDecoder.decode(
         response,
@@ -195,6 +198,10 @@ public actor LocalMCPClientSession: MCPClientSession {
 
   private func requireReady(generation: UInt64) throws {
     try Task.checkCancellation()
+    try requireSameReadySession(generation: generation)
+  }
+
+  private func requireSameReadySession(generation: UInt64) throws {
     guard lifecycleGeneration == generation, case .ready = state else {
       throw MCPClientSessionError.connectionClosed
     }

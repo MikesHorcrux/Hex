@@ -222,7 +222,7 @@ struct AgentRuntimeFailureTests {
     do {
       _ = try await runtime.run(RuntimeTestFixture.request())
       Issue.record("Expected provider failure.")
-    } catch AgentRuntimeError.providerFailure(let message) {
+    } catch AgentRuntimeError.providerFailure(let message, _) {
       #expect(!message.contains("private detail"))
     } catch {
       Issue.record("Expected providerFailure, received: \(error)")
@@ -234,6 +234,42 @@ struct AgentRuntimeFailureTests {
     }
     #expect(failures.count == 1)
     #expect(failures.allSatisfy { !$0.message.contains("private detail") })
+  }
+
+  @Test
+  func providerSafeFailureIsPreservedWhenOpeningTheStream() async {
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider(scripts: [.openingFailure]),
+      executor: ScriptedToolExecutor(tools: [])
+    )
+
+    do {
+      _ = try await runtime.run(RuntimeTestFixture.request())
+      Issue.record("Expected provider failure.")
+    } catch AgentRuntimeError.providerFailure(let message, let isRetryable) {
+      #expect(message == "The test provider reported a safe failure.")
+      #expect(isRetryable)
+    } catch {
+      Issue.record("Expected providerFailure, received: \(error)")
+    }
+  }
+
+  @Test
+  func providerSafeFailureIsPreservedInsideTheStream() async {
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider(scripts: [.streamFailure]),
+      executor: ScriptedToolExecutor(tools: [])
+    )
+
+    do {
+      _ = try await runtime.run(RuntimeTestFixture.request())
+      Issue.record("Expected provider failure.")
+    } catch AgentRuntimeError.providerFailure(let message, let isRetryable) {
+      #expect(message == "The test provider reported a safe failure.")
+      #expect(isRetryable)
+    } catch {
+      Issue.record("Expected providerFailure, received: \(error)")
+    }
   }
 
   @Test

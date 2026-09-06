@@ -1,36 +1,43 @@
 import Foundation
+import HexCore
 
 /// The resident heartbeat coordinator. It owns only scheduling state; the injected runner owns the
 /// agent runtime and is called exclusively after a durable occurrence claim. Waiting for a due date,
 /// an empty schedule set, or a paused scheduler never reaches the runner.
 public actor HexHeartbeatScheduler {
-  private let store: any HexHeartbeatStore
+  let store: any HexHeartbeatStore
+  let runInspector: (any HexHeartbeatRunInspecting)?
   private let runner: any HexHeartbeatRunner
-  private let clock: any HexHeartbeatClock
+  let clock: any HexHeartbeatClock
   private let sleeper: any HexHeartbeatSleeper
   private let configuration: HexHeartbeatSchedulerConfiguration
 
   private var schedules: [HexHeartbeatScheduleID: HexHeartbeatSchedule] = [:]
   private var schedulerPaused = false
   private var hasLoaded = false
+  private var initialLoadTask: Task<Void, any Error>?
   private var isStarted = false
   private var executionInProgress = false
   private var mutationInProgress = false
   private var loopTask: Task<Void, Never>?
   private var loopGeneration: UInt64 = 0
+  var nextReceiptWakeAt: Date?
+  var nextRecoveryCheckAt: Date?
 
   public init(
     store: any HexHeartbeatStore,
     runner: any HexHeartbeatRunner,
     clock: any HexHeartbeatClock = SystemHexHeartbeatClock(),
     sleeper: any HexHeartbeatSleeper = TaskHexHeartbeatSleeper(),
-    configuration: HexHeartbeatSchedulerConfiguration = .standard
+    configuration: HexHeartbeatSchedulerConfiguration = .standard,
+    runInspector: (any HexHeartbeatRunInspecting)? = nil
   ) {
     self.store = store
     self.runner = runner
     self.clock = clock
     self.sleeper = sleeper
     self.configuration = configuration
+    self.runInspector = runInspector
   }
 
   /// Loads durable state, reconciles only expired leases, and starts the cancellable resident loop.
@@ -45,8 +52,8 @@ public actor HexHeartbeatScheduler {
     launchLoop()
   }
 
-  /// Cancels the resident loop. A cooperative runner observes cancellation and receives a durable
-  /// cancelled outcome before this method returns.
+  /// Cancels the resident loop and awaits receipt persistence. Work not yet verified terminal keeps
+  /// its durable pending identity for recovery; cancellation never fabricates a finished result.
   public func stop() async {
     isStarted = false
     loopGeneration &+= 1
@@ -56,9 +63,14 @@ public actor HexHeartbeatScheduler {
     if let task {
       await task.value
     }
+    if let initialLoadTask {
+      _ = try? await initialLoadTask.value
+    }
     hasLoaded = false
     schedules.removeAll(keepingCapacity: true)
     schedulerPaused = false
+    nextReceiptWakeAt = nil
+    nextRecoveryCheckAt = nil
   }
 
   /// Executes all currently due schedules once, with each schedule's persisted catch-up limit. This
@@ -104,6 +116,7 @@ public actor HexHeartbeatScheduler {
       )
     }
     try applyValidated(updated)
+    try await refreshReceiptWakeDate()
     endMutationAndWakeLoop()
   }
 
@@ -166,17 +179,19 @@ public actor HexHeartbeatScheduler {
   }
 
   public func nextWakeDate() -> Date? {
-    guard !schedulerPaused else {
-      return nil
-    }
-    return schedules.values
-      .filter { !$0.isPaused }
+    let scheduleWake = schedules.values
+      .filter { !schedulerPaused && !$0.isPaused }
       .map { schedule in
         // A claimed occurrence cannot be started again before its lease expires. Waking at the
         // due date while that lease is still active would otherwise create a tight retry loop.
-        schedule.activeLease?.expiresAt ?? schedule.nextDueAt
+        if let expiry = schedule.activeLease?.expiresAt {
+          return max(expiry, nextRecoveryCheckAt ?? expiry)
+        }
+        return schedule.nextDueAt
       }
       .min()
+    let receiptWake = nextReceiptWakeAt.map { max($0, nextRecoveryCheckAt ?? $0) }
+    return [scheduleWake, receiptWake].compactMap { $0 }.min()
   }
 
   public func isRunning() -> Bool {
@@ -201,14 +216,12 @@ public actor HexHeartbeatScheduler {
     guard !mutationInProgress else {
       throw HexHeartbeatSchedulerError.executionInProgress
     }
-    guard !schedulerPaused else {
-      return []
-    }
-    let reconciled = try await store.reconcileExpiredLeases(at: now)
+    let reconciled = try await reconciledSnapshot(at: now)
     try applyValidated(reconciled)
     guard !mutationInProgress else {
       throw HexHeartbeatSchedulerError.executionInProgress
     }
+    guard !schedulerPaused else { return [] }
     return try await executeDue(at: now)
   }
 
@@ -240,6 +253,11 @@ public actor HexHeartbeatScheduler {
           break
         case .alreadyCompleted:
           try await refreshFromStore()
+          guard schedules[scheduleID]?.occurrence() != occurrence else {
+            throw HexHeartbeatSchedulerError.invalidConfiguration(
+              "A completed occurrence is still scheduled. Its saved result was preserved; no work was repeated."
+            )
+          }
           continue
         case .alreadyClaimed, .scheduleBusy, .schedulePaused, .scheduleNotDue, .scheduleMissing:
           try await refreshFromStore()
@@ -262,17 +280,20 @@ public actor HexHeartbeatScheduler {
         )
         let execution = await execute(request)
         let nextDueAt = schedule.nextOccurrenceAfter(occurrence.dueAt)
-        let completion = HexHeartbeatCompletion(
+        let completion = try await finishExecution(
           lease: lease,
           outcome: execution.outcome,
           nextDueAt: nextDueAt
         )
-        _ = try await store.complete(completion, at: clock.now)
         try await refreshFromStore()
+        guard let completion else {
+          if execution.wasCancelled { throw CancellationError() }
+          break
+        }
         reports.append(
           HexHeartbeatExecutionReport(
             occurrence: occurrence,
-            outcome: execution.outcome
+            outcome: completion.outcome
           )
         )
         executedCount += 1
@@ -385,14 +406,26 @@ public actor HexHeartbeatScheduler {
     guard !hasLoaded else {
       return
     }
-    let snapshot = try await store.reconcileExpiredLeases(at: clock.now)
-    try applyValidated(snapshot)
-    hasLoaded = true
+    if let initialLoadTask {
+      try await initialLoadTask.value
+      return
+    }
+    // Snapshot readers and mutations can arrive while inspection is suspended. They share one
+    // initial reconciliation so they cannot compute conflicting completions for the same lease.
+    let task = Task { [self] in
+      let snapshot = try await reconciledSnapshot(at: clock.now)
+      try applyValidated(snapshot)
+      hasLoaded = true
+    }
+    initialLoadTask = task
+    defer { initialLoadTask = nil }
+    try await task.value
   }
 
   private func refreshFromStore() async throws {
     let snapshot = try await store.load()
     try applyValidated(snapshot)
+    try await refreshReceiptWakeDate()
   }
 
   private func apply(_ snapshot: HexHeartbeatStoreSnapshot) {
@@ -423,7 +456,8 @@ public actor HexHeartbeatScheduler {
     HexHeartbeatLease(
       occurrence: occurrence,
       claimedAt: now,
-      expiresAt: now.addingTimeInterval(configuration.leaseDurationSeconds)
+      expiresAt: now.addingTimeInterval(configuration.leaseDurationSeconds),
+      runID: AgentRunID()
     )
   }
 

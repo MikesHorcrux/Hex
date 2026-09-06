@@ -8,43 +8,34 @@ struct HexAuthorizationModePickerView: View {
 
   var body: some View {
     Section {
-      Picker("Approval policy", selection: authorizationMode) {
-        Text("Ask for each new capability scope")
-          .tag(HexAuthorizationMode.askEveryTime)
-        Text("Full Access")
-          .tag(HexAuthorizationMode.fullAccess)
+      VStack(spacing: 2) {
+        ForEach(HexAuthorizationMode.allCases) { mode in
+          HexApprovalModeRow(mode: mode, isSelected: model.authorizationMode == mode) {
+            authorizationMode.wrappedValue = mode
+          }
+        }
       }
-      .pickerStyle(.radioGroup)
       .accessibilityIdentifier("authorizationModePicker")
-
-      if model.authorizationMode == .fullAccess {
-        Label(
-          "Validated tool requests run without a Hex approval prompt.",
-          systemImage: "exclamationmark.shield.fill"
-        )
-        .foregroundStyle(.orange)
-      }
+      .disabled(model.isSaving || model.isLoading || model.needsLoadRetry)
     } header: {
-      Text("Hex approvals")
+      Text("Default action permissions")
     } footer: {
       Text(
-        "Full Access does not escape the selected workspace, tool validation, network policy, "
-          + "or macOS privacy controls. Restart the resident gateway after changing this policy."
+        "Saving applies this default to conversations using the default and to scheduled work. Choose a different mode for an individual conversation in its composer. macOS privacy permissions remain separate."
       )
     }
     .confirmationDialog(
-      "Give Hex Full Access?",
+      "Use full access by default?",
       isPresented: $isConfirmingFullAccess,
       titleVisibility: .visible
     ) {
-      Button("Enable Full Access", role: .destructive) {
+      Button("Use Full Access", role: .destructive) {
         model.authorizationMode = .fullAccess
       }
       Button("Keep Asking", role: .cancel) {}
     } message: {
       Text(
-        "Hex will automatically approve valid tool requests inside its configured boundaries. "
-          + "macOS will still control Accessibility, Screen Recording, and other system access."
+        "Hex will run validated requests, including commands with your Mac account's file access. macOS still controls Accessibility, Screen Recording, and other protected access."
       )
     }
   }

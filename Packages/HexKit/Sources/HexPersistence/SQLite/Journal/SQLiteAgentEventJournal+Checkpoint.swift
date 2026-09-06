@@ -16,13 +16,14 @@ extension SQLiteAgentEventJournal {
     }
 
     let connection = try requireConnection()
-    return try withImmediateOwnedTransaction(connection: connection) {
+    let written = try withImmediateOwnedTransaction(connection: connection) {
       try Task.checkCancellation()
       try SQLiteJournalMigrator.validateSchemaDefinition(
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
-      try validateWholeJournalIntegrity(connection: connection)
+      try validateIntegrityDataVersion(connection: connection)
+      let currentUsage = try validateWholeJournalIntegrity(connection: connection)
       guard try eventExists(for: runID, sequence: sequence, connection: connection) else {
         throw SQLiteAgentEventJournalError.checkpointSequenceMissing(
           runID: runID,
@@ -41,7 +42,11 @@ extension SQLiteAgentEventJournal {
             sequence: sequence
           )
         }
-        return existing
+        return (
+          checkpoint: existing,
+          integrityUsage: currentUsage,
+          dataVersion: try currentDataVersion(connection: connection)
+        )
       }
 
       let timestampMicroseconds = try AgentEventCodec.microseconds(for: configuration.clock())
@@ -76,12 +81,19 @@ extension SQLiteAgentEventJournal {
           "Inserting a checkpoint did not complete."
         )
       }
-      try validateWholeJournalIntegrity(
+      let updatedUsage = try validateWholeJournalIntegrity(
         connection: connection,
         checksCancellation: false
       )
-      return checkpoint
+      return (
+        checkpoint: checkpoint,
+        integrityUsage: updatedUsage,
+        dataVersion: try currentDataVersion(connection: connection)
+      )
     }
+    integrityUsage = written.integrityUsage
+    integrityDataVersion = written.dataVersion
+    return written.checkpoint
   }
 
   public func latestCheckpoint(
@@ -95,7 +107,7 @@ extension SQLiteAgentEventJournal {
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
-      try validateWholeJournalIntegrity(connection: connection)
+      try validateIntegrityDataVersion(connection: connection)
 
       let statement = try connection.prepare(
         """

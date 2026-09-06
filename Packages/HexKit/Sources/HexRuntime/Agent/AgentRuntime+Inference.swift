@@ -8,13 +8,14 @@ extension AgentRuntime {
     let tools = try await discoverTools()
     try validateToolSnapshot(tools, request: request, model: model)
 
-    var conversation = request.contextMessages + request.initialMessages
+    let prepared = try await prepareInitialContext(request, model: model, tools: tools)
+    var conversation = prepared.messages
     var turns: [InferenceTurn] = []
     var seenToolCallIDs = try initialToolCallIDs(in: conversation)
     var seenAuthorizationRequestIDs = Set<AuthorizationRequestID>()
     var totalToolCalls = 0
     var totalToolResultBytes = 0
-    var totalReportedTokens: UInt64 = 0
+    var totalReportedTokens: UInt64 = prepared.reportedTokens
     var effectiveToolChoice = request.toolChoice
     let allowsParallelToolCalls =
       inferenceProvider.descriptor.capabilities.contains(.parallelToolCalling)
@@ -22,10 +23,17 @@ extension AgentRuntime {
 
     while true {
       try Task.checkCancellation()
+      guard totalReportedTokens < configuration.budget.maxReportedTokens else {
+        throw AgentRuntimeError.budgetExceeded(
+          "Reported token budget exhausted before the next inference request.")
+      }
       guard turns.count < configuration.budget.maxTurns else {
         throw AgentRuntimeError.budgetExceeded("Inference turn budget exceeded.")
       }
       try validateConversationSize(conversation)
+      if !turns.isEmpty {
+        try validateContinuingContext(conversation, request: request, model: model, tools: tools)
+      }
       let allowedToolNames: Set<String>
       switch effectiveToolChoice {
       case .none:
@@ -53,11 +61,19 @@ extension AgentRuntime {
         stream = try await inferenceProvider.stream(inferenceRequest)
       } catch is CancellationError {
         throw CancellationError()
+      } catch let error as any InferenceProviderFailure {
+        throw AgentRuntimeError.providerFailure(
+          error.userFacingMessage,
+          isRetryable: error.isRetryable
+        )
       } catch {
         if Task.isCancelled {
           throw CancellationError()
         }
-        throw AgentRuntimeError.providerFailure("The inference provider failed to open a stream.")
+        throw AgentRuntimeError.providerFailure(
+          "The inference provider failed to open a stream.",
+          isRetryable: true
+        )
       }
 
       let initialAccumulator = InferenceTurnAccumulator(
@@ -76,11 +92,19 @@ extension AgentRuntime {
             event = try await cursor.next()
           } catch is CancellationError {
             throw CancellationError()
+          } catch let error as any InferenceProviderFailure {
+            throw AgentRuntimeError.providerFailure(
+              error.userFacingMessage,
+              isRetryable: error.isRetryable
+            )
           } catch {
             if Task.isCancelled {
               throw CancellationError()
             }
-            throw AgentRuntimeError.providerFailure("The inference stream failed.")
+            throw AgentRuntimeError.providerFailure(
+              "The inference stream failed.",
+              isRetryable: true
+            )
           }
           guard let event else {
             break
@@ -114,6 +138,7 @@ extension AgentRuntime {
       conversationWithAssistant.append(output.assistantMessage)
       try validateConversationSize(conversationWithAssistant)
       try await append(.messageAppended(output.assistantMessage), to: request.runID)
+      try recordAnnouncedToolCalls(output.toolCalls, for: request.runID)
       conversation = conversationWithAssistant
 
       switch output.stopReason {
@@ -146,7 +171,7 @@ extension AgentRuntime {
         if effectiveToolChoice == .required {
           effectiveToolChoice = .automatic
         } else if case .named = effectiveToolChoice {
-          effectiveToolChoice = .automatic
+          effectiveToolChoice = .none
         }
         for call in output.toolCalls {
           seenToolCallIDs.insert(call.id)

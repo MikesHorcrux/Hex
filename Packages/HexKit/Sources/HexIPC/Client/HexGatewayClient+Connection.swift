@@ -60,6 +60,7 @@ extension HexGatewayClient {
         }
       }
       gatewayInstanceID = response.gatewayInstanceID
+      connectedProtocolVersion = response.selectedVersion
       connectedGenerationID = generationID
       connectedLease = lease
       connectionAttemptID = nil
@@ -110,9 +111,11 @@ extension HexGatewayClient {
     connectionGenerationID = generationID
     connectedGenerationID = nil
     connectedLease = nil
+    connectedProtocolVersion = nil
     connectionLease = lease
     connectionAttemptID = attemptID
     startAttemptIDs.removeAll()
+    eventCheckpointRestorations.removeAll()
     terminateEventStreamsForConnectionChange()
     terminateEventStreamAcquisitionWaitersForConnectionChange()
     return generationID
@@ -128,6 +131,7 @@ extension HexGatewayClient {
     connectionAttemptID = nil
     connectedGenerationID = nil
     connectedLease = nil
+    connectedProtocolVersion = nil
     connectionLease = nil
   }
 

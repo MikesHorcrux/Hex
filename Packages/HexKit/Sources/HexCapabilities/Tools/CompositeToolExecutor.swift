@@ -8,6 +8,11 @@ public actor CompositeToolExecutor: ToolExecutor {
   private static let maximumExecutors = 32
   private static let maximumTools = 4_096
 
+  private struct DiscoverySnapshot: Sendable {
+    let executorIndex: Int
+    let definitions: [ToolDefinition]
+  }
+
   private let executors: [any ToolExecutor]
   private var routes: [String: Int] = [:]
 
@@ -20,11 +25,35 @@ public actor CompositeToolExecutor: ToolExecutor {
 
   public func availableTools() async throws -> [ToolDefinition] {
     try Task.checkCancellation()
+    let executors = self.executors
+    let snapshots = try await withThrowingTaskGroup(
+      of: DiscoverySnapshot.self,
+      returning: [DiscoverySnapshot].self
+    ) { group in
+      for (index, executor) in executors.enumerated() {
+        group.addTask {
+          try Task.checkCancellation()
+          return DiscoverySnapshot(
+            executorIndex: index,
+            definitions: try await executor.availableTools()
+          )
+        }
+      }
+
+      var snapshots: [DiscoverySnapshot] = []
+      snapshots.reserveCapacity(executors.count)
+      for try await snapshot in group {
+        snapshots.append(snapshot)
+      }
+      return snapshots.sorted { $0.executorIndex < $1.executorIndex }
+    }
+    try Task.checkCancellation()
+
     var definitions: [ToolDefinition] = []
     var candidateRoutes: [String: Int] = [:]
 
-    for (index, executor) in executors.enumerated() {
-      let executorDefinitions = try await executor.availableTools()
+    for snapshot in snapshots {
+      let executorDefinitions = snapshot.definitions
       let (nextCount, overflowed) = definitions.count.addingReportingOverflow(
         executorDefinitions.count
       )
@@ -36,7 +65,7 @@ public actor CompositeToolExecutor: ToolExecutor {
           throw CompositeToolExecutorError.duplicateTool(definition.name)
         }
         definitions.append(definition)
-        candidateRoutes[definition.name] = index
+        candidateRoutes[definition.name] = snapshot.executorIndex
       }
     }
 

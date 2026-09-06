@@ -1,7 +1,7 @@
 public struct ProcessExecutionConfiguration: Equatable, Sendable {
   public static var standard: ProcessExecutionConfiguration {
     ProcessExecutionConfiguration(
-      validatedMaximumOutputBytes: 512 * 1_024,
+      validatedMaximumOutputBytes: 4 * 1_024,
       maximumArguments: 256,
       maximumArgumentBytes: 64 * 1_024,
       maximumEnvironmentVariables: 64,
@@ -11,7 +11,8 @@ public struct ProcessExecutionConfiguration: Equatable, Sendable {
     )
   }
 
-  /// Maximum combined stdout and stderr bytes retained for one invocation.
+  /// Maximum combined stdout and stderr preview bytes. Without an artifact writer this remains
+  /// an explicit hard capture limit and exceeding it terminates the process.
   public let maximumOutputBytes: Int
   public let maximumArguments: Int
   public let maximumArgumentBytes: Int
@@ -21,7 +22,7 @@ public struct ProcessExecutionConfiguration: Equatable, Sendable {
   public let pollingIntervalMilliseconds: Int
 
   public init(
-    maximumOutputBytes: Int = 512 * 1_024,
+    maximumOutputBytes: Int = 4 * 1_024,
     maximumArguments: Int = 256,
     maximumArgumentBytes: Int = 64 * 1_024,
     maximumEnvironmentVariables: Int = 64,

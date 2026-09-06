@@ -6,6 +6,7 @@ struct HexHeartbeatScheduleRow: View {
   let isBusy: Bool
   let onTogglePause: () -> Void
   let onRemove: () -> Void
+  var onViewResults: () -> Void = {}
 
   var body: some View {
     HStack(alignment: .top, spacing: 14) {
@@ -20,7 +21,9 @@ struct HexHeartbeatScheduleRow: View {
             .font(.headline)
           Text(schedule.isPaused ? "Paused" : "Active")
             .font(.caption.weight(.medium))
-            .foregroundStyle(schedule.isPaused ? Color.secondary : Color.green)
+            .foregroundStyle(
+              schedule.isPaused ? Color.secondary : HexBrandPalette.successInk
+            )
         }
 
         Text(schedule.instruction)
@@ -47,12 +50,19 @@ struct HexHeartbeatScheduleRow: View {
           }
           .font(.caption)
           .foregroundStyle(outcomeColor(outcome))
+          Text(outcome.completedAt, style: .relative)
+            .font(.caption).foregroundStyle(.secondary)
+          if let failure = outcome.failureMessage {
+            Text(failure).font(.caption).foregroundStyle(.orange).lineLimit(2)
+          }
         }
       }
 
       Spacer(minLength: 8)
 
       VStack(alignment: .trailing, spacing: 6) {
+        Button("View results", action: onViewResults)
+          .buttonStyle(.link).font(.caption)
         Button(schedule.isPaused ? "Resume" : "Pause", action: onTogglePause)
           .buttonStyle(.bordered)
           .controlSize(.small)
@@ -107,7 +117,7 @@ struct HexHeartbeatScheduleRow: View {
   private func outcomeColor(_ outcome: GatewayHeartbeatOutcome) -> Color {
     switch outcome.kind {
     case .succeeded:
-      .green
+      HexBrandPalette.successInk
     case .failed, .cancelled, .interrupted:
       .orange
     case .skipped:

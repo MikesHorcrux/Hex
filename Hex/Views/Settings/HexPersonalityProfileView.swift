@@ -3,6 +3,12 @@ import SwiftUI
 
 struct HexPersonalityProfileView: View {
   @Bindable var model: HexPersonalityProfileModel
+  let showsSaveAction: Bool
+
+  init(model: HexPersonalityProfileModel, showsSaveAction: Bool = true) {
+    _model = Bindable(model)
+    self.showsSaveAction = showsSaveAction
+  }
 
   var body: some View {
     Section {
@@ -39,18 +45,21 @@ struct HexPersonalityProfileView: View {
       }
 
       if let errorMessage = model.errorMessage {
-        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-          .font(.callout)
-          .foregroundStyle(.orange)
-          .fixedSize(horizontal: false, vertical: true)
-          .accessibilityIdentifier("hexPersonalityProfileError")
+        HexInlineNoticeView(
+          message: errorMessage,
+          systemImage: "exclamationmark.triangle.fill",
+          tint: .orange
+        )
+        .accessibilityIdentifier("hexPersonalityProfileError")
       }
 
       if let statusMessage = model.statusMessage {
-        Label(statusMessage, systemImage: "checkmark.circle.fill")
-          .font(.callout)
-          .foregroundStyle(.secondary)
-          .accessibilityIdentifier("hexPersonalityProfileStatus")
+        HexInlineNoticeView(
+          message: statusMessage,
+          systemImage: "checkmark.circle.fill",
+          tint: HexBrandPalette.successInk
+        )
+        .accessibilityIdentifier("hexPersonalityProfileStatus")
       }
 
       HStack {
@@ -59,23 +68,27 @@ struct HexPersonalityProfileView: View {
             await model.reload()
           }
         }
+        .buttonStyle(.hexSecondaryAction)
         .accessibilityIdentifier("hexPersonalityProfileRetryButton")
         .disabled(model.isLoading || model.isSaving)
 
         Spacer()
 
-        if model.isSaving {
-          ProgressView()
-            .controlSize(.small)
-        }
-        Button("Save profile") {
-          Task {
-            await model.save()
+        if showsSaveAction {
+          if model.isSaving {
+            ProgressView()
+              .controlSize(.small)
           }
+          Button("Save profile") {
+            Task {
+              await model.save()
+            }
+          }
+          .buttonStyle(.hexPrimaryAction)
+          .keyboardShortcut(.defaultAction)
+          .accessibilityIdentifier("hexPersonalityProfileSaveButton")
+          .disabled(!model.canSave)
         }
-        .keyboardShortcut(.defaultAction)
-        .accessibilityIdentifier("hexPersonalityProfileSaveButton")
-        .disabled(!model.canSave)
       }
     } header: {
       Text("Personality profile")
@@ -122,22 +135,21 @@ struct HexPersonalityProfileView: View {
     case .loading:
       EmptyView()
     case .empty:
-      Label(
-        "No personality profile is saved yet. Add the fields above and save when you are ready.",
-        systemImage: "person.crop.circle.badge.plus"
+      HexInlineNoticeView(
+        message: "No personality is saved yet. Add only what you want Hex to know.",
+        systemImage: "person.crop.circle.badge.plus",
+        tint: HexBrandPalette.coral
       )
-      .font(.callout)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
       .accessibilityIdentifier("hexPersonalityProfileEmptyState")
     case .loaded:
       EmptyView()
     case .corrupted(let message), .unavailable(let message), .failed(let message):
-      Label(message, systemImage: model.state.isUnavailable ? "nosign" : "exclamationmark.triangle")
-        .font(.callout)
-        .foregroundStyle(model.state.isUnavailable ? Color.secondary : Color.orange)
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityIdentifier("hexPersonalityProfileStateMessage")
+      HexInlineNoticeView(
+        message: message,
+        systemImage: model.state.isUnavailable ? "nosign" : "exclamationmark.triangle",
+        tint: model.state.isUnavailable ? HexBrandPalette.mutedInk : .orange
+      )
+      .accessibilityIdentifier("hexPersonalityProfileStateMessage")
     }
   }
 }

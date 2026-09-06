@@ -6,6 +6,29 @@ import Testing
 @Suite("XPC gateway transport")
 struct XPCGatewayTransportTests {
   @Test
+  func readOnlyRecoveryOperationsCrossTheInjectedConnectionWithoutStartingARun() async throws {
+    let runID = GatewayTestValues.runID(175)
+    let handshake = GatewayHandshakeResponse(
+      sessionID: GatewaySessionID(), gatewayInstanceID: GatewayInstanceID(),
+      selectedVersion: .current, activeRun: nil)
+    let connection = ScriptedConnection(handshake: handshake, start: nil)
+    let transport = XPCGatewayTransport(
+      connectionFactory: FixedConnectionFactory(connection: connection))
+    let lease = GatewayTransportConnectionLease()
+    _ = try await transport.handshake(GatewayTestValues.handshakeRequest(), lease: lease)
+    let recovered = try await transport.recoverRun(
+      GatewayRunRecoveryRequest(runID: runID), lease: lease)
+    #expect(recovered.gatewayInstanceID == handshake.gatewayInstanceID)
+    #expect(recovered.disposition == .unknown)
+    let record = GatewayTestValues.record(runID: runID, sequence: 1, event: .runStarted)
+    let page = try await transport.readRunHistory(
+      GatewayRunHistoryRequest(
+        runID: runID, firstEventID: record.id, afterSequence: 0, throughSequence: 1), lease: lease)
+    #expect(page.records == [record])
+    #expect(await connection.operations == [.handshake, .recoverRun, .readRunHistory])
+  }
+
+  @Test
   func handshakeRunAndOrderedEventsCrossTheInjectedConnection() async throws {
     let runID = GatewayTestValues.runID(241)
     let invocationID = GatewayTestValues.invocationID(242)
@@ -172,6 +195,34 @@ struct XPCGatewayTransportTests {
   }
 
   @Test
+  func clientRoutesScreenControlPermissionOperationsThroughTheConnectedCapability() async throws {
+    let handshake = GatewayHandshakeResponse(
+      sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(217)),
+      gatewayInstanceID: GatewayInstanceID(rawValue: GatewayTestValues.uuid(218)),
+      selectedVersion: .current,
+      activeRun: nil
+    )
+    let connection = ScriptedConnection(handshake: handshake, start: nil)
+    let client = HexGatewayClient(
+      transport: XPCGatewayTransport(
+        connectionFactory: FixedConnectionFactory(connection: connection)
+      )
+    )
+    _ = try await client.connect()
+    let expected = GatewayScreenControlPermissionStatus(
+      accessibilityGranted: false,
+      screenRecordingGranted: true
+    )
+
+    #expect(try await client.screenControlPermissionStatus() == expected)
+    #expect(try await client.requestScreenControlPermission() == expected)
+    #expect(
+      await connection.operations
+        == [.handshake, .screenControlPermissionStatus, .requestScreenControlPermission]
+    )
+  }
+
+  @Test
   func residentControlOperationsUseTheActiveLeaseAndGeneration() async throws {
     let handshake = GatewayHandshakeResponse(
       sessionID: GatewaySessionID(rawValue: GatewayTestValues.uuid(187)),
@@ -189,6 +240,16 @@ struct XPCGatewayTransportTests {
     #expect(try await transport.status(lease: lease) == .unavailable)
     #expect(try await transport.accessibilityPermissionStatus(lease: lease) == .notTrusted)
     #expect(try await transport.requestAccessibilityPermission(lease: lease) == .notTrusted)
+    let screenControlStatus = GatewayScreenControlPermissionStatus(
+      accessibilityGranted: false,
+      screenRecordingGranted: true
+    )
+    #expect(
+      try await transport.screenControlPermissionStatus(lease: lease) == screenControlStatus
+    )
+    #expect(
+      try await transport.requestScreenControlPermission(lease: lease) == screenControlStatus
+    )
     #expect(try await transport.pauseHeartbeats(lease: lease) == .unavailable)
     #expect(try await transport.resumeHeartbeats(lease: lease) == .unavailable)
     #expect(try await transport.listHeartbeats(lease: lease) == GatewayHeartbeatScheduleList())
@@ -223,6 +284,8 @@ struct XPCGatewayTransportTests {
           .status,
           .accessibilityPermissionStatus,
           .requestAccessibilityPermission,
+          .screenControlPermissionStatus,
+          .requestScreenControlPermission,
           .pauseHeartbeats,
           .resumeHeartbeats,
           .listHeartbeats,
@@ -510,6 +573,34 @@ struct XPCGatewayTransportTests {
       switch envelope.operation {
       case .handshake:
         return try response(operation: .handshake, value: handshakeResponse)
+      case .availableModels:
+        return try response(operation: .availableModels, value: [ModelDescriptor]())
+      case .toolServerHealth, .refreshToolServer:
+        return try codec.encode(
+          GatewayXPCResponseEnvelope(
+            operation: envelope.operation,
+            failure: GatewayFailure(code: .transportUnavailable, message: "Not scripted.")))
+      case .readArtifact:
+        return try codec.encode(
+          GatewayXPCResponseEnvelope(
+            operation: .readArtifact,
+            failure: GatewayFailure(code: .artifactUnavailable, message: "not scripted")))
+      case .recoverRun:
+        let request = try codec.decode(GatewayRunRecoveryRequest.self, from: envelope.body)
+        return try response(
+          operation: .recoverRun,
+          value: GatewayRunRecoveryResponse(
+            gatewayInstanceID: handshakeResponse.gatewayInstanceID, runID: request.runID,
+            disposition: .unknown))
+      case .readRunHistory:
+        let request = try codec.decode(GatewayRunHistoryRequest.self, from: envelope.body)
+        let record = GatewayTestValues.record(runID: request.runID, sequence: 1, event: .runStarted)
+        return try response(
+          operation: .readRunHistory,
+          value: GatewayRunHistoryPage(
+            gatewayInstanceID: handshakeResponse.gatewayInstanceID, runID: request.runID,
+            firstEventID: request.firstEventID, afterSequence: request.afterSequence,
+            throughSequence: request.throughSequence, records: [record], nextAfterSequence: nil))
       case .startRun:
         if let startFailure {
           return try codec.encode(
@@ -548,11 +639,23 @@ struct XPCGatewayTransportTests {
           operation: envelope.operation,
           value: GatewayAccessibilityPermissionStatus.notTrusted
         )
+      case .screenControlPermissionStatus, .requestScreenControlPermission:
+        return try response(
+          operation: envelope.operation,
+          value: GatewayScreenControlPermissionStatus(
+            accessibilityGranted: false,
+            screenRecordingGranted: true
+          )
+        )
       case .listHeartbeats, .addHeartbeat, .removeHeartbeat, .pauseHeartbeat, .resumeHeartbeat:
         return try response(
           operation: envelope.operation,
           value: GatewayHeartbeatScheduleList()
         )
+      case .listHeartbeatRuns:
+        return try response(
+          operation: .listHeartbeatRuns,
+          value: GatewayHeartbeatRunPage(storeID: GatewayTestValues.uuid(233), runs: []))
       case .disconnect, .cancelSubscription:
         return try codec.encode(
           GatewayXPCResponseEnvelope(operation: envelope.operation, body: nil)
@@ -759,9 +862,10 @@ struct XPCGatewayTransportTests {
       super.init()
     }
 
-    func receiveEvent(_ envelope: Data) {
+    func receiveEvent(_ envelope: Data, withReply reply: @escaping @Sendable (Bool) -> Void) {
       Task {
         await store.append(envelope)
+        reply(true)
       }
     }
 

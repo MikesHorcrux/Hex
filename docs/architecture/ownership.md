@@ -92,8 +92,10 @@ do not merge into `dev`, modify `main`, or mix unrelated repairs into their feat
 
 Source changes, local development signing, deterministic tests, and bundle-layout validation are in
 scope. The developer run script may build Xcode's canonical Debug product with its embedded
-`HexGateway` and LaunchAgent plist, then validate the nested and outer signatures. That build is not
-an installation and does not contact launchd. The following require separate user approval:
+`HexGateway` and LaunchAgent plist, then validate the nested and outer signatures. A build is not
+an installation. The `--verify` mode never contacts launchd; normal run modes refresh an already
+registered, identity-checked Hex Agent and verify that it loaded the canonical executable. They do
+not register a new service or change the user's enabled choice. The following require separate user approval:
 pushing or creating remotes, merging to `main`, accessing live credentials, starting an OAuth login,
 downloading models, installing or registering a LaunchAgent, requesting macOS privacy/TCC
 permissions, changing distribution entitlements, distribution signing or notarizing, or contacting

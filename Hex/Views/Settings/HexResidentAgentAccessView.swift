@@ -6,19 +6,34 @@ struct HexResidentAgentAccessView: View {
   @Bindable var startAtLogin: HexStartAtLoginModel
 
   var body: some View {
-    LabeledContent("Resident Hex Agent", value: startAtLogin.status.label)
+    HStack(spacing: 10) {
+      Label("Always-on Hex Agent", systemImage: "bolt.horizontal.circle")
+        .font(.headline)
+      Spacer()
+      Text(startAtLogin.status.label)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(statusTint)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(statusTint.opacity(0.12), in: Capsule())
+    }
+
     activationContent
 
     if let readinessMessage = startAtLogin.readinessMessage {
-      Text(readinessMessage)
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      HexInlineNoticeView(
+        message: readinessMessage,
+        systemImage: "exclamationmark.triangle.fill",
+        tint: .orange
+      )
     }
 
     if let message = startAtLogin.message {
-      Text(message)
-        .font(.caption)
-        .foregroundStyle(.orange)
+      HexInlineNoticeView(
+        message: message,
+        systemImage: "exclamationmark.triangle.fill",
+        tint: .orange
+      )
     }
   }
 
@@ -27,18 +42,34 @@ struct HexResidentAgentAccessView: View {
     switch startAtLogin.status {
     case .enabled:
       HexAccessibilityPermissionView(model: accessibilityPermission)
+      if accessibilityPermission.state.canRepairByRestartingGateway {
+        Button("Restart Hex Agent") {
+          Task {
+            await startAtLogin.restart()
+            guard startAtLogin.status == .enabled, startAtLogin.message == nil else { return }
+            await accessibilityPermission.refresh()
+          }
+        }
+        .buttonStyle(.hexPrimaryAction)
+        .disabled(!startAtLogin.canRestart)
+        .accessibilityIdentifier("restartResidentAgentButton")
+        if startAtLogin.isUpdating {
+          ProgressView("Restarting resident agent…")
+        }
+      }
 
     case .notRegistered, .notFound:
-      Label("Accessibility has not been checked", systemImage: "questionmark.circle")
+      Label("Start Hex Agent before checking Accessibility", systemImage: "questionmark.circle")
         .foregroundStyle(.secondary)
       Text(
-        "Activate the resident Hex Agent first. The Accessibility request must come from that background process because it—not this window—controls your Mac."
+        "This background agent is what controls your Mac when the Hex window is closed, so the permission must belong to it."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
       Button("Activate Hex Agent") {
         startAtLogin.toggle()
       }
+      .buttonStyle(.hexPrimaryAction)
       .disabled(!startAtLogin.canChange)
       if startAtLogin.isUpdating {
         ProgressView("Activating resident agent…")
@@ -54,6 +85,7 @@ struct HexResidentAgentAccessView: View {
           await startAtLogin.openLoginItemsSettings()
         }
       }
+      .buttonStyle(.hexPrimaryAction)
       refreshButton
 
     case .unknown:
@@ -71,6 +103,18 @@ struct HexResidentAgentAccessView: View {
       Task {
         await startAtLogin.refresh()
       }
+    }
+    .buttonStyle(.hexSecondaryAction)
+  }
+
+  private var statusTint: Color {
+    switch startAtLogin.status {
+    case .enabled:
+      HexBrandPalette.successInk
+    case .requiresApproval:
+      .orange
+    case .notRegistered, .notFound, .unknown, .unavailable:
+      HexBrandPalette.mutedInk
     }
   }
 }

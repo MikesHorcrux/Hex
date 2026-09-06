@@ -305,9 +305,11 @@ extension MCPExecutableSnapshot {
   }
 
   static func directoryEntryNames(_ descriptor: Int32) throws -> [String] {
-    let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
-    guard duplicate >= 0, let directory = fdopendir(duplicate) else {
-      if duplicate >= 0 { Darwin.close(duplicate) }
+    let enumerationDescriptor = ".".withCString { name in
+      openat(descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    }
+    guard enumerationDescriptor >= 0, let directory = fdopendir(enumerationDescriptor) else {
+      if enumerationDescriptor >= 0 { Darwin.close(enumerationDescriptor) }
       throw MCPClientSessionError.connectionClosed
     }
     defer { closedir(directory) }

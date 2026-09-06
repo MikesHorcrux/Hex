@@ -2,6 +2,54 @@ import Foundation
 import HexCore
 
 extension HexGatewayClient {
+  /// Attaches only to a queried, existing invocation after the caller has applied and durably
+  /// saved history through this sequence. No start is performed and a failed attachment leaves
+  /// existing acknowledgement state unchanged. Concurrent streams cannot have their cursor reset.
+  public func eventRecords(
+    for runID: AgentRunID, invocationID: GatewayRunInvocationID, afterSequence: UInt64
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
+    try Task.checkCancellation()
+    try validateEventRoute(runID: runID, invocationID: invocationID)
+    let connection = try requireConnectedGeneration()
+    guard eventCheckpointRestorations[runID] == nil,
+      !eventStreams.values.contains(where: { $0.runID == runID }),
+      !eventStreamReservations.values.contains(where: { $0.runID == runID })
+    else {
+      throw GatewayFailure(
+        code: .capacityExceeded, message: "A run stream is already attached or attaching.")
+    }
+    let token = UUID()
+    eventCheckpointRestorations[runID] = token
+    defer {
+      if eventCheckpointRestorations[runID] == token {
+        eventCheckpointRestorations.removeValue(forKey: runID)
+      }
+    }
+    let recovered = try await recoverRun(GatewayRunRecoveryRequest(runID: runID))
+    try Task.checkCancellation()
+    try requireCurrentConnectedGeneration(connection.generationID)
+    guard case .resident(let snapshot, let floor, let journal) = recovered.disposition,
+      snapshot.invocationID == invocationID
+    else {
+      throw GatewayFailure(
+        code: .staleRunInvocation,
+        message: "The requested live invocation is no longer available. No run was started.")
+    }
+    guard afterSequence >= floor, afterSequence <= snapshot.latestSequence else {
+      throw GatewayFailure(
+        code: .invalidCursor,
+        message: "The saved history cursor is outside the current live replay window.")
+    }
+    let cancellationState = GatewayClientEventStreamCancellationState()
+    return try await withTaskCancellationHandler {
+      try await acquireEventRecords(
+        for: runID, invocationID: invocationID, cancellationState: cancellationState,
+        checkpoint: (afterSequence, journal?.terminalRecord?.sequence == afterSequence, token))
+    } onCancel: {
+      cancellationState.cancel()
+    }
+  }
+
   public func eventRecords(
     for runID: AgentRunID,
     invocationID: GatewayRunInvocationID
@@ -21,17 +69,27 @@ extension HexGatewayClient {
   private func acquireEventRecords(
     for runID: AgentRunID,
     invocationID: GatewayRunInvocationID,
-    cancellationState: GatewayClientEventStreamCancellationState
+    cancellationState: GatewayClientEventStreamCancellationState,
+    checkpoint: (sequence: UInt64, terminal: Bool, token: UUID)? = nil
   ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
     try Task.checkCancellation()
     try validateEventRoute(runID: runID, invocationID: invocationID)
+    guard eventCheckpointRestorations[runID] == checkpoint?.token else {
+      throw GatewayFailure(
+        code: .capacityExceeded, message: "A durable checkpoint attachment is already in progress.")
+    }
     let connection = try requireConnectedGeneration()
-    let cursor = acknowledgedCursor(for: runID, invocationID: invocationID)
+    let cursor =
+      checkpoint.map {
+        GatewayEventCursor(runID: runID, invocationID: invocationID, sequence: $0.sequence)
+      }
+      ?? acknowledgedCursor(for: runID, invocationID: invocationID)
     let acknowledgementKey = GatewayRunAcknowledgementKey(
       runID: runID,
       invocationID: invocationID
     )
-    let hasAcknowledgedTerminal = terminalAcknowledgements.contains(acknowledgementKey)
+    let hasAcknowledgedTerminal =
+      checkpoint?.terminal ?? terminalAcknowledgements.contains(acknowledgementKey)
     let firstSequence = cursor.sequence.addingReportingOverflow(1)
     guard !firstSequence.overflow else {
       throw GatewayFailure(
@@ -71,6 +129,7 @@ extension HexGatewayClient {
       releasePhysicalEventStreamSlot(reservationID)
       try Task.checkCancellation()
       try requireCurrentConnectedGeneration(connection.generationID)
+      invalidateConnectionIfUnavailable(error, generationID: connection.generationID)
       throw error
     }
 
@@ -83,13 +142,19 @@ extension HexGatewayClient {
       throw error
     }
     releasePhysicalEventStreamSlot(reservationID)
+    if let checkpoint {
+      removeAcknowledgements(for: runID)
+      storeAcknowledgement(checkpoint.sequence, for: acknowledgementKey)
+      if checkpoint.terminal { terminalAcknowledgements.insert(acknowledgementKey) }
+    }
     let streamID = UUID()
-    let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream(
-      bufferingPolicy: .bufferingOldest(configuration.subscriberBufferCapacity)
-    )
+    let pair = GatewayBufferedStream<GatewayEventEnvelope>.makeStream(
+      bufferCapacity: configuration.subscriberBufferCapacity,
+      maximumBufferedBytes: configuration.maximumBufferedWireBytesPerSubscriber)
+    let continuation = pair.continuation
     let task = Task { [weak self] in
       guard let self else {
-        pair.continuation.finish()
+        continuation.finish()
         return
       }
       do {
@@ -112,7 +177,7 @@ extension HexGatewayClient {
           let followingSequence = record.sequence.addingReportingOverflow(1)
           expectedSequence = followingSequence.overflow ? nil : followingSequence.partialValue
           guard
-            await self.enqueue(
+            try await self.enqueue(
               envelope,
               streamID: streamID,
               generationID: connection.generationID
@@ -120,7 +185,11 @@ extension HexGatewayClient {
           else {
             return
           }
+          // Applying and acknowledging an event also visits this actor. Do not monopolize it
+          // while draining a provider burst that is already buffered by the transport.
+          await Task.yield()
         }
+        try Task.checkCancellation()
         guard didObserveTerminal else {
           throw self.missingTerminalEventFailure()
         }
@@ -187,6 +256,11 @@ extension HexGatewayClient {
         message: "The gateway returned an event record for a different run."
       )
     }
+    if case .contextCompacted(let compaction) = record.event, compaction.ownerRunID != runID {
+      throw GatewayFailure(
+        code: .wrongRun,
+        message: "The gateway returned context compaction for a different run.")
+    }
     guard record.schemaVersion == 1 else {
       throw GatewayFailure(
         code: .unsupportedEventSchema,
@@ -240,7 +314,7 @@ extension HexGatewayClient {
     _ envelope: GatewayEventEnvelope,
     streamID: UUID,
     generationID: GatewayClientConnectionGenerationID
-  ) -> Bool {
+  ) throws -> Bool {
     guard let state = eventStreams[streamID],
       state.generationID == generationID,
       connectedGenerationID == generationID,
@@ -248,7 +322,8 @@ extension HexGatewayClient {
     else {
       return false
     }
-    switch state.continuation.yield(envelope) {
+    let wireBytes = try GatewayWireCodec(configuration: configuration).encode(envelope).count
+    switch state.continuation.yield(envelope, wireBytes: wireBytes) {
     case .enqueued:
       return true
     case .dropped:
@@ -287,6 +362,7 @@ extension HexGatewayClient {
     }
     eventStreams.removeValue(forKey: streamID)
     if let error {
+      invalidateConnectionIfUnavailable(error, generationID: generationID)
       state.continuation.finish(throwing: error)
     } else {
       state.continuation.finish()
@@ -303,10 +379,10 @@ extension HexGatewayClient {
     eventStreams.removeValue(forKey: streamID)
   }
 
-  func terminateEventStreamsForConnectionChange() {
+  func terminateEventStreamsForConnectionChange(failure: GatewayFailure? = nil) {
     let states = Array(eventStreams.values)
     eventStreams.removeAll()
-    let failure = supersededOperationFailure()
+    let failure = failure ?? supersededOperationFailure()
     for state in states {
       state.continuation.finish(throwing: failure)
       state.task.cancel()
@@ -463,11 +539,11 @@ extension HexGatewayClient {
     resumeEventStreamAcquisitionWaiters()
   }
 
-  func terminateEventStreamAcquisitionWaitersForConnectionChange() {
+  func terminateEventStreamAcquisitionWaitersForConnectionChange(failure: GatewayFailure? = nil) {
     let waiters = eventStreamAcquisitionWaiters
     eventStreamAcquisitionWaiters.removeAll(keepingCapacity: true)
     eventStreamReservations.removeAll(keepingCapacity: true)
-    let failure = supersededOperationFailure()
+    let failure = failure ?? supersededOperationFailure()
     for waiter in waiters {
       waiter.continuation.finish(throwing: failure)
     }

@@ -17,6 +17,8 @@ final class MCPExecutableSnapshot: Sendable {
   static let maximumClosureRunpathBytes = MCPMachOImage.maximumClosureRunpathBytes
 
   let executablePath: String
+  let sourcePath: String?
+  let sourceStatus: stat
   let status: stat
 
   private let namespaceParentDescriptor: Int32
@@ -32,6 +34,8 @@ final class MCPExecutableSnapshot: Sendable {
 
   private init(
     executablePath: String,
+    sourcePath: String?,
+    sourceStatus: stat,
     status: stat,
     namespaceParentDescriptor: Int32,
     namespaceBasename: String,
@@ -45,6 +49,8 @@ final class MCPExecutableSnapshot: Sendable {
     ownedRegularFiles: [MCPExecutableSnapshotOwnedFile]
   ) {
     self.executablePath = executablePath
+    self.sourcePath = sourcePath
+    self.sourceStatus = sourceStatus
     self.status = status
     self.namespaceParentDescriptor = namespaceParentDescriptor
     self.namespaceBasename = namespaceBasename
@@ -59,10 +65,42 @@ final class MCPExecutableSnapshot: Sendable {
   }
 
   deinit {
-    Self.hardenAndCloseOwnedRegularFiles(ownedRegularFiles)
+    if flock(directoryDescriptor, LOCK_EX | LOCK_NB) == 0 {
+      Self.hardenAndCloseOwnedRegularFiles(ownedRegularFiles)
+    } else {
+      Self.closeOwnedRegularFiles(ownedRegularFiles)
+    }
     Darwin.close(directoryDescriptor)
     Darwin.close(parentDescriptor)
     Darwin.close(namespaceParentDescriptor)
+  }
+
+  /// Gives the spawned process an independent shared lease. If Hex exits first, a live MCP child
+  /// continues blocking destructive reclamation until the child and its descendants close it.
+  func makeProcessLeaseDescriptor() -> Int32 {
+    guard isIntact() else { return -1 }
+    let descriptor = ".".withCString { name in
+      openat(
+        directoryDescriptor,
+        name,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+      )
+    }
+    guard descriptor >= 0 else { return -1 }
+    var descriptorStatus = stat()
+    guard
+      fstat(descriptor, &descriptorStatus) == 0,
+      Self.sameSnapshotDirectoryIdentityAndPermissions(
+        directoryStatus,
+        descriptorStatus
+      ),
+      flock(descriptor, LOCK_SH | LOCK_NB) == 0,
+      isIntact()
+    else {
+      Darwin.close(descriptor)
+      return -1
+    }
+    return descriptor
   }
 
   static func create(
@@ -154,6 +192,8 @@ final class MCPExecutableSnapshot: Sendable {
     completed = true
     return MCPExecutableSnapshot(
       executablePath: privateDirectory.path + "/" + executableRelativePath,
+      sourcePath: sourcePath,
+      sourceStatus: initialStatus,
       status: executableStatus,
       namespaceParentDescriptor: privateDirectory.namespaceParentDescriptor,
       namespaceBasename: privateDirectory.namespaceBasename,
@@ -223,6 +263,24 @@ final class MCPExecutableSnapshot: Sendable {
       }
       return Self.sameSnapshotIdentityAndMetadata(entry.status, currentStatus)
     }
+  }
+
+  func sourceIsIntact(at expectedPath: String) -> Bool {
+    guard sourcePath == expectedPath else { return false }
+    let descriptor = Darwin.open(
+      expectedPath,
+      O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+    )
+    guard descriptor >= 0 else { return false }
+    defer { Darwin.close(descriptor) }
+
+    var descriptorStatus = stat()
+    var namedStatus = stat()
+    return fstat(descriptor, &descriptorStatus) == 0
+      && lstat(expectedPath, &namedStatus) == 0
+      && Self.isAcceptableSource(descriptorStatus)
+      && Self.sameSourceIdentityAndMetadata(sourceStatus, descriptorStatus)
+      && Self.sameSourceIdentityAndMetadata(sourceStatus, namedStatus)
   }
 
   static func isAcceptableSource(_ status: stat) -> Bool {

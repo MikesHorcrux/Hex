@@ -8,11 +8,13 @@ nonisolated struct HexInferenceBackendSettingsDependencies: Sendable {
   let settingsStore: (any HexInferenceBackendSettingsStore)?
   let secretStore: (any HexSecretStore)?
   let chatGPTAuthorizationManager: (any ChatGPTCodexOAuthManaging)?
+  let localModelInstaller: (any MLXLocalModelInstalling)?
 
   static let blocked = Self(
     settingsStore: nil,
     secretStore: nil,
-    chatGPTAuthorizationManager: nil
+    chatGPTAuthorizationManager: nil,
+    localModelInstaller: nil
   )
 
   /// Creates the production settings boundary beneath the user's Application Support directory.
@@ -40,7 +42,10 @@ nonisolated struct HexInferenceBackendSettingsDependencies: Sendable {
     return Self(
       settingsStore: settingsStore,
       secretStore: secretStore,
-      chatGPTAuthorizationManager: ChatGPTCodexOAuthSession(secretStore: secretStore)
+      chatGPTAuthorizationManager: ChatGPTCodexOAuthSession(secretStore: secretStore),
+      localModelInstaller: HuggingFaceMLXLocalModelInstaller(
+        rootURL: paths.directoryURL.appendingPathComponent("Models", isDirectory: true)
+      )
     )
   }
 }

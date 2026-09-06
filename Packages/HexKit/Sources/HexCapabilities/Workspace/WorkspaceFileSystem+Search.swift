@@ -7,6 +7,14 @@ extension WorkspaceFileSystem {
     under path: String,
     relativeTo workingDirectory: URL?
   ) throws -> [WorkspaceSearchMatch] {
+    try searchTextReport(query, under: path, relativeTo: workingDirectory).matches
+  }
+
+  public func searchTextReport(
+    _ query: String,
+    under path: String,
+    relativeTo workingDirectory: URL?
+  ) throws -> WorkspaceSearchReport {
     guard
       !query.isEmpty,
       query.utf8.count <= 4_096,
@@ -23,6 +31,7 @@ extension WorkspaceFileSystem {
     var fileCount = 0
     var entryCount = 0
     var totalBytes = 0
+    var skippedOversizedFiles = 0
     var matches: [WorkspaceSearchMatch] = []
     try searchDirectory(
       under: rootComponents,
@@ -31,9 +40,10 @@ extension WorkspaceFileSystem {
       fileCount: &fileCount,
       entryCount: &entryCount,
       totalBytes: &totalBytes,
+      skippedOversizedFiles: &skippedOversizedFiles,
       matches: &matches
     )
-    return matches
+    return WorkspaceSearchReport(matches: matches, skippedOversizedFiles: skippedOversizedFiles)
   }
 
   private func searchDirectory(
@@ -43,6 +53,7 @@ extension WorkspaceFileSystem {
     fileCount: inout Int,
     entryCount: inout Int,
     totalBytes: inout Int,
+    skippedOversizedFiles: inout Int,
     matches: inout [WorkspaceSearchMatch]
   ) throws {
     let remainingEntryCapacity = configuration.maximumSearchEntries - entryCount
@@ -68,6 +79,12 @@ extension WorkspaceFileSystem {
           throw WorkspaceFileSystemError.capacityExceeded
         }
         fileCount += 1
+        // Large assets are outside this text search's per-file scope, not a reason to discard
+        // matches from code files. They still consume the bounded traversal/file budget.
+        if let byteCount = entry.byteCount, byteCount > configuration.maximumReadBytes {
+          skippedOversizedFiles += 1
+          continue
+        }
         let fileComponents = components + [entry.name]
         let (remainingSearchBytes, remainingBytesOverflowed) =
           configuration.maximumSearchBytes.subtractingReportingOverflow(totalBytes)
@@ -85,6 +102,11 @@ extension WorkspaceFileSystem {
             maximumBytes: effectiveReadLimit
           )
         } catch WorkspaceFileSystemError.fileTooLarge {
+          if effectiveReadLimit == configuration.maximumReadBytes {
+            skippedOversizedFiles += 1
+            continue
+          }
+          // Exhausting the total search byte budget is distinct from skipping an oversized file.
           throw WorkspaceFileSystemError.capacityExceeded
         }
         let (candidateBytes, overflowed) = totalBytes.addingReportingOverflow(data.count)
@@ -125,6 +147,7 @@ extension WorkspaceFileSystem {
           fileCount: &fileCount,
           entryCount: &entryCount,
           totalBytes: &totalBytes,
+          skippedOversizedFiles: &skippedOversizedFiles,
           matches: &matches
         )
       case .symbolicLink, .other:

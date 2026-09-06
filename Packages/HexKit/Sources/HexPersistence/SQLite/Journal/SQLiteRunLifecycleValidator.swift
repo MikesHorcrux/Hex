@@ -8,6 +8,10 @@ struct SQLiteRunLifecycleValidator {
   private var decidedAuthorizationRequestIDs: Set<AuthorizationRequestID> = []
   private var authorizationToolCallIDs: [AuthorizationRequestID: ToolCallID] = [:]
   private var correlatedToolStates: [ToolCallID: SQLiteAuthorizationCorrelatedToolState] = [:]
+  private var hasRequestedInference = false
+  private var hasStartedCompaction = false
+  private var hasCompactedContext = false
+  private var nonExecution = SQLiteToolNonExecutionState()
 
   init(runID: AgentRunID) {
     self.runID = runID
@@ -19,8 +23,39 @@ struct SQLiteRunLifecycleValidator {
       .map(\.key)
   }
 
+  var interruptedNonExecutionEvents: [AgentEvent] {
+    nonExecution.recoveryEvents(
+      started: Set(unresolvedToolCallSequences.keys), finished: finishedToolCallIDs)
+  }
+
   mutating func consume(_ event: AgentEvent, sequence: UInt64) throws {
     switch event {
+    case .contextCompactionStarted:
+      guard !hasRequestedInference, !hasStartedCompaction else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "Context compaction must start exactly once before the first inference.")
+      }
+      hasStartedCompaction = true
+    case .contextCompacted(let compaction):
+      guard compaction.ownerRunID == runID else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "A context compaction belongs to a different run.")
+      }
+      guard hasStartedCompaction, !hasCompactedContext, !hasRequestedInference else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "Context compaction must finish once after starting and before the first inference.")
+      }
+      hasCompactedContext = true
+    case .inferenceRequested:
+      guard !hasStartedCompaction || hasCompactedContext else {
+        throw SQLiteAgentEventJournalError.corruptRecord(
+          "Inference cannot start before context compaction has a durable result.")
+      }
+      hasRequestedInference = true
+    case .messageAppended(let message):
+      if hasRequestedInference {
+        try nonExecution.consume(message)
+      }
     case .authorizationRequested(let request):
       try consumeAuthorizationRequest(request)
     case .authorizationDecided(let requestID, let decision):
@@ -35,6 +70,10 @@ struct SQLiteRunLifecycleValidator {
   }
 
   func validateSuccessfulCompletion() throws {
+    guard !hasStartedCompaction || hasCompactedContext else {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "A completed run contains an unfinished context compaction.")
+    }
     guard unresolvedToolCallSequences.isEmpty else {
       throw SQLiteAgentEventJournalError.corruptRecord(
         "A completed run contains an unresolved tool call."
@@ -138,6 +177,17 @@ struct SQLiteRunLifecycleValidator {
       throw SQLiteAgentEventJournalError.corruptRecord(
         "A run contains a repeated tool finish."
       )
+    }
+
+    if result.notExecutedReason != nil {
+      try nonExecution.recordFinish(
+        result, hasDurableStart: unresolvedToolCallSequences[result.toolCallID] != nil,
+        authorizationState: correlatedToolStates[result.toolCallID])
+      if correlatedToolStates[result.toolCallID] != nil {
+        correlatedToolStates[result.toolCallID] = .finished
+      }
+      finishedToolCallIDs.insert(result.toolCallID)
+      return
     }
 
     if let state = correlatedToolStates[result.toolCallID] {

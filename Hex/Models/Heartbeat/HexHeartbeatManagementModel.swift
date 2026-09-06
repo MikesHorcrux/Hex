@@ -13,9 +13,14 @@ final class HexHeartbeatManagementModel {
   private(set) var message: String?
 
   private let service: any HexHeartbeatManaging
+  let history: HexHeartbeatRunHistoryModel
 
-  init(service: any HexHeartbeatManaging = HexUnavailableHeartbeatService()) {
+  init(
+    service: any HexHeartbeatManaging = HexUnavailableHeartbeatService(),
+    client: any HexAgentClient = PreviewHexAgentClient()
+  ) {
     self.service = service
+    history = HexHeartbeatRunHistoryModel(service: service, client: client)
   }
 
   var isBusy: Bool {

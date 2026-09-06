@@ -88,24 +88,31 @@ written into resident settings.
   ancestor and bundle-root descriptor identities remain stable across signature validation, and its
   nested code signature satisfies the exact `(anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "59GAB85EFG") and identifier "com.apple.dt.Xcode"` requirement; all other bundles keep the single-link requirement.
 - Admit snapshots through atomic claims in the fixed, owner-only
-  `/private/tmp/.hex-mcp-snapshots.v1` namespace. The standard policy permits 32 retained slots;
+  `/private/tmp/.hex-mcp-snapshots.v2` namespace. The standard policy permits 32 retained slots;
   each slot admits at most 2,048 entries, 8 MiB of pathname and symbolic-link metadata, and
   128 MiB of copied regular-file bytes before materialization. Therefore production-created
   residue is capped at 65,536 entries and 256 MiB of admitted path metadata, while concurrently
-  retained copied bytes are capped at 4 GiB and are truncated on teardown. The policy is exposed
-  by `MCPServerConfiguration.executableSnapshotPolicy`; its validated absolute slot ceiling is
-  4,096.
-- Keep writable descriptors for every copied regular file. On teardown, truncate and remove all
-  permissions from only those held file identities, then close the descriptors. Do not unlink or
-  remove snapshot pathnames during normal teardown: zero-length files, directories, and symlinks
-  remain as bounded metadata residue. A retained slot is not reused until `/private/tmp` cleanup or
-  explicit maintenance removes it; if all admitted slot names remain, new mutable-executable
-  sessions fail with `MCPExecutableSnapshotAdmissionError.namespaceExhausted`, whose typed usage
-  payload reports the namespace path, retained and maximum slots, and the computed entry, path, and
-  copied-byte ceilings. With the standard policy, the 33rd mutable-executable claim fails if none of
-  the first 32 claims has been reclaimed; post-`mkdir` failures also consume a slot. Stop Hex before
-  explicit maintenance. Removing a slot externally makes that fixed name available to a later
-  atomic claim.
+  retained copied bytes are capped at 4 GiB. The policy is exposed by
+  `MCPServerConfiguration.executableSnapshotPolicy`; its validated absolute slot ceiling is 4,096.
+- Protect every slot with a descriptor-backed `flock` lease and a sibling identity record bound to
+  the slot's device and inode. Hex holds a shared lease for each cached snapshot, and every spawned
+  child inherits an independent shared lease, so a child that outlives the gateway still blocks
+  reclamation. A new claimant takes a nonblocking exclusive lease, revalidates the descriptor,
+  pathname, permissions, and persistent identity, then removes stale contents through descriptor-
+  relative operations without following symbolic links. Reclamation is charged against the
+  caller's entry, pathname, link-target, depth, and copied-byte limits; a stale slot that exceeds a
+  smaller caller policy is skipped so later safe slots remain available.
+- Keep writable descriptors for every copied regular file. On teardown, acquire the exclusive slot
+  lease before truncating and removing permissions from those exact held file identities. If a live
+  child still holds a shared lease, close the gateway's file descriptors without mutating the
+  child's snapshot; a later exclusive claimant performs bounded cleanup after the last child exits.
+  Slot directories are intentionally reused rather than growing the namespace. New mutable-
+  executable sessions fail with `MCPExecutableSnapshotAdmissionError.namespaceExhausted` only when
+  every policy slot is leased or otherwise cannot be safely reclaimed; its typed usage payload
+  reports the namespace path, retained and maximum slots, and the computed entry, path, and copied-
+  byte ceilings. Persistent identities make an externally replaced slot fail closed, while an
+  empty post-`mkdir` interruption can self-heal on a later claim. Stop Hex before any explicit
+  maintenance.
 - Give the child an explicit allowlisted environment; never inherit credentials implicitly.
 - Put the child in its own process group and terminate/reap the group on timeout, cancellation, or
   protocol failure.
@@ -116,8 +123,11 @@ written into resident settings.
   deadline. Count, byte, and deadline exhaustion fail closed.
 - Reject duplicate JSON object members, including escaped spellings of the same key.
 - Treat server annotations, descriptions, schemas, content, stderr, and errors as untrusted input.
-- Namespace tools as `mcp.<server>.<tool>` and derive authorization from Hex-owned policy metadata.
-  The MCP server never grants authority to itself.
+- Expose tools with provider-portable aliases shaped as
+  `mcp_<server-id-byte-count>_<server-id>_<remote-name>`. Unsupported bytes are normalized and a
+  deterministic digest is appended whenever normalization or the 64-byte provider limit applies;
+  the catalog retains the exact alias-to-server-and-remote-name route. Derive authorization from
+  that Hex-owned policy metadata. The MCP server never grants authority to itself.
 - Keep the low-level `MCPToolExecutor.availableTools()` side-effect free by publishing an atomic
   cached catalog only after its explicit `start()` boundary succeeds. The resident-only managed
   wrapper owns the deliberate lazy start/retry policy at runtime discovery boundaries.

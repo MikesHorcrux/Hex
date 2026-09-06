@@ -9,6 +9,7 @@ struct HexApp: App {
   @State private var residentGateway: HexResidentGatewayModel
   @State private var startAtLogin: HexStartAtLoginModel
   @State private var residentSetup: HexResidentSetupModel
+  @State private var toolConnections: HexToolConnectionsModel
   @State private var heartbeatManagement: HexHeartbeatManagementModel
   @State private var personalitySettings: HexPersonalitySettingsModel
   @State private var inferenceBackendSettings: HexInferenceBackendSettingsModel
@@ -18,6 +19,18 @@ struct HexApp: App {
   private let suppressOnboarding: Bool
 
   init() {
+    // Hosted unit tests must never resolve the user's settings, credentials or resident service.
+    // Live integration tests explicitly construct their own authorized client instead.
+    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+      || Self.isVerificationOnlyLaunch(arguments: CommandLine.arguments)
+    {
+      self.init(
+        personalityService: HexUnavailablePersonalityService(),
+        isVerificationOnlyLaunch: true,
+        suppressOnboarding: true
+      )
+      return
+    }
     let configuration = HexDeveloperConfiguration(
       environment: ProcessInfo.processInfo.environment
     )
@@ -31,9 +44,13 @@ struct HexApp: App {
     let setupDependencies = HexResidentSetupDependencies.live(for: configuration.gatewayRoute)
     let inferenceBackendDependencies =
       HexInferenceBackendSettingsDependencies.live(for: configuration.gatewayRoute)
+    let composerPreferenceStore = UserDefaultsAgentComposerPreferenceStore()
     self.init(
       client: client,
       modelID: initialModelID,
+      conversationStore: AgentConversationStore.live(),
+      requiresConversationPersistence: true,
+      composerPreferenceStore: composerPreferenceStore,
       route: configuration.gatewayRoute,
       residentGatewayController: client,
       setupDependencies: setupDependencies,
@@ -49,6 +66,9 @@ struct HexApp: App {
   init(
     client: any HexAgentClient = PreviewHexAgentClient(),
     modelID: String = "preview",
+    conversationStore: AgentConversationStore? = nil,
+    requiresConversationPersistence: Bool = false,
+    composerPreferenceStore: (any AgentComposerPreferenceStoring)? = nil,
     route: HexGatewayRoute = .residentXPC(),
     residentGatewayController: any HexResidentGatewayControlling =
       HexUnavailableResidentGatewayController(),
@@ -58,6 +78,7 @@ struct HexApp: App {
     personalityMemoryScope: PersonalMemoryScope = .hex,
     inferenceBackendDependencies: HexInferenceBackendSettingsDependencies = .blocked,
     accessibilityPermissionService: (any HexAccessibilityPermissionServicing)? = nil,
+    screenControlPermissionService: (any HexScreenControlPermissionServicing)? = nil,
     lifecycleController: any HexGatewayLifecycleControlling =
       HexSMAppServiceLifecycleController(),
     isVerificationOnlyLaunch: Bool = false,
@@ -66,26 +87,30 @@ struct HexApp: App {
     self.route = route
     self.isVerificationOnlyLaunch = isVerificationOnlyLaunch
     self.suppressOnboarding = suppressOnboarding
-    _workspace = State(initialValue: AgentWorkspaceModel(client: client, modelID: modelID))
+    let workspace = AgentWorkspaceModel(
+      client: client,
+      modelID: modelID,
+      conversationStore: conversationStore,
+      requiresConversationPersistence: requiresConversationPersistence,
+      composerPreferenceStore: composerPreferenceStore
+    )
+    _workspace = State(initialValue: workspace)
+    _toolConnections = State(
+      initialValue: HexToolConnectionsModel(
+        service: route.isResident ? client as? any HexToolServerHealthServicing : nil))
     _residentGateway = State(
       initialValue: HexResidentGatewayModel(controller: residentGatewayController)
     )
-    _startAtLogin = State(
-      initialValue: HexStartAtLoginModel(
-        controller: lifecycleController,
-        readinessChecker: setupDependencies.readinessChecker
-      )
+    let startAtLogin = HexStartAtLoginModel(
+      controller: lifecycleController,
+      readinessChecker: setupDependencies.readinessChecker,
+      connectionResetter: client as? any HexResidentGatewayConnectionResetting,
+      onBecameReady: { [weak workspace] in
+        guard !isVerificationOnlyLaunch, route.isResident else { return }
+        await workspace?.residentGatewayBecameReady()
+      }
     )
-    _residentSetup = State(
-      initialValue: HexResidentSetupModel(
-        initialModelID: modelID,
-        settingsStore: setupDependencies.settingsStore,
-        secretStore: setupDependencies.secretStore,
-        managedToolLayout: setupDependencies.managedToolLayout,
-        managedToolInstaller: setupDependencies.managedToolInstaller
-      )
-    )
-
+    _startAtLogin = State(initialValue: startAtLogin)
     let resolvedHeartbeatService: any HexHeartbeatManaging
     if let heartbeatService {
       resolvedHeartbeatService = heartbeatService
@@ -95,7 +120,7 @@ struct HexApp: App {
       resolvedHeartbeatService = HexUnavailableHeartbeatService()
     }
     _heartbeatManagement = State(
-      initialValue: HexHeartbeatManagementModel(service: resolvedHeartbeatService)
+      initialValue: HexHeartbeatManagementModel(service: resolvedHeartbeatService, client: client)
     )
 
     let resolvedPersonalityService = personalityService ?? Self.livePersonalityService()
@@ -111,7 +136,9 @@ struct HexApp: App {
         settingsStore: inferenceBackendDependencies.settingsStore,
         secretStore: inferenceBackendDependencies.secretStore,
         chatGPTAuthorizationManager:
-          inferenceBackendDependencies.chatGPTAuthorizationManager
+          inferenceBackendDependencies.chatGPTAuthorizationManager,
+        localModelInstaller: inferenceBackendDependencies.localModelInstaller,
+        configurationReloader: startAtLogin
       )
     )
 
@@ -130,10 +157,32 @@ struct HexApp: App {
         service: resolvedAccessibilityPermissionService
       )
     )
+
+    let resolvedScreenControlPermissionService: any HexScreenControlPermissionServicing
+    if let screenControlPermissionService {
+      resolvedScreenControlPermissionService = screenControlPermissionService
+    } else if route.isResident,
+      let livePermissionService = client as? any HexScreenControlPermissionServicing
+    {
+      resolvedScreenControlPermissionService = livePermissionService
+    } else {
+      resolvedScreenControlPermissionService = HexUnavailableScreenControlPermissionService()
+    }
+    _residentSetup = State(
+      initialValue: HexResidentSetupModel(
+        initialModelID: modelID,
+        settingsStore: setupDependencies.settingsStore,
+        secretStore: setupDependencies.secretStore,
+        managedToolLayout: setupDependencies.managedToolLayout,
+        managedToolInstaller: setupDependencies.managedToolInstaller,
+        screenControlPermissionService: resolvedScreenControlPermissionService,
+        configurationReloader: startAtLogin
+      )
+    )
   }
 
   var body: some Scene {
-    WindowGroup(id: "main") {
+    Window("Hex", id: "main") {
       HexRootView(
         workspace: workspace,
         residentSetup: residentSetup,
@@ -145,12 +194,13 @@ struct HexApp: App {
         suppressAutomaticConnection: isVerificationOnlyLaunch
       )
     }
-    .defaultSize(width: 980, height: 680)
+    .defaultSize(width: 1120, height: 760)
 
     Settings {
       HexSettingsView(
         workspace: workspace,
         residentSetup: residentSetup,
+        toolConnections: toolConnections,
         inference: inferenceBackendSettings,
         heartbeat: heartbeatManagement,
         personality: personalitySettings,

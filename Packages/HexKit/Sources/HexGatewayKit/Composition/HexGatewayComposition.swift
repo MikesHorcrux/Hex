@@ -86,11 +86,21 @@ public struct HexGatewayComposition: Sendable {
       personalityContextService: configuration.personalityContextService,
       personalityMemoryQuery: configuration.personalityMemoryQuery,
       enforcedModelID: configuration.enforcedModelID,
-      enforcedWorkingDirectory: configuration.enforcedWorkingDirectory
+      enforcedWorkingDirectory: configuration.enforcedWorkingDirectory,
+      selfKnowledge: configuration.selfKnowledge
+        ?? HexSelfKnowledge(
+          journalFileURL: configuration.journalConfiguration?.databaseURL
+        ),
+      artifactWriter: configuration.artifactWriter
     )
+    let historyReader = (journal as? SQLiteAgentEventJournal).map {
+      HexGatewayJournalHistoryReader(journal: $0)
+    }
     let service = HexGatewayService(
       driver: runDriver,
-      configuration: configuration.gatewayConfiguration
+      configuration: configuration.gatewayConfiguration,
+      historyReader: historyReader,
+      artifactReader: configuration.artifactReader
     )
     let transport = InProcessHexGatewayTransport(
       service: service,
@@ -121,8 +131,10 @@ public struct HexGatewayComposition: Sendable {
     )
   }
 
-  /// Closes the durable journal. Callers should stop or cancel active runs before closing it.
-  public func close() async throws {
+  /// Seals admissions and awaits all service-admitted drivers before closing owned storage. A drain
+  /// timeout leaves the journal open; a visible terminal event is not proof that its driver returned.
+  public func close(timeout: Duration = .seconds(10)) async throws {
+    try await service.shutdown(timeout: timeout)
     try await closeAction()
   }
 }

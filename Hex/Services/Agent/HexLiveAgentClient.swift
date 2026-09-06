@@ -10,7 +10,8 @@ import HexProviders
 /// explicit developer fallback, so a missing or unavailable resident service never becomes a
 /// silently privileged app-local agent.
 actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHeartbeatManaging,
-  HexAccessibilityPermissionServicing
+  HexAccessibilityPermissionServicing, HexScreenControlPermissionServicing,
+  HexResidentGatewayConnectionResetting, HexToolServerHealthServicing
 {
   enum ClientError: Error, Equatable, LocalizedError, Sendable {
     case applicationSupportUnavailable
@@ -78,6 +79,47 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     try await ensureConnected()
   }
 
+  func availableModels() async throws -> [ModelDescriptor] {
+    _ = try await ensureConnected()
+    return try await gatewayAdapter().availableModels()
+  }
+
+  func toolServerHealth() async throws -> GatewayToolServerHealth {
+    let adapter = try existingToolHealthAdapter()
+    let attemptID = connectionResultAttemptID
+    let health = try await adapter.toolServerHealth()
+    try requireToolHealthConnection(attemptID: attemptID)
+    return health
+  }
+
+  func refreshToolServer(_ request: GatewayToolServerRequest) async throws
+    -> GatewayToolServerStatus
+  {
+    let adapter = try existingToolHealthAdapter()
+    let attemptID = connectionResultAttemptID
+    let status = try await adapter.refreshToolServer(request)
+    try requireToolHealthConnection(attemptID: attemptID)
+    return status
+  }
+
+  private func existingToolHealthAdapter() throws -> HexGatewayClientAdapter {
+    guard route.kind == .residentXPC else {
+      throw GatewayFailure(
+        code: .transportUnavailable, message: "Tool connections require the resident Hex Agent.")
+    }
+    guard connectionResult != nil, let adapter else {
+      throw GatewayFailure(code: .notConnected, message: "Connect to Hex Agent to check its tools.")
+    }
+    return adapter
+  }
+
+  private func requireToolHealthConnection(attemptID: UUID?) throws {
+    try Task.checkCancellation()
+    guard connectionResult != nil, connectionResultAttemptID == attemptID else {
+      throw GatewayFailure(code: .staleSession, message: "The Hex Agent connection changed.")
+    }
+  }
+
   func disconnect() async throws {
     let pendingConnectionTask = connectionAttempt?.task
     connectionAttempt = nil
@@ -91,23 +133,31 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     try await adapter.disconnect()
   }
 
+  /// Drops the cached handshake before launchd replaces the resident process. `disconnect()`
+  /// clears local connection state before contacting the old transport, so a teardown failure
+  /// cannot leave the next operation pinned to the process being replaced.
+  func resetResidentGatewayConnection() async {
+    do {
+      try await disconnect()
+    } catch {
+      // Local state was already invalidated. The lifecycle controller can safely replace the old
+      // process, and the next gateway operation will create a fresh handshake.
+    }
+  }
+
   func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {
     do {
       let adapter = try await gatewayAdapter()
       if route.kind == .developerInProcess {
-        let resolution = try await inProcessInferenceConfiguration()
-        let modelID: String
-        switch resolution {
-        case .openAI(let settings, _):
-          modelID = settings.modelID
-        }
         let scopedRequest = GatewayStartRunRequest(
           runID: request.runID,
-          modelID: ModelID(rawValue: modelID),
+          modelID: request.modelID,
           initialMessages: request.initialMessages,
           options: request.options,
           toolChoice: request.toolChoice,
-          workingDirectory: try inProcessWorkspaceRoot()
+          workingDirectory: try inProcessWorkspaceRoot(),
+          availableArtifacts: request.availableArtifacts,
+          authorizationMode: request.authorizationMode
         )
         return try await adapter.startRun(scopedRequest)
       }
@@ -133,6 +183,47 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
   func cancelRun(_ request: GatewayCancelRunRequest) async throws -> GatewayCancelRunResponse {
     do {
       return try await gatewayAdapter().cancelRun(request)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func recoverRun(_ request: GatewayRunRecoveryRequest) async throws -> GatewayRunRecoveryResponse {
+    do {
+      return try await connectedGatewayAdapter().recoverRun(request)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func readRunHistory(_ request: GatewayRunHistoryRequest) async throws -> GatewayRunHistoryPage {
+    do {
+      return try await connectedGatewayAdapter().readRunHistory(request)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func readArtifact(_ request: GatewayArtifactReadRequest) async throws
+    -> GatewayArtifactReadResponse
+  {
+    do {
+      return try await connectedGatewayAdapter().readArtifact(request)
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func eventRecords(
+    for runID: AgentRunID, invocationID: GatewayRunInvocationID, afterSequence: UInt64
+  ) async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error> {
+    do {
+      return try await connectedGatewayAdapter().eventRecords(
+        for: runID, invocationID: invocationID, afterSequence: afterSequence)
     } catch {
       clearConnectionIfUnavailable(error)
       throw error
@@ -179,6 +270,7 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
       return appStatus(from: status)
     } catch let failure as GatewayFailure
       where failure.code == .notConnected
+      || failure.code == .staleSession
       || failure.code == .transportUnavailable
       || failure.code == .disconnected
     {
@@ -291,6 +383,26 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     }
   }
 
+  func screenControlPermissionStatus() async throws -> GatewayScreenControlPermissionStatus {
+    try requireResidentPermissionRoute(capability: "Screen control")
+    do {
+      return try await connectedGatewayAdapter().screenControlPermissionStatus()
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func requestScreenControlPermission() async throws -> GatewayScreenControlPermissionStatus {
+    try requireResidentPermissionRoute(capability: "Screen control")
+    do {
+      return try await connectedGatewayAdapter().requestScreenControlPermission()
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
   private func connectedGatewayAdapter() async throws -> HexGatewayClientAdapter {
     let adapter = try await gatewayAdapter()
     guard route.kind == .residentXPC else {
@@ -300,11 +412,11 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     return adapter
   }
 
-  private func requireResidentPermissionRoute() throws {
+  private func requireResidentPermissionRoute(capability: String = "Accessibility") throws {
     guard route.kind == .residentXPC else {
       throw GatewayFailure(
         code: .transportUnavailable,
-        message: "Accessibility must be checked by the resident Hex Agent."
+        message: "\(capability) must be checked by the resident Hex Agent."
       )
     }
   }
@@ -317,8 +429,26 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
   private func ensureConnected(
     using adapter: HexGatewayClientAdapter
   ) async throws -> GatewayConnectionResult {
-    if let connectionResult {
-      return connectionResult
+    try Task.checkCancellation()
+    while let connectionResult {
+      let cachedAttemptID = connectionResultAttemptID
+      let isConnected = await adapter.client.isConnected
+      try Task.checkCancellation()
+      guard connectionResultAttemptID == cachedAttemptID else {
+        if self.connectionResult != nil {
+          continue
+        }
+        if connectionAttempt != nil {
+          break
+        }
+        throw CancellationError()
+      }
+      if isConnected {
+        return connectionResult
+      }
+      self.connectionResult = nil
+      connectionResultAttemptID = nil
+      break
     }
 
     let attempt: (id: UUID, task: Task<GatewayConnectionResult, any Error>)
@@ -364,7 +494,8 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
       return
     }
     switch failure.code {
-    case .notConnected, .transportUnavailable, .disconnected:
+    case .notConnected, .staleSession, .transportUnavailable, .disconnected,
+      .producerEndedWithoutTerminalEvent:
       connectionResult = nil
       connectionResultAttemptID = nil
     default:
@@ -446,7 +577,9 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     )
     let provider = OpenAIResponsesProvider(
       configuration: providerConfiguration,
-      authorizationProvider: openAIAuthorizationProvider
+      authorizationProvider: openAIAuthorizationProvider,
+      modelCatalog: service == .chatGPTCodexSubscription
+        ? OpenAIChatGPTModelCatalog(authorizationProvider: openAIAuthorizationProvider) : nil
     )
     let journalURL = try journalDatabaseURL()
     let compositionConfiguration = HexGatewayCompositionConfiguration(
@@ -465,7 +598,8 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     )
     let adapter = HexGatewayClientAdapter(
       client: gatewayClient,
-      authorizationTransport: authorizationTransport
+      authorizationTransport: authorizationTransport,
+      modelCatalog: { try await provider.availableModels() }
     )
     self.composition = composition
     self.adapter = adapter

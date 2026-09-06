@@ -21,7 +21,9 @@ extension SQLiteAgentEventJournal {
         connection: connection,
         maximumTextBytes: configuration.maximumTextBytes
       )
-      try validateWholeJournalIntegrity(connection: connection)
+      // Admission and this actor's writes establish whole-journal integrity. A different
+      // connection invalidates that baseline; ordinary reads only validate their target run.
+      try validateIntegrityDataVersion(connection: connection)
       guard let metadata = try runIntegrityMetadata(for: runID, connection: connection) else {
         return []
       }
@@ -326,6 +328,10 @@ extension SQLiteAgentEventJournal {
       from: payload,
       schemaVersion: recordSchemaVersion
     )
+    if case .contextCompacted(let compaction) = event, compaction.ownerRunID != storedRunID {
+      throw SQLiteAgentEventJournalError.corruptRecord(
+        "The context compaction owner does not match its durable run.")
+    }
     guard try AgentEventCodec.encode(event: event) == payload else {
       throw SQLiteAgentEventJournalError.corruptRecord(
         "The event payload is not canonical schema-version-one JSON."

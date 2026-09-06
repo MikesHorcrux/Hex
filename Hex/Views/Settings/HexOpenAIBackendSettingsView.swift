@@ -3,16 +3,10 @@ import SwiftUI
 
 struct HexOpenAIBackendSettingsView: View {
   @Bindable var model: HexInferenceBackendSettingsModel
+  let showsAdvancedConfiguration: Bool
 
   var body: some View {
     Section {
-      Picker("Authentication", selection: $model.openAIAuthenticationMethod) {
-        ForEach(HexOpenAIAuthenticationMethod.allCases) { method in
-          Text(method.displayName).tag(method)
-        }
-      }
-      .accessibilityIdentifier("inferenceOpenAIAuthenticationPicker")
-
       switch model.openAIAuthenticationMethod {
       case .chatGPT:
         HexChatGPTAuthenticationSettingsView(model: model)
@@ -30,14 +24,26 @@ struct HexOpenAIBackendSettingsView: View {
         .foregroundStyle(.secondary)
       }
 
-      TextField("Model identifier", text: $model.openAIModelID)
-        .accessibilityIdentifier("inferenceOpenAIModelField")
+      if showsAdvancedConfiguration {
+        DisclosureGroup("Advanced") {
+          TextField("Model identifier", text: $model.openAIModelID)
+            .accessibilityIdentifier("inferenceOpenAIModelField")
+        }
+      }
     } header: {
-      Text("OpenAI inference")
+      Text(model.openAIAuthenticationMethod == .chatGPT ? "ChatGPT" : "OpenAI API")
     } footer: {
-      Text(
-        "Hex owns the agent loop, tools, approvals, and memory. Authentication only selects whether inference uses your ChatGPT/Codex subscription or OpenAI API billing. The subscription route is an experimental compatibility integration, not a published third-party OpenAI API."
-      )
+      Text(footerText)
+    }
+    .disabled(model.isSaving || model.isLoading)
+  }
+
+  private var footerText: String {
+    switch model.openAIAuthenticationMethod {
+    case .chatGPT:
+      "Sign in once, then Hex can use your ChatGPT subscription for answers."
+    case .apiKey:
+      "Your key stays in Keychain. OpenAI API usage is billed separately from ChatGPT."
     }
   }
 }

@@ -10,12 +10,23 @@ import Observation
 @MainActor
 @Observable
 final class HexInferenceBackendSettingsModel {
+  static let recommendedLocalModelID = "mlx-community/Qwen3-4B-4bit"
+  static let recommendedLocalModelName = "Qwen 3 4B"
+
   var selectedBackend: HexInferenceBackendKind
   var openAIAuthenticationMethod: HexOpenAIAuthenticationMethod
   var openAIModelID: String
   var openAIAPIKey = ""
 
-  var mlxModelID: String
+  var mlxModelID: String {
+    didSet {
+      if oldValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        != mlxModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+      {
+        mlxDirectory = nil
+      }
+    }
+  }
   var mlxDisplayName: String
   var mlxDirectory: URL?
   var mlxContextWindow = ""
@@ -30,21 +41,31 @@ final class HexInferenceBackendSettingsModel {
   private(set) var chatGPTLoginChallenge: ChatGPTCodexDeviceAuthorizationChallenge?
   private(set) var isChatGPTLoginInProgress = false
   private(set) var isChatGPTLogoutInProgress = false
+  private(set) var isInstallingLocalModel = false
+  private(set) var localModelDownloadProgress: Double?
   private(set) var statusMessage: String?
   private(set) var errorMessage: String?
   private(set) var saveGeneration = 0
+  private(set) var persistedSettings: HexInferenceBackendSettings?
 
   private let settingsStore: (any HexInferenceBackendSettingsStore)?
   private let secretStore: (any HexSecretStore)?
   private let chatGPTAuthorizationManager: (any ChatGPTCodexOAuthManaging)?
+  private let localModelInstaller: (any MLXLocalModelInstalling)?
+  private let configurationReloader: (any HexResidentConfigurationReloading)?
   private var hasLoaded = false
+  private var hasAttemptedLoad = false
   private var accountActionGeneration = 0
   @ObservationIgnored private var accountActionTask: Task<Void, Never>?
+  @ObservationIgnored private var saveTask: Task<Bool, Never>?
+  private var saveOperationID: UUID?
 
   init(
     settingsStore: (any HexInferenceBackendSettingsStore)? = nil,
     secretStore: (any HexSecretStore)? = nil,
-    chatGPTAuthorizationManager: (any ChatGPTCodexOAuthManaging)? = nil
+    chatGPTAuthorizationManager: (any ChatGPTCodexOAuthManaging)? = nil,
+    localModelInstaller: (any MLXLocalModelInstalling)? = nil,
+    configurationReloader: (any HexResidentConfigurationReloading)? = nil
   ) {
     selectedBackend = .openAIResponses
     openAIAuthenticationMethod = .chatGPT
@@ -54,10 +75,50 @@ final class HexInferenceBackendSettingsModel {
     self.settingsStore = settingsStore
     self.secretStore = secretStore
     self.chatGPTAuthorizationManager = chatGPTAuthorizationManager
+    self.localModelInstaller = localModelInstaller
+    self.configurationReloader = configurationReloader
   }
 
   var canSave: Bool {
-    hasLoaded && !isLoading && !isSaving && settingsStore != nil && secretStore != nil
+    hasLoaded && !isLoading && !isSaving && !isInstallingLocalModel
+      && settingsStore != nil && secretStore != nil
+      && (selectedBackend != .mlxLocal || mlxDirectory != nil || localModelInstaller != nil)
+  }
+
+  var setupChoice: HexInferenceSetupChoice {
+    get {
+      switch selectedBackend {
+      case .mlxLocal:
+        .onThisMac
+      case .openAIResponses:
+        openAIAuthenticationMethod == .chatGPT ? .chatGPT : .openAIAPI
+      }
+    }
+    set {
+      switch newValue {
+      case .chatGPT:
+        selectedBackend = .openAIResponses
+        openAIAuthenticationMethod = .chatGPT
+      case .openAIAPI:
+        selectedBackend = .openAIResponses
+        openAIAuthenticationMethod = .apiKey
+      case .onThisMac:
+        selectedBackend = .mlxLocal
+        if mlxModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          mlxModelID = Self.recommendedLocalModelID
+        }
+        if mlxDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          mlxDisplayName = Self.recommendedLocalModelName
+        }
+        mlxSupportsToolCalling = true
+      }
+      errorMessage = nil
+      updateCredentialStatusMessage()
+    }
+  }
+
+  var needsLocalModelDownload: Bool {
+    selectedBackend == .mlxLocal && mlxDirectory == nil
   }
 
   var effectiveModelID: String {
@@ -69,13 +130,24 @@ final class HexInferenceBackendSettingsModel {
     }
   }
 
+  /// The immutable persisted choice, never an in-flight or unsaved form edit.
+  var savedModelID: String? {
+    guard let persistedSettings else { return nil }
+    switch persistedSettings.selectedBackend {
+    case .openAIResponses: return persistedSettings.openAI.modelID
+    case .mlxLocal: return persistedSettings.mlx.modelID
+    }
+  }
+
+  var needsLoadRetry: Bool { hasAttemptedLoad && !hasLoaded && !isLoading }
+
   var mlxDirectoryDisplayName: String {
     mlxDirectory?.path ?? "Choose an existing model folder"
   }
 
   func load() async {
     guard !hasLoaded, !isLoading else { return }
-    hasLoaded = true
+    hasAttemptedLoad = true
     isLoading = true
     defer { isLoading = false }
 
@@ -88,6 +160,7 @@ final class HexInferenceBackendSettingsModel {
     do {
       if let settings = try await settingsStore.load() {
         apply(settings)
+        persistedSettings = settings
       }
       hasStoredOpenAIAPIKey = try await secretStore.exists(.openAIAPIKey)
       if let chatGPTAuthorizationManager {
@@ -96,6 +169,7 @@ final class HexInferenceBackendSettingsModel {
         chatGPTAccountStatus = .unavailable
       }
       errorMessage = nil
+      hasLoaded = true
       updateCredentialStatusMessage()
     } catch {
       errorMessage =
@@ -107,13 +181,13 @@ final class HexInferenceBackendSettingsModel {
 
   func chooseMLXDirectory(_ url: URL) {
     guard Self.isExistingDirectory(url) else {
-      errorMessage = "Choose an existing local folder for the MLX model."
+      errorMessage = "Choose an existing local model folder."
       statusMessage = nil
       return
     }
     mlxDirectory = url.standardizedFileURL
     errorMessage = nil
-    statusMessage = "The MLX directory will be validated when you save. Hex will not download it."
+    statusMessage = "The local model folder will be checked when you save."
   }
 
   func errorMessageForFileSelectionFailure() {
@@ -254,22 +328,37 @@ final class HexInferenceBackendSettingsModel {
   }
 
   func save() {
-    guard !isSaving else { return }
+    guard !isSaving, !isInstallingLocalModel else { return }
+    saveTask = nil
     errorMessage = nil
     statusMessage = nil
-    guard let settingsStore, let secretStore else {
+    guard hasLoaded else {
+      errorMessage = "Load the saved inference settings before making changes. Try loading again."
+      return
+    }
+    guard settingsStore != nil, secretStore != nil else {
       errorMessage = "Inference backend settings are unavailable in this build."
       return
     }
 
+    let needsDownload = needsLocalModelDownload
+    if needsDownload {
+      guard localModelInstaller != nil else {
+        errorMessage = "Local model download is unavailable in this build."
+        return
+      }
+      if mlxModelID.isEmpty { mlxModelID = Self.recommendedLocalModelID }
+      if mlxDisplayName.isEmpty { mlxDisplayName = Self.recommendedLocalModelName }
+    }
+
     let settings: HexInferenceBackendSettings
     do {
-      settings = try makeSettings()
+      settings = try makeSettings(requiresLocalDirectory: !needsDownload)
     } catch let error as HexInferenceBackendSettingsError {
       errorMessage = Self.message(for: error)
       return
     } catch is MLXLocalInferenceProviderError {
-      errorMessage = "The MLX model directory is not a safe, existing local model directory."
+      errorMessage = "The local model folder could not be verified."
       return
     } catch {
       errorMessage = "Check the backend values before saving."
@@ -293,31 +382,130 @@ final class HexInferenceBackendSettingsModel {
     }
 
     isSaving = true
-    Task { [weak self] in
-      guard let self else { return }
-      do {
-        try await settingsStore.save(settings)
-        if settings.selectedBackend == .openAIResponses,
-          settings.openAI.authenticationMethod == .apiKey,
-          !normalizedAPIKey.isEmpty
-        {
-          try await secretStore.save(normalizedAPIKey, for: .openAIAPIKey)
+    let operationID = UUID()
+    saveOperationID = operationID
+    saveTask = Task { [weak self] in
+      guard let self else { return false }
+      return await persist(
+        settings, apiKey: normalizedAPIKey, needsDownload: needsDownload, operationID: operationID)
+    }
+  }
+
+  func saveAndWait() async -> Bool {
+    if !isSaving { save() }
+    guard let saveTask else { return false }
+    return await withTaskCancellationHandler {
+      await saveTask.value
+    } onCancel: {
+      saveTask.cancel()
+    }
+  }
+
+  func cancelSave() { saveTask?.cancel() }
+
+  private func persist(
+    _ snapshot: HexInferenceBackendSettings, apiKey: String,
+    needsDownload: Bool, operationID: UUID
+  ) async -> Bool {
+    defer {
+      isSaving = false
+      isInstallingLocalModel = false
+      saveOperationID = nil
+    }
+    guard let settingsStore, let secretStore else { return false }
+    var didPersist = false
+    var didPersistCredential = false
+    do {
+      try Task.checkCancellation()
+      var settings = snapshot
+      if needsDownload, let localModelInstaller {
+        isInstallingLocalModel = true
+        localModelDownloadProgress = 0
+        statusMessage = "Downloading the local model…"
+        let directory = try await localModelInstaller.install(modelID: snapshot.mlx.modelID) {
+          [weak self] fraction in
+          Task { @MainActor in
+            guard let self, self.saveOperationID == operationID, fraction.isFinite else { return }
+            self.localModelDownloadProgress = min(1, max(0, fraction))
+          }
         }
-        hasStoredOpenAIAPIKey = try await secretStore.exists(.openAIAPIKey)
+        try Task.checkCancellation()
+        settings = try settingsByValidatingLocalModel(snapshot, directory: directory)
+        if mlxModelID == snapshot.mlx.modelID { mlxDirectory = directory }
+        localModelDownloadProgress = 1
+        isInstallingLocalModel = false
+      }
+      try Task.checkCancellation()
+      if settings.selectedBackend == .openAIResponses,
+        settings.openAI.authenticationMethod == .apiKey, !apiKey.isEmpty
+      {
+        try await secretStore.save(apiKey, for: .openAIAPIKey)
+        didPersistCredential = true
+        hasStoredOpenAIAPIKey = true
+      }
+      try Task.checkCancellation()
+      try await settingsStore.save(settings)
+      persistedSettings = settings
+      didPersist = true
+      try Task.checkCancellation()
+      hasStoredOpenAIAPIKey = try await secretStore.exists(.openAIAPIKey)
+      try Task.checkCancellation()
+      if openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines) == apiKey {
         openAIAPIKey = ""
-        saveGeneration += 1
-        statusMessage = "Inference backend settings saved."
-        errorMessage = nil
-        isSaving = false
-      } catch is CancellationError {
-        isSaving = false
-      } catch {
+      }
+      try await configurationReloader?.reloadAfterConfigurationChange()
+      try Task.checkCancellation()
+      saveGeneration += 1
+      statusMessage = "Inference backend settings saved."
+      errorMessage = nil
+      return true
+    } catch is CancellationError {
+      if didPersist {
+        statusMessage = "Settings were saved, but applying them was cancelled. Save again to retry."
+      } else if didPersistCredential {
+        statusMessage =
+          "Setup cancelled after the API key was saved to Keychain. Backend settings were not saved. Save again to finish setup."
+      } else {
+        statusMessage = "Setup cancelled. Your previous saved settings are unchanged."
+      }
+      errorMessage = nil
+    } catch {
+      statusMessage = nil
+      if didPersist {
+        errorMessage =
+          "Settings were saved, but could not be applied to Hex Agent. Save again to retry."
+      } else if didPersistCredential {
+        errorMessage =
+          "The API key was saved to Keychain, but backend settings could not be saved. Save again to finish setup."
+      } else if isInstallingLocalModel {
+        errorMessage =
+          "Hex could not download or verify the local model. Check your connection and free space, then try again."
+      } else {
         errorMessage =
           "Inference backend settings could not be saved. Check the values and try again."
-        statusMessage = nil
-        isSaving = false
       }
     }
+    localModelDownloadProgress = nil
+    return false
+  }
+
+  private func settingsByValidatingLocalModel(
+    _ settings: HexInferenceBackendSettings, directory: URL
+  ) throws -> HexInferenceBackendSettings {
+    let local = settings.mlx
+    _ = try MLXLocalModelConfiguration(
+      modelID: ModelID(rawValue: local.modelID), displayName: local.displayName,
+      directory: directory, contextWindow: local.contextWindow,
+      maximumOutputTokens: local.maximumOutputTokens,
+      supportsToolCalling: local.supportsToolCalling,
+      supportsParallelToolCalling: local.supportsParallelToolCalling)
+    return try HexInferenceBackendSettings(
+      selectedBackend: settings.selectedBackend, openAI: settings.openAI,
+      mlx: HexMLXBackendSettings(
+        modelID: local.modelID, displayName: local.displayName, directory: directory,
+        contextWindow: local.contextWindow, maximumOutputTokens: local.maximumOutputTokens,
+        supportsToolCalling: local.supportsToolCalling,
+        supportsParallelToolCalling: local.supportsParallelToolCalling))
   }
 
   private func apply(_ settings: HexInferenceBackendSettings) {
@@ -333,11 +521,26 @@ final class HexInferenceBackendSettingsModel {
     mlxSupportsParallelToolCalling = settings.mlx.supportsParallelToolCalling
   }
 
-  private func makeSettings() throws -> HexInferenceBackendSettings {
-    let openAI = try HexOpenAIBackendSettings(
-      modelID: openAIModelID.trimmingCharacters(in: .whitespacesAndNewlines),
-      authenticationMethod: openAIAuthenticationMethod
-    )
+  private func makeSettings(requiresLocalDirectory: Bool = true) throws
+    -> HexInferenceBackendSettings
+  {
+    let openAI: HexOpenAIBackendSettings
+    if selectedBackend == .openAIResponses {
+      openAI = try HexOpenAIBackendSettings(
+        modelID: openAIModelID.trimmingCharacters(in: .whitespacesAndNewlines),
+        authenticationMethod: openAIAuthenticationMethod)
+    } else {
+      openAI =
+        try persistedSettings?.openAI
+        ?? HexOpenAIBackendSettings(
+          modelID: HexInferenceBackendSettings.defaultOpenAIModelID,
+          authenticationMethod: .chatGPT)
+    }
+    if selectedBackend == .openAIResponses {
+      return try HexInferenceBackendSettings(
+        selectedBackend: selectedBackend, openAI: openAI,
+        mlx: persistedSettings?.mlx ?? HexMLXBackendSettings())
+    }
     let maximumOutputTokens = try Self.parsePositiveInteger(mlxMaximumOutputTokens)
     let contextWindow = try Self.parseOptionalPositiveInteger(mlxContextWindow)
     var mlx = try HexMLXBackendSettings(
@@ -372,7 +575,7 @@ final class HexInferenceBackendSettingsModel {
         supportsParallelToolCalling: validatedModel.supportsParallelToolCalling
       )
     }
-    guard selectedBackend != .mlxLocal || mlx.isConfigured else {
+    guard !requiresLocalDirectory || selectedBackend != .mlxLocal || mlx.isConfigured else {
       throw HexInferenceBackendSettingsError.invalidMLXDirectory
     }
     return try HexInferenceBackendSettings(
@@ -426,15 +629,15 @@ final class HexInferenceBackendSettingsModel {
     case .invalidOpenAIModelID:
       "Enter an OpenAI model identifier."
     case .invalidMLXModelID:
-      "Enter an MLX model identifier."
+      "Enter a local model identifier."
     case .invalidMLXDisplayName:
-      "Enter a display name for the MLX model."
+      "Enter a name for the local model."
     case .invalidMLXDirectory:
-      "Choose an existing local MLX model directory."
+      "Choose an existing local model folder."
     case .invalidMLXOutputTokens:
-      "Enter a positive MLX output-token limit."
+      "Enter a positive output limit for the local model."
     case .invalidMLXContextWindow:
-      "Enter a positive MLX context window at least as large as the output limit."
+      "Enter a positive context limit at least as large as the output limit."
     case .unsupportedSchemaVersion:
       "The saved inference-backend settings use an unsupported version."
     }

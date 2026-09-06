@@ -4,6 +4,9 @@ import Foundation
 enum MCPStdioProcessSpawner {
   static func spawn(
     _ configuration: MCPServerConfiguration,
+    reusableExecutableSnapshot: MCPExecutableSnapshot? = nil,
+    executableSnapshotNamespaceBasename: String = MCPExecutableSnapshotAdmission
+      .productionNamespaceBasename,
     afterSourceValidation: (@Sendable (_ launchPath: String) -> Void)? = nil,
     beforeExecution: (@Sendable (_ configuredPath: String, _ launchPath: String) -> Void)? = nil
   ) throws -> MCPSpawnedProcess {
@@ -11,12 +14,9 @@ enum MCPStdioProcessSpawner {
     let inputPipe = pipes.input
     let outputPipe = pipes.output
     let errorPipe = pipes.error
-    let executableDescriptor = moveAboveStandardDescriptors(
-      Darwin.open(
-        configuration.executableURL.path,
-        O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
-      )
-    )
+    var executableDescriptor = Int32(-1)
+    var processLeaseDescriptor = Int32(-1)
+    var executableStatus: stat?
     var workingDirectoryDescriptor = Int32(-1)
     var fileActions: posix_spawn_file_actions_t?
     var attributes: posix_spawnattr_t?
@@ -34,41 +34,73 @@ enum MCPStdioProcessSpawner {
         Darwin.close(errorPipe.read)
       }
       if executableDescriptor >= 0 { Darwin.close(executableDescriptor) }
+      if processLeaseDescriptor >= 0 { Darwin.close(processLeaseDescriptor) }
       if workingDirectoryDescriptor >= 0 { Darwin.close(workingDirectoryDescriptor) }
       if fileActions != nil { posix_spawn_file_actions_destroy(&fileActions) }
       if attributes != nil { posix_spawnattr_destroy(&attributes) }
     }
 
-    guard executableDescriptor >= 0 else {
-      throw MCPClientSessionError.connectionClosed
-    }
-    var executableStatus = stat()
-    guard fstat(executableDescriptor, &executableStatus) == 0 else {
-      throw MCPClientSessionError.connectionClosed
-    }
-    try validateExecutableImage(executableDescriptor, status: executableStatus)
-
     let launchPath: String
-    if isTrustedRootOwnedExecutable(
-      configuration.executableURL.path,
-      expectedStatus: executableStatus
-    ) {
-      afterSourceValidation?(configuration.executableURL.path)
-      guard sourceMetadataRemainsStable(executableDescriptor, expectedStatus: executableStatus)
+    if let reusableExecutableSnapshot {
+      guard
+        reusableExecutableSnapshot.sourcePath == configuration.executableURL.path,
+        reusableExecutableSnapshot.isIntact(),
+        reusableExecutableSnapshot.sourceIsIntact(at: configuration.executableURL.path)
       else {
         throw MCPClientSessionError.connectionClosed
       }
-      launchPath = configuration.executableURL.path
+      executableSnapshot = reusableExecutableSnapshot
+      launchPath = reusableExecutableSnapshot.executablePath
     } else {
-      let snapshot = try MCPExecutableSnapshot.create(
-        from: executableDescriptor,
-        initialStatus: executableStatus,
-        sourcePath: configuration.executableURL.path,
-        afterSourceValidation: afterSourceValidation,
-        policy: configuration.executableSnapshotPolicy
+      executableDescriptor = moveAboveStandardDescriptors(
+        Darwin.open(
+          configuration.executableURL.path,
+          O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
       )
-      executableSnapshot = snapshot
-      launchPath = snapshot.executablePath
+      guard executableDescriptor >= 0 else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      var openedExecutableStatus = stat()
+      guard fstat(executableDescriptor, &openedExecutableStatus) == 0 else {
+        throw MCPClientSessionError.connectionClosed
+      }
+      executableStatus = openedExecutableStatus
+      try validateExecutableImage(executableDescriptor, status: openedExecutableStatus)
+
+      if isTrustedRootOwnedExecutable(
+        configuration.executableURL.path,
+        expectedStatus: openedExecutableStatus
+      ) {
+        afterSourceValidation?(configuration.executableURL.path)
+        guard
+          sourceMetadataRemainsStable(
+            executableDescriptor,
+            expectedStatus: openedExecutableStatus
+          )
+        else {
+          throw MCPClientSessionError.connectionClosed
+        }
+        launchPath = configuration.executableURL.path
+      } else {
+        let snapshot = try MCPExecutableSnapshot.create(
+          from: executableDescriptor,
+          initialStatus: openedExecutableStatus,
+          sourcePath: configuration.executableURL.path,
+          afterSourceValidation: afterSourceValidation,
+          policy: configuration.executableSnapshotPolicy,
+          namespaceBasename: executableSnapshotNamespaceBasename
+        )
+        executableSnapshot = snapshot
+        launchPath = snapshot.executablePath
+      }
+    }
+
+    if let executableSnapshot {
+      processLeaseDescriptor = executableSnapshot.makeProcessLeaseDescriptor()
+      guard processLeaseDescriptor >= 0 else {
+        throw MCPClientSessionError.connectionClosed
+      }
     }
 
     workingDirectoryDescriptor = moveAboveStandardDescriptors(
@@ -89,6 +121,10 @@ enum MCPStdioProcessSpawner {
       setCloseOnExec(errorPipe.write),
       posix_spawn_file_actions_init(&fileActions) == 0,
       posix_spawnattr_init(&attributes) == 0,
+      addSnapshotLeaseInheritance(
+        &fileActions,
+        descriptor: processLeaseDescriptor >= 0 ? processLeaseDescriptor : nil
+      ),
       posix_spawn_file_actions_addinherit_np(&fileActions, workingDirectoryDescriptor) == 0,
       posix_spawn_file_actions_addfchdir_np(&fileActions, workingDirectoryDescriptor) == 0,
       posix_spawn_file_actions_adddup2(&fileActions, inputPipe.read, STDIN_FILENO) == 0,
@@ -122,13 +158,18 @@ enum MCPStdioProcessSpawner {
     let spawnResult = try withCStringVector(arguments) { argumentVector in
       try withCStringVector(environment) { environmentVector in
         beforeExecution?(configuration.executableURL.path, launchPath)
-        guard
-          executableSnapshot?.isIntact()
-            ?? sourceMetadataRemainsStable(
-              executableDescriptor,
-              expectedStatus: executableStatus
-            )
-        else {
+        let executableRemainsStable: Bool
+        if let executableSnapshot {
+          executableRemainsStable = executableSnapshot.isIntact()
+        } else if let executableStatus {
+          executableRemainsStable = sourceMetadataRemainsStable(
+            executableDescriptor,
+            expectedStatus: executableStatus
+          )
+        } else {
+          executableRemainsStable = false
+        }
+        guard executableRemainsStable else {
           throw MCPClientSessionError.connectionClosed
         }
         return posix_spawn(
@@ -149,10 +190,12 @@ enum MCPStdioProcessSpawner {
     let postSpawnIdentityMatches: Bool
     if let executableSnapshot {
       postSpawnIdentityMatches = executableSnapshot.isIntact()
-    } else {
+    } else if let executableStatus {
       postSpawnIdentityMatches =
         lstat(configuration.executableURL.path, &postSpawnStatus) == 0
         && sourceMetadataMatches(executableStatus, postSpawnStatus)
+    } else {
+      postSpawnIdentityMatches = false
     }
     guard
       postSpawnIdentityMatches,
@@ -258,6 +301,14 @@ enum MCPStdioProcessSpawner {
     descriptors.allSatisfy { descriptor in
       posix_spawn_file_actions_addclose(&actions, descriptor) == 0
     }
+  }
+
+  private static func addSnapshotLeaseInheritance(
+    _ actions: inout posix_spawn_file_actions_t?,
+    descriptor: Int32?
+  ) -> Bool {
+    guard let descriptor else { return true }
+    return posix_spawn_file_actions_addinherit_np(&actions, descriptor) == 0
   }
 
   private static func setCloseOnExec(_ descriptor: Int32) -> Bool {

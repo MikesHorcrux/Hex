@@ -10,7 +10,7 @@ struct HexPersonalMemoryRowView: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         Image(systemName: memory.isPinned ? "pin.fill" : "brain")
-          .foregroundStyle(memory.isPinned ? .orange : .secondary)
+          .foregroundStyle(memory.isPinned ? HexBrandPalette.coral : .secondary)
         Text(memory.text)
           .frame(maxWidth: .infinity, alignment: .leading)
           .textSelection(.enabled)

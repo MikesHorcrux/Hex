@@ -55,8 +55,13 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let workspaceRoot: URL
   public let databaseURL: URL
   public let heartbeatStoreURL: URL
+  /// The original URL remains the legacy import source; this is the resident's active database.
+  public var heartbeatDatabaseURL: URL { heartbeatStoreURL.appendingPathExtension("sqlite") }
   public let personalityProfileURL: URL
   public let personalMemoryURL: URL
+  /// Known file-backed stores only; environment overrides and opaque injected stores leave nil.
+  public let settingsFileURL: URL?
+  public let inferenceSettingsFileURL: URL?
   public let personalMemoryScope: PersonalMemoryScope
   public let connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy
   public let authorizationMode: HexAuthorizationMode
@@ -64,6 +69,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let inferenceBackendSettings: HexInferenceBackendSettings
   public let inferenceProviderFactory: HexGatewayInferenceProviderFactory
   public let mcpClientSessions: [any MCPClientSession]
+  public let managedToolLayout: MCPManagedToolLayout?
 
   /// Parses the complete, explicit developer environment override. The API key remains in the
   /// resulting process-only memory provider and is never copied to a persisted settings file.
@@ -132,10 +138,13 @@ public struct HexGatewayResidentConfiguration: Sendable {
       switch rawXcodeMCP.lowercased() {
       case "1", "true", "yes":
         do {
+          let xcodeEnvironment = try MCPProcessEnvironment.sanitized(from: environment)
           mcpClientSessions = [
-            LocalMCPClientSession(
-              configuration: try MCPServerConfiguration.xcode(sourceEnvironment: environment)
-            )
+            try MCPDeferredClientSession(serverID: "xcode") {
+              LocalMCPClientSession(
+                configuration: try MCPServerConfiguration.xcode(sourceEnvironment: xcodeEnvironment)
+              )
+            }
           ]
         } catch {
           throw ConfigurationError.mcpConfigurationUnavailable
@@ -174,8 +183,11 @@ public struct HexGatewayResidentConfiguration: Sendable {
     heartbeatStoreURL: URL? = nil,
     personalityProfileURL: URL? = nil,
     personalMemoryURL: URL? = nil,
+    settingsFileURL: URL? = nil,
+    inferenceSettingsFileURL: URL? = nil,
     personalMemoryScope: PersonalMemoryScope? = nil,
     mcpClientSessions: [any MCPClientSession] = [],
+    managedToolLayout: MCPManagedToolLayout? = nil,
     authorizationMode: HexAuthorizationMode = .askEveryTime,
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
     inferenceBackendSettings: HexInferenceBackendSettings? = nil,
@@ -259,6 +271,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.heartbeatStoreURL = standardizedHeartbeatStoreURL
     self.personalityProfileURL = standardizedPersonalityProfileURL
     self.personalMemoryURL = standardizedPersonalMemoryURL
+    self.settingsFileURL = settingsFileURL?.standardizedFileURL
+    self.inferenceSettingsFileURL = inferenceSettingsFileURL?.standardizedFileURL
     self.personalMemoryScope = personalMemoryScope ?? Self.defaultPersonalityScope()
     self.connectionAdmissionPolicy = connectionAdmissionPolicy
     self.authorizationMode = authorizationMode
@@ -266,6 +280,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.inferenceBackendSettings = resolvedInferenceBackendSettings
     self.inferenceProviderFactory = inferenceProviderFactory
     self.mcpClientSessions = mcpClientSessions.sorted { $0.serverID < $1.serverID }
+    self.managedToolLayout = managedToolLayout
   }
 
   /// Keeps the explicit environment initializer source-compatible for local development and
@@ -279,8 +294,11 @@ public struct HexGatewayResidentConfiguration: Sendable {
     heartbeatStoreURL: URL? = nil,
     personalityProfileURL: URL? = nil,
     personalMemoryURL: URL? = nil,
+    settingsFileURL: URL? = nil,
+    inferenceSettingsFileURL: URL? = nil,
     personalMemoryScope: PersonalMemoryScope? = nil,
     mcpClientSessions: [any MCPClientSession] = [],
+    managedToolLayout: MCPManagedToolLayout? = nil,
     authorizationMode: HexAuthorizationMode = .askEveryTime,
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
     inferenceBackendSettings: HexInferenceBackendSettings? = nil,
@@ -299,8 +317,11 @@ public struct HexGatewayResidentConfiguration: Sendable {
       heartbeatStoreURL: heartbeatStoreURL,
       personalityProfileURL: personalityProfileURL,
       personalMemoryURL: personalMemoryURL,
+      settingsFileURL: settingsFileURL,
+      inferenceSettingsFileURL: inferenceSettingsFileURL,
       personalMemoryScope: personalMemoryScope,
       mcpClientSessions: mcpClientSessions,
+      managedToolLayout: managedToolLayout,
       authorizationMode: authorizationMode,
       connectionAdmissionPolicy: connectionAdmissionPolicy,
       inferenceBackendSettings: inferenceBackendSettings,
@@ -405,9 +426,10 @@ public struct HexGatewayResidentConfiguration: Sendable {
       }
     }
 
+    let managedToolLayout: MCPManagedToolLayout
     let mcpClientSessions: [any MCPClientSession]
     do {
-      let managedToolLayout = try MCPManagedToolLayout(
+      managedToolLayout = try MCPManagedToolLayout(
         rootURL: resolvedPaths.directoryURL.appendingPathComponent("Tools", isDirectory: true)
       )
       mcpClientSessions = try Self.makeMCPClientSessions(
@@ -433,7 +455,11 @@ public struct HexGatewayResidentConfiguration: Sendable {
       heartbeatStoreURL: resolvedPaths.heartbeatStoreURL,
       personalityProfileURL: resolvedPaths.personalityProfileURL,
       personalMemoryURL: resolvedPaths.personalMemoryURL,
+      settingsFileURL: settingsStore == nil ? resolvedPaths.settingsURL : nil,
+      inferenceSettingsFileURL: inferenceBackendSettingsStore == nil
+        ? resolvedPaths.directoryURL.appendingPathComponent("inference-backends.json") : nil,
       mcpClientSessions: mcpClientSessions,
+      managedToolLayout: managedToolLayout,
       authorizationMode: settings.authorizationMode,
       connectionAdmissionPolicy: connectionAdmissionPolicy,
       inferenceBackendSettings: inferenceBackendSettings,
@@ -486,21 +512,27 @@ public struct HexGatewayResidentConfiguration: Sendable {
     try settings.filter(\.isEnabled).map { setting in
       switch setting.transport {
       case .peekaboo:
-        return LocalMCPClientSession(
-          configuration: try MCPServerConfiguration.peekaboo(
-            layout: managedToolLayout,
-            workspaceRoot: workspaceRoot
+        return try MCPDeferredClientSession(serverID: setting.serverID) {
+          LocalMCPClientSession(
+            configuration: try MCPServerConfiguration.peekaboo(
+              layout: managedToolLayout,
+              workspaceRoot: workspaceRoot
+            )
           )
-        )
+        }
       case .playwright:
-        return LocalMCPClientSession(
-          configuration: try MCPServerConfiguration.playwright(
-            layout: managedToolLayout,
-            workspaceRoot: workspaceRoot
+        return try MCPDeferredClientSession(serverID: setting.serverID) {
+          LocalMCPClientSession(
+            configuration: try MCPServerConfiguration.playwright(
+              layout: managedToolLayout,
+              workspaceRoot: workspaceRoot
+            )
           )
-        )
+        }
       case .xcode:
-        return LocalMCPClientSession(configuration: try MCPServerConfiguration.xcode())
+        return try MCPDeferredClientSession(serverID: setting.serverID) {
+          LocalMCPClientSession(configuration: try MCPServerConfiguration.xcode())
+        }
       case .streamableHTTP:
         guard let endpointURL = setting.endpointURL else {
           throw ConfigurationError.mcpConfigurationUnavailable

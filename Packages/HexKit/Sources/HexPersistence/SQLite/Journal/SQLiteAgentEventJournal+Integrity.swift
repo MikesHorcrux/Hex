@@ -2,10 +2,11 @@ import Foundation
 import HexCore
 
 extension SQLiteAgentEventJournal {
+  @discardableResult
   func validateWholeJournalIntegrity(
     connection: SQLiteConnection,
     checksCancellation: Bool = true
-  ) throws {
+  ) throws -> SQLiteJournalIntegrityUsage {
     try validatePhysicalDatabaseIntegrity(
       connection: connection,
       checksCancellation: checksCancellation
@@ -78,6 +79,11 @@ extension SQLiteAgentEventJournal {
       checksCancellation: checksCancellation,
       recordCount: &recordCount,
       byteCount: &byteCount
+    )
+    return SQLiteJournalIntegrityUsage(
+      runCount: runCount,
+      recordCount: recordCount,
+      byteCount: byteCount
     )
   }
 

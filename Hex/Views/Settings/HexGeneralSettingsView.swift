@@ -13,16 +13,23 @@ struct HexGeneralSettingsView: View {
   var body: some View {
     Form {
       Section {
-        LabeledContent("Gateway route", value: route.label)
-        LabeledContent("Start at login", value: startAtLogin.status.label)
+        LabeledContent(
+          "Agent mode",
+          value: route.kind == .residentXPC ? "Always-on" : "Developer mode"
+        )
+        LabeledContent("Always-on agent", value: startAtLogin.status.label)
 
         if route.kind == .developerInProcess {
-          Text("Always-on mode is available with the resident gateway route.")
-            .foregroundStyle(.secondary)
+          HexInlineNoticeView(
+            message: "Always-on mode is unavailable while Hex is running in developer mode.",
+            systemImage: "hammer",
+            tint: HexBrandPalette.apricot
+          )
         } else if startAtLogin.isAvailable {
           Button(startAtLogin.buttonTitle) {
             startAtLogin.toggle()
           }
+          .buttonStyle(.hexSecondaryAction)
           .disabled(!startAtLogin.canChange)
 
           if startAtLogin.status == .requiresApproval {
@@ -31,22 +38,27 @@ struct HexGeneralSettingsView: View {
                 await startAtLogin.openLoginItemsSettings()
               }
             }
+            .buttonStyle(.hexSecondaryAction)
           }
         } else if let readinessMessage = startAtLogin.readinessMessage {
-          Text(readinessMessage)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          HexInlineNoticeView(
+            message: readinessMessage,
+            systemImage: "exclamationmark.triangle.fill",
+            tint: .orange
+          )
         }
 
         if let message = startAtLogin.message {
-          Text(message)
-            .font(.caption)
-            .foregroundStyle(.orange)
+          HexInlineNoticeView(
+            message: message,
+            systemImage: "exclamationmark.triangle.fill",
+            tint: .orange
+          )
         }
       } header: {
-        Text("Resident agent")
+        Text("Availability")
       } footer: {
-        Text("The resident gateway can stay active after the Hex window closes.")
+        Text("When enabled, Hex stays ready after its window closes and returns when you sign in.")
       }
 
       Section {
@@ -54,14 +66,17 @@ struct HexGeneralSettingsView: View {
           onRunSetupAgain()
           openWindow(id: "main")
         }
+        .buttonStyle(.hexSecondaryAction)
         .disabled(workspace.isRunActive)
       } header: {
-        Text("Setup")
+        Text("Guided setup")
       } footer: {
-        Text("Your saved settings are kept and prefilled. Active runs must finish first.")
+        Text("Walk through the seven setup steps again. Your saved choices stay filled in.")
       }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .tint(HexBrandPalette.coral)
     .task {
       guard !suppressAutomaticRefresh else { return }
       await startAtLogin.refresh()

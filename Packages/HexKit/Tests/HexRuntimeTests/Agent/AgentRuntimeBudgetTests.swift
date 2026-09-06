@@ -1,6 +1,7 @@
 import Foundation
 import HexCore
 import Testing
+
 @testable import HexRuntime
 
 @Suite("AgentRuntime budgets")
@@ -417,7 +418,7 @@ struct AgentRuntimeBudgetTests {
   }
 
   @Test
-  func runtimeBoundsEachReturnedToolResultBeforeJournalingIt() async throws {
+  func runtimePreservesKnownToolResultBeforeRejectingItsInferenceBudget() async throws {
     let call = ToolCall(
       id: ToolCallID(rawValue: "large-result"),
       name: "echo",
@@ -448,7 +449,15 @@ struct AgentRuntimeBudgetTests {
     #expect(await executor.calls().map(\.id) == [call.id])
     let events = await journal.events()
     #expect(events.contains { if case .toolStarted = $0 { true } else { false } })
-    #expect(!events.contains { if case .toolFinished = $0 { true } else { false } })
+    #expect(
+      events.contains {
+        if case .toolFinished(let receipt) = $0 { receipt == result } else { false }
+      })
+    #expect(
+      events.contains { event in
+        guard case .messageAppended(let message) = event else { return false }
+        return message.role == .tool && message.content == [.toolResult(result)]
+      })
   }
 
   @Test
@@ -505,7 +514,7 @@ struct AgentRuntimeBudgetTests {
     let toolMessageCount = await journal.events().reduce(into: 0) { count, event in
       if case .messageAppended(let message) = event, message.role == .tool { count += 1 }
     }
-    #expect(toolMessageCount == 1)
+    #expect(toolMessageCount == 2)
   }
 
   @Test
@@ -536,7 +545,13 @@ struct AgentRuntimeBudgetTests {
     let events = await journal.events()
     #expect(events.contains { if case .authorizationRequested = $0 { true } else { false } })
     #expect(!events.contains { if case .authorizationDecided = $0 { true } else { false } })
-    #expect(!events.contains { if case .toolFinished = $0 { true } else { false } })
+    #expect(!events.contains { if case .toolStarted = $0 { true } else { false } })
+    let receipts = events.compactMap { event -> ToolResult? in
+      if case .toolFinished(let result) = event { return result }
+      return nil
+    }
+    #expect(receipts.map(\.toolCallID) == [call.id])
+    #expect(receipts.allSatisfy { $0.status == .failure && $0.notExecutedReason == .runStopped })
   }
 
   @Test
@@ -558,7 +573,7 @@ struct AgentRuntimeBudgetTests {
       output: .object([
         "error": .string("authorization_denied"),
         "reason": .string(reason),
-      ])
+      ]), notExecutedReason: .authorizationDenied
     )
     let secondResult = ToolResult(
       toolCallID: secondCall.id,
@@ -566,7 +581,7 @@ struct AgentRuntimeBudgetTests {
       output: .object([
         "error": .string("authorization_denied"),
         "reason": .string(reason),
-      ])
+      ]), notExecutedReason: .authorizationDenied
     )
     let firstBytes = try JSONEncoder().encode(firstResult).count
     let secondBytes = try JSONEncoder().encode(secondResult).count
@@ -600,7 +615,12 @@ struct AgentRuntimeBudgetTests {
     }
     #expect(decisionCount == 1)
     #expect(!events.contains { if case .toolStarted = $0 { true } else { false } })
-    #expect(!events.contains { if case .toolFinished = $0 { true } else { false } })
+    let receipts = events.compactMap { event -> ToolResult? in
+      if case .toolFinished(let result) = event { return result }
+      return nil
+    }
+    #expect(receipts.map(\.toolCallID) == [firstCall.id, secondCall.id])
+    #expect(receipts.allSatisfy { $0.status == .failure && $0.notExecutedReason == .runStopped })
   }
 
   @Test
@@ -648,7 +668,7 @@ struct AgentRuntimeBudgetTests {
     let events = await journal.events()
     #expect(events.contains { if case .toolFinished = $0 { true } else { false } })
     #expect(
-      !events.contains { event in
+      events.contains { event in
         if case .messageAppended(let message) = event { return message.role == .tool }
         return false
       }

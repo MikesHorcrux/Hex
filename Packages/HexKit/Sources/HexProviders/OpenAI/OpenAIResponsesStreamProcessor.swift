@@ -19,6 +19,7 @@ struct OpenAIResponsesStreamProcessor {
   private var callIDs = Set<String>()
   private var sawRefusal = false
   private var sawDoneSentinel = false
+  private(set) var rejectionCode = "unspecified"
 
   init(
     configuration: OpenAIResponsesConfiguration,
@@ -33,6 +34,7 @@ struct OpenAIResponsesStreamProcessor {
   }
 
   mutating func process(_ event: ServerSentEvent) throws -> OpenAIResponsesProcessedEvent {
+    rejectionCode = "unspecified"
     if event.data == Data("[DONE]".utf8) {
       guard
         lifecycle == .terminal,
@@ -80,6 +82,10 @@ struct OpenAIResponsesStreamProcessor {
       event.name == nil || event.name == "message" || event.name == type
     else {
       throw OpenAIResponsesProviderError.malformedStream
+    }
+    if isIgnorableMetadataEvent(type) {
+      try validateOptionalSequence(in: object)
+      return emptyResult()
     }
     try validateSequence(in: object)
     if isOutputEvent(type) {
@@ -242,6 +248,15 @@ struct OpenAIResponsesStreamProcessor {
     }
   }
 
+  private func isIgnorableMetadataEvent(_ type: String) -> Bool {
+    switch type {
+    case "codex.response.metadata", "response.metadata", "responsesapi.websocket_timing":
+      true
+    default:
+      false
+    }
+  }
+
   private mutating func processFailure(
     _ object: [String: JSONValue],
     expectedStatus: String
@@ -327,7 +342,7 @@ struct OpenAIResponsesStreamProcessor {
         isValidIdentifier(callID),
         isValidToolName(name),
         isAllowedToolName(name),
-        try requiredString("status", in: item) == "in_progress",
+        try optionalString("status", in: item).map({ $0 == "in_progress" }) ?? true,
         arguments.utf8.count <= configuration.maximumToolArgumentBytes,
         callIDs.insert(callID).inserted,
         functionCalls[itemID] == nil
@@ -793,30 +808,43 @@ struct OpenAIResponsesStreamProcessor {
 
   private mutating func processFunctionArgumentsDone(_ object: [String: JSONValue]) throws {
     try requireStreaming()
+    rejectionCode = "arguments_done_identity"
     let itemID = try requiredString("item_id", in: object)
     let outputIndex = try requiredIndex("output_index", in: object)
-    let name = try requiredString("name", in: object)
+    let name = try object["name"].map { _ in try requiredString("name", in: object) }
     let arguments = try requiredString("arguments", in: object)
     guard var assembly = functionCalls[itemID], assembly.outputIndex == outputIndex else {
       throw OpenAIResponsesProviderError.malformedStream
     }
+    // Codex may omit the redundant name on this event. The item ID/index bind arguments to
+    // the already validated call, and output_item.done must still repeat the same name/call ID.
+    // The public Responses schema requires name, so retain that contract on the API route.
+    rejectionCode = "arguments_done_name"
+    guard name != nil || configuration.service == .chatGPTCodexSubscription,
+      name == nil || name == assembly.name
+    else {
+      throw OpenAIResponsesProviderError.malformedStream
+    }
+    rejectionCode = "arguments_done_lifecycle_or_size"
     guard
       assembly.finalArguments == nil,
       !assembly.emitted,
-      assembly.name == name,
       arguments.utf8.count <= configuration.maximumToolArgumentBytes
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
     if let callID = try optionalString("call_id", in: object) {
+      rejectionCode = "arguments_done_call_id"
       guard callID == assembly.callID else {
         throw OpenAIResponsesProviderError.malformedStream
       }
     }
     let finalBytes = Data(arguments.utf8)
+    rejectionCode = "arguments_done_delta_mismatch"
     guard assembly.argumentBytes.isEmpty || assembly.argumentBytes == finalBytes else {
       throw OpenAIResponsesProviderError.malformedStream
     }
+    rejectionCode = "arguments_done_invalid_json"
     _ = try decodeArguments(arguments)
     assembly.argumentBytes = finalBytes
     assembly.finalArguments = arguments
@@ -861,7 +889,7 @@ struct OpenAIResponsesStreamProcessor {
         assembly.name == name,
         assembly.finalArguments == arguments,
         !assembly.emitted,
-        try requiredString("status", in: completed) == "completed"
+        try optionalString("status", in: completed).map({ $0 == "completed" }) ?? true
       else {
         throw OpenAIResponsesProviderError.malformedStream
       }
@@ -875,8 +903,10 @@ struct OpenAIResponsesStreamProcessor {
       )
     case "reasoning":
       try validateCompletedReasoning(completed, outputIndex: outputIndex)
-      let reasoningStatus = try requiredString("status", in: completed)
-      guard reasoningStatus == "completed" || reasoningStatus == "incomplete" else {
+      let reasoningStatus = try optionalString("status", in: completed)
+      guard
+        reasoningStatus == nil || reasoningStatus == "completed" || reasoningStatus == "incomplete"
+      else {
         throw OpenAIResponsesProviderError.malformedStream
       }
     case "message":
@@ -1034,43 +1064,53 @@ struct OpenAIResponsesStreamProcessor {
     case .createdInProgress, .inProgress, .output:
       break
     case .awaitingStart, .createdQueued, .queued, .terminal:
-      throw OpenAIResponsesProviderError.malformedStream
+      throw reject("terminal.lifecycle")
     }
     let response = try requiredObject("response", in: object)
-    try validateResponse(response, expectedStatus: expectedStatus)
-
-    let output = try requiredArray("output", in: response)
-    guard output.count == completedOutputItems.count else {
-      throw OpenAIResponsesProviderError.malformedStream
+    do {
+      try validateResponse(response, expectedStatus: expectedStatus)
+    } catch {
+      rejectionCode = "terminal.response"
+      throw error
     }
-    for (index, value) in output.enumerated() {
-      guard completedOutputItems[index] == value else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
+
+    let output = try reconciledTerminalOutput(in: response)
+
+    for value in output {
       if expectedStatus == "completed", case .object(let item) = value,
         item["type"] != .string("function_call")
       {
-        guard try requiredString("status", in: item) == "completed" else {
-          throw OpenAIResponsesProviderError.malformedStream
+        // Reasoning status is optional in Responses. A validated output_item.done establishes
+        // completion when absent; an explicit incomplete/in-progress status still fails here.
+        let status = try optionalString("status", in: item)
+        let completed =
+          status == "completed" || (status == nil && item["type"] == .string("reasoning"))
+        guard completed else {
+          throw reject("terminal.item-status")
         }
       }
     }
 
     for assembly in functionCalls.values {
       guard assembly.finalArguments != nil, assembly.emitted else {
-        throw OpenAIResponsesProviderError.malformedStream
+        throw reject("terminal.function-assembly")
       }
     }
     guard expectedStatus != "incomplete" || functionCalls.isEmpty else {
-      throw OpenAIResponsesProviderError.malformedStream
+      throw reject("terminal.incomplete-function")
     }
     guard expectedStatus != "completed" || hasAssistantTurnContent() else {
-      throw OpenAIResponsesProviderError.malformedStream
+      throw reject("terminal.assistant-content")
     }
     if expectedStatus == "completed" {
-      try validateCompletedToolChoice()
+      do {
+        try validateCompletedToolChoice()
+      } catch {
+        rejectionCode = "terminal.tool-choice"
+        throw error
+      }
       guard allowsParallelToolCalls || completedToolCalls.count <= 1 else {
-        throw OpenAIResponsesProviderError.malformedStream
+        throw reject("terminal.parallel-tool-calls")
       }
     }
 
@@ -1098,6 +1138,7 @@ struct OpenAIResponsesStreamProcessor {
             !encryptedContent.isEmpty,
             encryptedContent.utf8.count <= configuration.maximumLocalStateBytes
           else {
+            rejectionCode = "terminal.encrypted-reasoning"
             throw OpenAIResponsesProviderError.encryptedReasoningUnavailable
           }
         }
@@ -1111,8 +1152,13 @@ struct OpenAIResponsesStreamProcessor {
       }
       events.append(.toolCall(call))
     }
-    if let usage = try usage(in: response) {
-      events.append(.usage(usage))
+    do {
+      if let usage = try usage(in: response) {
+        events.append(.usage(usage))
+      }
+    } catch {
+      rejectionCode = "terminal.usage"
+      throw error
     }
     events.append(.completed(stopReason))
 
@@ -1134,7 +1180,7 @@ struct OpenAIResponsesStreamProcessor {
       }
     }
     guard let responseID else {
-      throw OpenAIResponsesProviderError.malformedStream
+      throw reject("terminal.response-id")
     }
     lifecycle = .terminal
     return OpenAIResponsesProcessedEvent(
@@ -1146,6 +1192,48 @@ struct OpenAIResponsesStreamProcessor {
         encodedOutputBytes: encodedOutputBytes
       )
     )
+  }
+
+  private mutating func reconciledTerminalOutput(
+    in response: [String: JSONValue]
+  ) throws -> [JSONValue] {
+    // The ChatGPT Codex stream defines output_item.done as the content authority. Its terminal
+    // response is metadata-only and may omit or redact the output snapshot entirely.
+    if configuration.service == .chatGPTCodexSubscription {
+      return try streamedOutputItemsInOrder()
+    }
+
+    let terminalOutput = try requiredArray("output", in: response)
+    guard terminalOutput.count == completedOutputItems.count else {
+      let completedIndices = completedOutputItems.keys.sorted().prefix(8).map(String.init)
+      throw reject(
+        "terminal.output-count.terminal-\(terminalOutput.count).streamed-\(completedOutputItems.count)"
+          + ".indices-\(completedIndices.joined(separator: ","))"
+      )
+    }
+    for (index, value) in terminalOutput.enumerated() {
+      guard completedOutputItems[index] == value else {
+        throw reject("terminal.output-mismatch")
+      }
+    }
+    return terminalOutput
+  }
+
+  private func streamedOutputItemsInOrder() throws -> [JSONValue] {
+    var output: [JSONValue] = []
+    output.reserveCapacity(completedOutputItems.count)
+    for index in 0..<completedOutputItems.count {
+      guard let item = completedOutputItems[index] else {
+        throw OpenAIResponsesProviderError.malformedStream
+      }
+      output.append(item)
+    }
+    return output
+  }
+
+  private mutating func reject(_ code: String) -> OpenAIResponsesProviderError {
+    rejectionCode = code
+    return .malformedStream
   }
 
   private func validateResponse(
@@ -1311,6 +1399,11 @@ struct OpenAIResponsesStreamProcessor {
       }
     }
     lastSequenceNumber = sequenceNumber
+  }
+
+  private mutating func validateOptionalSequence(in object: [String: JSONValue]) throws {
+    guard object["sequence_number"] != nil else { return }
+    try validateSequence(in: object)
   }
 
   private func requiredValue(

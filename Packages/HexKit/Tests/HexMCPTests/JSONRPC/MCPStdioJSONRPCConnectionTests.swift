@@ -228,14 +228,13 @@ struct MCPStdioJSONRPCConnectionTests {
     }
   }
 
-  @Test("Repeated rejected snapshots truncate bytes and release descriptors")
+  @Test("Repeated rejected snapshots truncate bytes and release owned vnode descriptors")
   func repeatedRejectedSnapshotsReleaseDescriptors() throws {
     let fixtureDirectory = try makeFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
     let fixtureExecutable = fixtureDirectory.appendingPathComponent("fixture-server")
     try writeLegitimateExecutable(to: fixtureExecutable)
     let fixtureBytes = try Data(contentsOf: fixtureExecutable)
-    let descriptorCountBefore = try openDescriptorCount()
 
     for index in 0..<32 {
       let executable = fixtureDirectory.appendingPathComponent("server-\(index)")
@@ -258,10 +257,10 @@ struct MCPStdioJSONRPCConnectionTests {
       let snapshotRoot = URL(fileURLWithPath: snapshotPath).deletingLastPathComponent()
       #expect(Self.isRetainedHardenedRegularFile(atPath: snapshotPath))
       #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
+      #expect(openVnodePaths(beneath: fixtureDirectory.path).isEmpty)
+      #expect(openVnodePaths(beneath: snapshotRoot.path).isEmpty)
       try FileManager.default.removeItem(at: snapshotRoot)
     }
-
-    #expect(try openDescriptorCount() <= descriptorCountBefore)
   }
 
   @Test("Preserves bundle-relative runtime dependencies in a private snapshot")
@@ -1306,6 +1305,8 @@ struct MCPStdioJSONRPCConnectionTests {
   func timesOutBackpressuredNotification() async throws {
     let fixture = try PipeProcessFixture(processID: 10_004)
     let closer = PipeDescriptorCloser()
+    let terminator = GatedPipeTerminator()
+    let notificationReturned = Mutex(false)
     let configuration = try MCPServerConfiguration(
       serverID: "write-timeout",
       executableURL: URL(fileURLWithPath: "/bin/cat"),
@@ -1320,15 +1321,25 @@ struct MCPStdioJSONRPCConnectionTests {
     let connection = MCPStdioJSONRPCConnection(
       configuration: configuration,
       spawnProcess: { _ in fixture.spawnedProcess },
-      terminateProcess: { _ in await closer.close(fixture) }
+      terminateProcess: { _ in
+        await terminator.terminate(fixture: fixture, closer: closer)
+      }
     )
 
     try await connection.connect()
-    await #expect(throws: MCPClientSessionError.requestTimedOut) {
+    let notification = Task {
+      defer { notificationReturned.withLock { $0 = true } }
       try await connection.notify(
         method: "timeout",
         params: .object(["payload": .string(String(repeating: "x", count: 1_800_000))])
       )
+    }
+    await terminator.waitUntilFirstTerminationStarts()
+    for _ in 0..<20 { await Task.yield() }
+    #expect(!notificationReturned.withLock { $0 })
+    await terminator.releaseFirstTermination()
+    await #expect(throws: MCPClientSessionError.requestTimedOut) {
+      try await notification.value
     }
     if case .disconnected = await connection.state {
       // The timed-out writer closes its generation before returning.
@@ -1896,8 +1907,35 @@ struct MCPStdioJSONRPCConnectionTests {
     }
   }
 
-  private func openDescriptorCount() throws -> Int {
-    try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
+  private func openVnodePaths(beneath rootPath: String) -> [String] {
+    let childPathPrefix = rootPath + "/"
+    let infoByteCount = Int32(MemoryLayout<vnode_fdinfowithpath>.size)
+    var matches: [String] = []
+
+    for descriptor in 0..<getdtablesize() {
+      var info = vnode_fdinfowithpath()
+      guard
+        proc_pidfdinfo(
+          getpid(),
+          descriptor,
+          PROC_PIDFDVNODEPATHINFO,
+          &info,
+          infoByteCount
+        ) == infoByteCount
+      else {
+        continue
+      }
+      let path = withUnsafePointer(to: &info.pvip.vip_path) { pointer in
+        pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) {
+          String(cString: $0)
+        }
+      }
+      if path == rootPath || path.hasPrefix(childPathPrefix) {
+        matches.append(path)
+      }
+    }
+
+    return matches
   }
 
   private func catConfiguration() throws -> MCPServerConfiguration {

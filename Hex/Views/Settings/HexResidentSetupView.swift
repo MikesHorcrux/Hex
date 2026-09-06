@@ -9,17 +9,22 @@ struct HexResidentSetupView: View {
       HexResidentConfigurationFormView(model: model)
 
       if let statusMessage = model.statusMessage {
-        Text(statusMessage)
-          .font(.callout)
-          .foregroundStyle(.secondary)
+        HexInlineNoticeView(
+          message: statusMessage,
+          systemImage: "checkmark.circle.fill",
+          tint: HexBrandPalette.successInk
+        )
       }
 
       if let errorMessage = model.errorMessage {
-        Text(errorMessage)
-          .font(.callout)
-          .foregroundStyle(.orange)
-          .fixedSize(horizontal: false, vertical: true)
+        HexInlineNoticeView(
+          message: errorMessage,
+          systemImage: "exclamationmark.triangle.fill",
+          tint: .orange
+        )
       }
+
+      HexResidentSetupLoadRetryView(model: model)
 
       HStack {
         Spacer()
@@ -30,11 +35,14 @@ struct HexResidentSetupView: View {
         Button("Save") {
           model.save()
         }
+        .buttonStyle(.hexPrimaryAction)
         .keyboardShortcut(.defaultAction)
         .disabled(!model.canSave)
       }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .tint(HexBrandPalette.coral)
     .task {
       await model.load()
     }

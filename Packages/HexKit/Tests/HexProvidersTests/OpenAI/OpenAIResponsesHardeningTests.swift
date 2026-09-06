@@ -304,7 +304,7 @@ struct OpenAIResponsesHardeningTests {
       )
     )
 
-    await expectError(.streamLimitExceeded) {
+    await expectError(.streamEventLimitExceeded) {
       _ = try await OpenAIResponsesTestFixture.collect(
         provider: provider,
         request: OpenAIResponsesTestFixture.request()
@@ -592,9 +592,9 @@ struct OpenAIResponsesHardeningTests {
       _ = try await iterator.next()
       Issue.record("Expected the deliberately undersized publication buffer to fail.")
     } catch let error as OpenAIResponsesProviderError {
-      #expect(error == .streamLimitExceeded)
+      #expect(error == .streamDeliveryLimitExceeded)
     } catch {
-      Issue.record("Expected OpenAIResponsesProviderError.streamLimitExceeded.")
+      Issue.record("Expected OpenAIResponsesProviderError.streamDeliveryLimitExceeded.")
     }
     #expect(await provider.localStates[responseID] == nil)
     #expect(await provider.issuedResponseIDs.contains(responseID))

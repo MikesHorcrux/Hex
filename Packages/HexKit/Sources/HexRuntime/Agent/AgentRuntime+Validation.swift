@@ -63,7 +63,10 @@ extension AgentRuntime {
   func loadModel(for request: AgentRunRequest) async throws -> ModelDescriptor {
     let descriptor = inferenceProvider.descriptor
     guard !descriptor.id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw AgentRuntimeError.providerFailure("The inference provider has an invalid ID.")
+      throw AgentRuntimeError.providerFailure(
+        "The inference provider has an invalid ID.",
+        isRetryable: false
+      )
     }
 
     try Task.checkCancellation()
@@ -76,31 +79,55 @@ extension AgentRuntime {
       if Task.isCancelled {
         throw CancellationError()
       }
-      throw AgentRuntimeError.providerFailure("Model discovery failed.")
+      throw AgentRuntimeError.providerFailure("Model discovery failed.", isRetryable: true)
     }
     try Task.checkCancellation()
 
     let matches = models.filter { $0.id == request.modelID }
     guard matches.count <= 1 else {
-      throw AgentRuntimeError.providerFailure("Model discovery returned duplicate model IDs.")
+      throw AgentRuntimeError.providerFailure(
+        "Model discovery returned duplicate model IDs.",
+        isRetryable: false
+      )
     }
     guard let model = matches.first else {
       throw AgentRuntimeError.modelUnavailable(request.modelID)
     }
     guard model.providerID == descriptor.id else {
       throw AgentRuntimeError.providerFailure(
-        "The selected model does not belong to the injected provider."
+        "The selected model does not belong to the injected provider.",
+        isRetryable: false
       )
     }
     return model
   }
 
   func validate(request: AgentRunRequest, against model: ModelDescriptor) throws {
+    if let efforts = model.supportedReasoningEfforts {
+      guard Set(efforts).count == efforts.count,
+        model.defaultReasoningEffort.map({ efforts.contains($0) }) ?? true
+      else {
+        throw AgentRuntimeError.providerFailure(
+          "The model reported invalid reasoning effort metadata.", isRetryable: false
+        )
+      }
+      if let requestedEffort = request.options.reasoningEffort,
+        !efforts.contains(requestedEffort)
+      {
+        throw AgentRuntimeError.invalidRequest("The selected model does not support that effort.")
+      }
+    }
     if let contextWindow = model.contextWindow, contextWindow <= 0 {
-      throw AgentRuntimeError.providerFailure("The model reported an invalid context window.")
+      throw AgentRuntimeError.providerFailure(
+        "The model reported an invalid context window.",
+        isRetryable: false
+      )
     }
     if let maxOutputTokens = model.maxOutputTokens, maxOutputTokens <= 0 {
-      throw AgentRuntimeError.providerFailure("The model reported an invalid output limit.")
+      throw AgentRuntimeError.providerFailure(
+        "The model reported an invalid output limit.",
+        isRetryable: false
+      )
     }
     if let requested = request.options.maxOutputTokens,
       let modelMaximum = model.maxOutputTokens,

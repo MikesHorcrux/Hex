@@ -7,13 +7,16 @@ import HexIPC
 nonisolated struct HexGatewayClientAdapter: HexAgentClient, Sendable {
   let client: HexGatewayClient
   private let authorizationTransport: any HexAuthorizationDecisionSubmitting
+  private let modelCatalog: (@Sendable () async throws -> [ModelDescriptor])?
 
   init(
     client: HexGatewayClient,
-    authorizationTransport: any HexAuthorizationDecisionSubmitting
+    authorizationTransport: any HexAuthorizationDecisionSubmitting,
+    modelCatalog: (@Sendable () async throws -> [ModelDescriptor])? = nil
   ) {
     self.client = client
     self.authorizationTransport = authorizationTransport
+    self.modelCatalog = modelCatalog
   }
 
   func connect() async throws -> GatewayConnectionResult {
@@ -22,6 +25,11 @@ nonisolated struct HexGatewayClientAdapter: HexAgentClient, Sendable {
 
   func disconnect() async throws {
     try await client.disconnect()
+  }
+
+  func availableModels() async throws -> [ModelDescriptor] {
+    if let modelCatalog { return try await modelCatalog() }
+    return try await client.availableModels()
   }
 
   func startRun(_ request: GatewayStartRunRequest) async throws -> GatewayStartRunResponse {

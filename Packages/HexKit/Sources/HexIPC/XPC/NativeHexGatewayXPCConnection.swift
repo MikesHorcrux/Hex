@@ -4,7 +4,8 @@
 /// only bounded Data and Sendable stream values cross the Swift concurrency boundary.
 public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
   private struct EventState {
-    let continuation: AsyncThrowingStream<Data, any Error>.Continuation
+    let token: UUID
+    let continuation: GatewayBufferedStream<Data>.Continuation
     let sink: EventSink
     let cancellationEnvelope: Data
   }
@@ -55,10 +56,10 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
     _ envelope: Data,
     bufferCapacity: Int
   ) async throws -> GatewayXPCEventSubscription {
-    guard bufferCapacity > 0 else {
+    guard bufferCapacity > 0, bufferCapacity <= configuration.subscriberBufferCapacity else {
       throw GatewayFailure(
         code: .malformedPayload,
-        message: "The XPC event buffer capacity must be positive."
+        message: "The XPC event buffer capacity must fit the configured subscriber limit."
       )
     }
     try Task.checkCancellation()
@@ -78,30 +79,44 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
         message: "The XPC subscription envelope is malformed."
       )
     }
+    guard events[subscriptionID] == nil else {
+      throw GatewayFailure(
+        code: .conflictingRunRequest,
+        message: "The XPC subscription identifier is already active.")
+    }
     let cancellationEnvelope = try codec.encode(requestEnvelope.cancellationEnvelope())
-    let pair = AsyncThrowingStream<Data, any Error>.makeStream(
-      bufferingPolicy: .bufferingOldest(bufferCapacity)
+    let token = UUID()
+    let pair = GatewayBufferedStream<Data>.makeStream(
+      bufferCapacity: bufferCapacity,
+      maximumBufferedBytes: configuration.maximumBufferedWireBytesPerSubscriber
     )
+    let continuation = pair.continuation
+    let maximumWireBytes = configuration.maximumWireBytes
+    let codec = self.codec
     let sink = EventSink(
-      receiveEvent: { [weak self] data in
-        Task {
-          await self?.receiveEvent(data, subscriptionID: subscriptionID)
-        }
+      receiveEvent: { data in
+        // Reserve payload bytes before returning from the XPC callback. Creating a Task per
+        // payload would retain unaccounted Data and let terminal cleanup overtake queued events.
+        Self.receiveEvent(data, maximumWireBytes: maximumWireBytes, into: continuation)
       },
-      finish: { [weak self] data in
-        Task {
-          await self?.finishEvent(response: data, subscriptionID: subscriptionID)
-        }
+      finish: { data in
+        Self.finishEvent(response: data, codec: codec, into: continuation)
       }
     )
     events[subscriptionID] = EventState(
-      continuation: pair.continuation,
+      token: token,
+      continuation: continuation,
       sink: sink,
       cancellationEnvelope: cancellationEnvelope
     )
-    pair.continuation.onTermination = { @Sendable [weak self] _ in
+    continuation.onTermination = { @Sendable [weak self] termination in
       Task {
-        await self?.cancelSubscription(cancellationEnvelope)
+        switch termination {
+        case .finished(nil):
+          await self?.removeCompletedSubscription(subscriptionID, expectedToken: token)
+        default:
+          await self?.cancelSubscription(cancellationEnvelope, expectedToken: token)
+        }
       }
     }
 
@@ -130,9 +145,11 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
         throw codec.canonicalFailure(from: failure)
       }
     } catch {
-      events.removeValue(forKey: subscriptionID)?.continuation.finish(
-        throwing: codec.canonicalFailure(from: error)
-      )
+      if events[subscriptionID]?.token == token {
+        // onTermination owns cleanup, including cancellation of a possibly admitted remote
+        // subscription whose acknowledgement was lost. An old sink never removes a newer slot.
+        continuation.finish(throwing: codec.canonicalFailure(from: error))
+      }
       throw codec.canonicalFailure(from: error)
     }
 
@@ -140,12 +157,16 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
       id: subscriptionID,
       stream: pair.stream,
       cancellation: { [weak self] in
-        await self?.cancelSubscription(cancellationEnvelope)
+        await self?.cancelSubscription(cancellationEnvelope, expectedToken: token)
       }
     )
   }
 
   public func cancelSubscription(_ envelope: Data) async {
+    await cancelSubscription(envelope, expectedToken: nil)
+  }
+
+  private func cancelSubscription(_ envelope: Data, expectedToken: UUID?) async {
     guard let request = try? codec.decode(GatewayXPCRequestEnvelope.self, from: envelope),
       request.operation == .cancelSubscription,
       let subscriptionID = request.subscriptionID
@@ -153,7 +174,11 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
       return
     }
 
-    guard let state = events.removeValue(forKey: subscriptionID) else {
+    guard let current = events[subscriptionID],
+      current.cancellationEnvelope == envelope,
+      expectedToken == nil || current.token == expectedToken,
+      let state = events.removeValue(forKey: subscriptionID)
+    else {
       return
     }
     state.continuation.finish()
@@ -180,6 +205,13 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
       // Stream cancellation is already complete locally. A disconnected service is an expected
       // race, and the next handshake will create a fresh physical connection.
     }
+  }
+
+  private func removeCompletedSubscription(
+    _ subscriptionID: GatewayXPCSubscriptionID, expectedToken: UUID
+  ) {
+    guard events[subscriptionID]?.token == expectedToken else { return }
+    events.removeValue(forKey: subscriptionID)
   }
 
   public func invalidate() async {
@@ -319,65 +351,49 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
     continuation.resume(throwing: CancellationError())
   }
 
-  private func receiveEvent(
+  private nonisolated static func receiveEvent(
     _ data: Data,
-    subscriptionID: GatewayXPCSubscriptionID
-  ) {
-    guard let state = events[subscriptionID] else {
-      return
+    maximumWireBytes: Int,
+    into continuation: GatewayBufferedStream<Data>.Continuation
+  ) -> Bool {
+    guard data.count <= maximumWireBytes else {
+      continuation.finish(
+        throwing: GatewayFailure(
+          code: .payloadTooLarge,
+          message: "The XPC event envelope exceeds the configured size limit."))
+      return false
     }
-    guard data.count <= configuration.maximumWireBytes else {
-      finishEvent(
-        response: (try? codec.encode(
-          GatewayXPCResponseEnvelope(
-            operation: .subscribeEvents,
-            failure: GatewayFailure(
-              code: .payloadTooLarge,
-              message: "The XPC event envelope exceeds the configured size limit."
-            )
-          )
-        )) ?? Data(),
-        subscriptionID: subscriptionID
-      )
-      return
-    }
-    switch state.continuation.yield(data) {
+    switch continuation.yield(data, wireBytes: data.count) {
     case .enqueued:
-      return
-    case .dropped, .terminated:
-      state.continuation.finish(
+      return true
+    case .dropped:
+      continuation.finish(
         throwing: GatewayFailure(
           code: .consumerTooSlow,
           message: "The XPC event consumer fell behind its bounded buffer.",
           isRetryable: true
         )
       )
-      events.removeValue(forKey: subscriptionID)
-      Task {
-        await cancelSubscription(state.cancellationEnvelope)
-      }
+      return false
+    case .terminated:
+      return false
     @unknown default:
-      state.continuation.finish(
+      continuation.finish(
         throwing: GatewayFailure(
           code: .consumerTooSlow,
           message: "The XPC event stream could not enqueue a record.",
           isRetryable: true
         )
       )
-      events.removeValue(forKey: subscriptionID)
-      Task {
-        await cancelSubscription(state.cancellationEnvelope)
-      }
+      return false
     }
   }
 
-  private func finishEvent(
+  private nonisolated static func finishEvent(
     response data: Data,
-    subscriptionID: GatewayXPCSubscriptionID
+    codec: GatewayWireCodec,
+    into continuation: GatewayBufferedStream<Data>.Continuation
   ) {
-    guard let state = events.removeValue(forKey: subscriptionID) else {
-      return
-    }
     do {
       let response = try codec.decode(GatewayXPCResponseEnvelope.self, from: data).validated()
       guard response.operation == .subscribeEvents else {
@@ -387,12 +403,12 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
         )
       }
       if let failure = response.failure {
-        state.continuation.finish(throwing: codec.canonicalFailure(from: failure))
+        continuation.finish(throwing: codec.canonicalFailure(from: failure))
       } else {
-        state.continuation.finish()
+        continuation.finish()
       }
     } catch {
-      state.continuation.finish(throwing: codec.canonicalFailure(from: error))
+      continuation.finish(throwing: codec.canonicalFailure(from: error))
     }
   }
 
@@ -419,19 +435,19 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
   }
 
   private final class EventSink: NSObject, HexGatewayXPCEventSinkProtocol {
-    private let receiveEventHandler: @Sendable (Data) -> Void
+    private let receiveEventHandler: @Sendable (Data) -> Bool
     private let finishHandler: @Sendable (Data) -> Void
 
     init(
-      receiveEvent: @escaping @Sendable (Data) -> Void,
+      receiveEvent: @escaping @Sendable (Data) -> Bool,
       finish: @escaping @Sendable (Data) -> Void
     ) {
       receiveEventHandler = receiveEvent
       finishHandler = finish
     }
 
-    func receiveEvent(_ envelope: Data) {
-      receiveEventHandler(envelope)
+    func receiveEvent(_ envelope: Data, withReply reply: @escaping @Sendable (Bool) -> Void) {
+      reply(receiveEventHandler(envelope))
     }
 
     func finish(_ response: Data) {

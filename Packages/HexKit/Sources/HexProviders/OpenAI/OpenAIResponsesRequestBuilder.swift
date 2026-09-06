@@ -3,9 +3,11 @@ import HexCore
 
 struct OpenAIResponsesRequestBuilder {
   private let configuration: OpenAIResponsesConfiguration
+  private let models: [ModelDescriptor]
 
-  init(configuration: OpenAIResponsesConfiguration) {
+  init(configuration: OpenAIResponsesConfiguration, models: [ModelDescriptor]? = nil) {
     self.configuration = configuration
+    self.models = models ?? configuration.models
   }
 
   func build(
@@ -85,10 +87,16 @@ struct OpenAIResponsesRequestBuilder {
     }
     body["tool_choice"] = try mapToolChoice(request.toolChoice)
 
-    if configuration.requestReasoningSummaries,
-      model.capabilities.contains(.reasoningSummary)
+    if model.capabilities.contains(.reasoningSummary)
+      || model.supportedReasoningEfforts?.isEmpty == false
     {
-      body["reasoning"] = .object(["summary": .string("auto")])
+      var reasoning: [String: JSONValue] = [
+        "effort": .string(try reasoningEffort(for: request, model: model))
+      ]
+      if configuration.requestReasoningSummaries, model.capabilities.contains(.reasoningSummary) {
+        reasoning["summary"] = .string("auto")
+      }
+      body["reasoning"] = .object(reasoning)
     }
 
     if let maxOutputTokens = request.options.maxOutputTokens {
@@ -140,10 +148,32 @@ struct OpenAIResponsesRequestBuilder {
     guard request.providerID == configuration.providerID else {
       throw OpenAIResponsesProviderError.invalidRequest
     }
-    guard let model = configuration.models.first(where: { $0.id == request.modelID }) else {
+    guard let model = models.first(where: { $0.id == request.modelID }) else {
       throw OpenAIResponsesProviderError.unsupportedModel
     }
     return model
+  }
+
+  private func reasoningEffort(
+    for request: InferenceRequest,
+    model: ModelDescriptor
+  ) throws -> String {
+    if let requested = request.options.reasoningEffort {
+      if let supported = model.supportedReasoningEfforts, !supported.contains(requested) {
+        throw OpenAIResponsesProviderError.invalidRequest
+      }
+      return requested.rawValue
+    }
+    let configured = configuration.reasoningEffort.rawValue
+    guard let supported = model.supportedReasoningEfforts else { return configured }
+    if supported.contains(where: { $0.rawValue == configured }) { return configured }
+    if let preferred = model.defaultReasoningEffort, supported.contains(preferred) {
+      return preferred.rawValue
+    }
+    guard let first = supported.first else {
+      throw OpenAIResponsesProviderError.invalidRequest
+    }
+    return first.rawValue
   }
 
   private func validateRequestShape(
@@ -160,6 +190,12 @@ struct OpenAIResponsesRequestBuilder {
     }
 
     guard model.capabilities.contains(.streaming) else {
+      throw OpenAIResponsesProviderError.invalidRequest
+    }
+    if request.options.reasoningEffort != nil,
+      !model.capabilities.contains(.reasoningSummary),
+      model.supportedReasoningEfforts?.isEmpty != false
+    {
       throw OpenAIResponsesProviderError.invalidRequest
     }
 
@@ -286,6 +322,11 @@ struct OpenAIResponsesRequestBuilder {
     }
 
     if let maximum = request.options.maxOutputTokens {
+      guard configuration.service == .platformAPI else {
+        // The subscription endpoint rejects this API-only field. An explicit caller request
+        // must fail locally rather than silently losing its promised server output constraint.
+        throw OpenAIResponsesProviderError.unsupportedOutputTokenLimit
+      }
       guard maximum > 0, model.maxOutputTokens.map({ maximum <= $0 }) ?? true else {
         throw OpenAIResponsesProviderError.invalidRequest
       }
@@ -375,7 +416,7 @@ struct OpenAIResponsesRequestBuilder {
         }
         messageContent.append(
           .object([
-            "type": .string("input_text"),
+            "type": .string(message.role == .assistant ? "output_text" : "input_text"),
             "text": .string(text),
           ])
         )
@@ -490,7 +531,7 @@ struct OpenAIResponsesRequestBuilder {
         )
       }
 
-      input.append(contentsOf: segment.outputItems)
+      input.append(contentsOf: try mapLocalReplayOutputItems(segment.outputItems))
       priorOutputItems = segment.outputItems
       messageCursor = segment.afterMessageCount
     }
@@ -506,6 +547,194 @@ struct OpenAIResponsesRequestBuilder {
       )
     )
     return input
+  }
+
+  private func mapLocalReplayOutputItems(
+    _ outputItems: [JSONValue]
+  ) throws -> [JSONValue] {
+    try outputItems.map { value in
+      guard
+        case .object(let item) = value,
+        case .string(let itemType)? = item["type"]
+      else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+
+      switch itemType {
+      case "reasoning":
+        guard
+          case .string(let encryptedContent)? = item["encrypted_content"],
+          !encryptedContent.isEmpty,
+          encryptedContent.utf8.count <= configuration.maximumLocalStateBytes,
+          case .array(let summary)? = item["summary"],
+          summary.count <= configuration.maximumOutputItems
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        let mappedSummary = try mapLocalReplayReasoningSummary(summary)
+        let mapped = JSONValue.object([
+          "type": .string("reasoning"),
+          "encrypted_content": .string(encryptedContent),
+          "summary": .array(mappedSummary),
+        ])
+        guard
+          OpenAIJSONValidator.measuredBytes(
+            for: mapped,
+            maximumDepth: configuration.maximumJSONDepth,
+            maximumNodes: configuration.maximumJSONNodes,
+            maximumStringBytes: configuration.maximumLocalStateBytes
+          ) != nil
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        return mapped
+
+      case "function_call":
+        guard
+          case .string(let callID)? = item["call_id"],
+          case .string(let name)? = item["name"],
+          case .string(let arguments)? = item["arguments"]
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        let call = ToolCall(
+          id: ToolCallID(rawValue: callID),
+          name: name,
+          arguments: try decodeReplayArguments(arguments)
+        )
+        try validateToolCall(call)
+        return .object([
+          "type": .string("function_call"),
+          "call_id": .string(callID),
+          "name": .string(name),
+          "arguments": .string(arguments),
+        ])
+
+      case "message":
+        guard
+          item["role"] == .string("assistant"),
+          case .string(let status)? = item["status"],
+          status == "completed" || status == "incomplete",
+          case .array(let content)? = item["content"],
+          content.count <= configuration.maximumOutputItems
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        let mappedContent = try mapLocalReplayMessageContent(content)
+        var mapped: [String: JSONValue] = [
+          "type": .string("message"),
+          "role": .string("assistant"),
+          "status": .string(status),
+          "content": .array(mappedContent),
+        ]
+        if case .string(let phase)? = item["phase"],
+          phase == "commentary" || phase == "final_answer"
+        {
+          mapped["phase"] = .string(phase)
+        }
+        let mappedValue = JSONValue.object(mapped)
+        guard
+          OpenAIJSONValidator.measuredBytes(
+            for: mappedValue,
+            maximumDepth: configuration.maximumJSONDepth,
+            maximumNodes: configuration.maximumJSONNodes,
+            maximumStringBytes: configuration.maximumInputValueBytes
+          ) != nil
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        return mappedValue
+
+      default:
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+    }
+  }
+
+  private func mapLocalReplayReasoningSummary(
+    _ summary: [JSONValue]
+  ) throws -> [JSONValue] {
+    try summary.map { value in
+      guard
+        case .object(let part) = value,
+        part["type"] == .string("summary_text"),
+        case .string(let text)? = part["text"],
+        text.utf8.count <= configuration.maximumInputValueBytes
+      else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+      return .object([
+        "type": .string("summary_text"),
+        "text": .string(text),
+      ])
+    }
+  }
+
+  private func mapLocalReplayMessageContent(
+    _ content: [JSONValue]
+  ) throws -> [JSONValue] {
+    try content.map { value in
+      guard
+        case .object(let part) = value,
+        case .string(let partType)? = part["type"]
+      else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+
+      switch partType {
+      case "output_text":
+        guard
+          case .string(let text)? = part["text"],
+          text.utf8.count <= configuration.maximumInputValueBytes,
+          case .array(let annotations)? = part["annotations"],
+          annotations.count <= configuration.maximumOutputItems
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        return .object([
+          "type": .string("output_text"),
+          "text": .string(text),
+          // Provider annotation identifiers are response-scoped and cannot be replayed safely.
+          "annotations": .array([]),
+        ])
+
+      case "refusal":
+        guard
+          case .string(let refusal)? = part["refusal"],
+          refusal.utf8.count <= configuration.maximumInputValueBytes
+        else {
+          throw OpenAIResponsesProviderError.localContinuationMismatch
+        }
+        return .object([
+          "type": .string("refusal"),
+          "refusal": .string(refusal),
+        ])
+
+      default:
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+    }
+  }
+
+  private func decodeReplayArguments(_ arguments: String) throws -> [String: JSONValue] {
+    let data = Data(arguments.utf8)
+    guard data.count <= configuration.maximumToolArgumentBytes else {
+      throw OpenAIResponsesProviderError.localContinuationMismatch
+    }
+    do {
+      try OpenAIJSONStructuralPreflight.validateObjectRoot(
+        data,
+        maximumDepth: configuration.maximumJSONDepth,
+        maximumNodes: configuration.maximumJSONNodes
+      )
+      let value = try JSONDecoder().decode(JSONValue.self, from: data)
+      guard case .object(let object) = value else {
+        throw OpenAIResponsesProviderError.localContinuationMismatch
+      }
+      return object
+    } catch {
+      throw OpenAIResponsesProviderError.localContinuationMismatch
+    }
   }
 
   private func mapToolContinuation(
@@ -730,13 +959,20 @@ struct OpenAIResponsesRequestBuilder {
   }
 
   private func mapToolResult(_ result: ToolResult) throws -> JSONValue {
-    guard isValidIdentifier(result.toolCallID.rawValue) else {
+    guard isValidIdentifier(result.toolCallID.rawValue), result.hasValidNonExecutionMetadata else {
       throw OpenAIResponsesProviderError.invalidRequest
     }
-    let output = JSONValue.object([
+    try ToolArtifactValidation.validate(result.artifacts)
+    var outputFields: [String: JSONValue] = [
       "status": .string(result.status.rawValue),
       "output": result.output,
-    ])
+    ]
+    if !result.artifacts.isEmpty { outputFields["artifacts"] = result.artifactDescriptions }
+    if let reason = result.notExecutedReason {
+      outputFields["execution"] = .string("not_executed")
+      outputFields["not_executed_reason"] = .string(reason.rawValue)
+    }
+    let output = JSONValue.object(outputFields)
     guard
       OpenAIJSONValidator.measuredBytes(
         for: output,

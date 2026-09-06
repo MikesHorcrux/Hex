@@ -35,6 +35,7 @@ readonly GATEWAY_APP_PROFILE="$GATEWAY_APP_BUNDLE/Contents/embedded.provisionpro
 readonly GATEWAY_BUNDLE_PROGRAM="Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway"
 readonly BUNDLED_LAUNCH_AGENT="$APP_BUNDLE/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist"
 readonly LAUNCH_AGENT_SOURCE="$ROOT_DIR/Resources/LaunchAgent/com.lunarmothstudios.hex.gateway.plist"
+readonly LAUNCHD_SERVICE_TARGET="gui/$(/usr/bin/id -u)/$HELPER_BUNDLE_ID"
 verified_app_pid=""
 signing_material_dir=""
 app_entitlements_path=""
@@ -265,6 +266,97 @@ wait_for_verified_app() {
     return 1
 }
 
+loaded_gateway_inode_for_pid() {
+    local candidate_pid="$1"
+
+    case "$candidate_pid" in
+        "" | *[!0-9]*)
+            return 1
+            ;;
+    esac
+
+    /usr/sbin/lsof -a -p "$candidate_pid" -d txt -F in 2>/dev/null \
+        | /usr/bin/awk -v expected_path="n$GATEWAY_BUNDLE_BINARY" '
+            /^i/ { inode = substr($0, 2); next }
+            $0 == expected_path { print inode; exit }
+        '
+}
+
+refresh_registered_gateway() {
+    local service_snapshot
+    local registered_parent
+    local registered_program
+    local running_pid
+    local loaded_inode
+    local bundled_inode
+    local attempt=0
+
+    if ! service_snapshot="$(/bin/launchctl print "$LAUNCHD_SERVICE_TARGET" 2>/dev/null)"; then
+        return 0
+    fi
+
+    registered_parent="$(
+        /usr/bin/printf '%s\n' "$service_snapshot" \
+            | /usr/bin/sed -n 's/^[[:space:]]*parent bundle identifier = //p' \
+            | /usr/bin/head -n 1
+    )"
+    registered_program="$(
+        /usr/bin/printf '%s\n' "$service_snapshot" \
+            | /usr/bin/sed -n 's/^[[:space:]]*program identifier = \([^ ]*\).*/\1/p' \
+            | /usr/bin/head -n 1
+    )"
+    if [[ "$registered_parent" != "$BUNDLE_ID" || "$registered_program" != "$GATEWAY_BUNDLE_PROGRAM" ]]; then
+        fail "the registered Hex Agent does not belong to the canonical $BUNDLE_ID bundle"
+    fi
+
+    /bin/launchctl kickstart -k "$LAUNCHD_SERVICE_TARGET" \
+        || fail "could not refresh the registered Hex Agent"
+    bundled_inode="$(/usr/bin/stat -f '%i' "$GATEWAY_BUNDLE_BINARY")" \
+        || fail "could not inspect the canonical Hex Agent executable"
+
+    while ((attempt < 20)); do
+        service_snapshot="$(/bin/launchctl print "$LAUNCHD_SERVICE_TARGET" 2>/dev/null || true)"
+        running_pid="$(
+            /usr/bin/printf '%s\n' "$service_snapshot" \
+                | /usr/bin/sed -n 's/^[[:space:]]*pid = //p' \
+                | /usr/bin/head -n 1
+        )"
+        loaded_inode="$(loaded_gateway_inode_for_pid "$running_pid" || true)"
+        if [[ -n "$loaded_inode" && "$loaded_inode" == "$bundled_inode" ]]; then
+            echo "refreshed the registered Hex Agent from $GATEWAY_APP_BUNDLE"
+            return 0
+        fi
+        /bin/sleep 0.25
+        attempt=$((attempt + 1))
+    done
+
+    fail "the registered Hex Agent did not load the canonical bundled executable"
+}
+
+verify_no_test_harness() {
+    local test_bundle
+
+    test_bundle="$(
+        /usr/bin/find "$APP_BUNDLE/Contents" -type d -name '*.xctest' -print -quit 2>/dev/null \
+            || true
+    )"
+    if [[ -n "$test_bundle" ]]; then
+        fail "the canonical Hex app still contains a test bundle: $test_bundle"
+    fi
+
+    for test_artifact in \
+        "$APP_BUNDLE/Contents/Frameworks/XCTest.framework" \
+        "$APP_BUNDLE/Contents/Frameworks/XCTestCore.framework" \
+        "$APP_BUNDLE/Contents/Frameworks/XCUIAutomation.framework" \
+        "$APP_BUNDLE/Contents/Frameworks/libXCTestBundleInject.dylib" \
+        "$APP_BUNDLE/Contents/Frameworks/libXCTestSwiftSupport.dylib"
+    do
+        if [[ -e "$test_artifact" ]]; then
+            fail "the canonical Hex app still contains test instrumentation: $test_artifact"
+        fi
+    done
+}
+
 case "$MODE" in
     run | --debug | debug | --logs | logs | --telemetry | telemetry | --verify | verify)
         ;;
@@ -277,7 +369,7 @@ esac
 stop_running_staged_apps
 
 DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" /usr/bin/xcodebuild \
-    build \
+    clean build \
     -project "$PROJECT_PATH" \
     -scheme "$APP_NAME" \
     -configuration Debug \
@@ -420,6 +512,7 @@ extract_entitlements "$GATEWAY_APP_BUNDLE" "$helper_entitlements_path"
 validate_helper_entitlements "$helper_entitlements_path"
 extract_entitlements "$APP_BUNDLE" "$app_entitlements_path"
 validate_single_keychain_group "$app_entitlements_path" "$RESIDENT_KEYCHAIN_GROUP"
+verify_no_test_harness
 verify_signed_artifact \
     "$APP_BUNDLE" \
     "$BUNDLE_ID" \
@@ -434,6 +527,16 @@ fi
 open_app() {
     /usr/bin/open "$APP_BUNDLE"
 }
+
+case "$MODE" in
+    --verify | verify)
+        ;;
+    *)
+        # Keep the user's existing SMAppService choice, but replace any running older helper with
+        # the just-built executable from this exact canonical bundle before the UI connects.
+        refresh_registered_gateway
+        ;;
+esac
 
 case "$MODE" in
     run)

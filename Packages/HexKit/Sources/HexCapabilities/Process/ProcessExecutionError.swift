@@ -7,4 +7,5 @@ public enum ProcessExecutionError: Error, Equatable, Sendable {
   case spawnFailed
   case ioFailure
   case cleanupFailed
+  case outputCaptureUnavailable
 }

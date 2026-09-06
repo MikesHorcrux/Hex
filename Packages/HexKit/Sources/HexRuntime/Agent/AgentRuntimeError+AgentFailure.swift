@@ -12,12 +12,14 @@ extension AgentRuntimeError {
         code: .unsupportedCapability,
         message: errorDescription ?? "Unsupported capability."
       )
-    case .providerFailure, .protocolViolation:
+    case .providerFailure(_, let providerRetryable):
       AgentFailure(
         code: .provider,
         message: errorDescription ?? "Inference provider failure.",
-        isRetryable: isRetryable
+        isRetryable: isRetryable && providerRetryable
       )
+    case .protocolViolation:
+      AgentFailure(code: .provider, message: errorDescription ?? "Inference provider failure.")
     case .authorizationFailure:
       AgentFailure(code: .authorization, message: errorDescription ?? "Authorization failure.")
     case .toolExecutionFailure:
@@ -25,5 +27,12 @@ extension AgentRuntimeError {
     case .journalFailure:
       AgentFailure(code: .journal, message: errorDescription ?? "Event journal failure.")
     }
+  }
+
+  func constrainingRetryability(to isRetryable: Bool) -> AgentRuntimeError {
+    guard case .providerFailure(let message, let providerRetryable) = self else {
+      return self
+    }
+    return .providerFailure(message, isRetryable: isRetryable && providerRetryable)
   }
 }
