@@ -1,7 +1,7 @@
 # MCP reliability implementation and qualification
 
 Ticket: **Make MCP connections and tool outcomes dependable**
-(`DEABD2A2-C45F-4997-BC48-BAC92B7733F9`), Hex / In Progress.
+(`DEABD2A2-C45F-4997-BC48-BAC92B7733F9`), Hex.
 
 Worktree: `/Users/horcrux/ActiveDev/Hex-worktrees/mcp-reliability`
 Branch: `codex/mcp-reliability`
@@ -45,10 +45,11 @@ Log: `transport-before.log`.
 
 ## Verified outcome
 
-Implementation and isolated development qualification are complete. The ticket remains **In Progress**
-for integrator review, integration, and canonical resident activation. No feature commit has been
-created: worktree HEAD remains the base SHA above, with this ticket's changes unstaged. The original
-`/Users/horcrux/ActiveDev/Hex` checkout remains clean on `dev` at the same base.
+Implementation, integration and canonical activation are complete following the user's explicit
+instruction to finish the ticket. Implementation commit:
+`8d2b453a6de30a32dc4756a4adf29282c6f8c84a`. Integration into `dev`:
+`508abcf2e5538de25b0f5bb6292f44912f3f1cc1`. The evidence below distinguishes the complete hosted
+execution checks from the additional real installed-resident setup and recovery checks.
 
 | Check | Result | Evidence in the directory above |
 | --- | --- | --- |
@@ -147,18 +148,70 @@ hosted button lookup. A source-only test build also omitted the helper and faile
 live-client availability test; the final complete signed build includes it and the full app suite is
 green. These earlier logs are retained as diagnostic history, not unresolved failures.
 
-## Remaining integration boundary
+## Canonical activation and live closeout
 
-The running canonical app and resident were not replaced, restarted, registered, or activated. The
-hosted flow exercised the production settings and gateway composition with controlled servers, but
-it did not route through the installed launchd/XPC resident or use production provider credentials.
-Protocol 1.15 must be integrated and activated for both app and helper together before claiming that
-the user's installed app has this behavior. Distribution/Release qualification is outside this ticket.
+The user explicitly authorized committing, integrating and activating this ticket. After the reviewed
+feature commit was merged into `dev` with a non-fast-forward merge, the canonical command completed:
 
-Per [ownership](ownership.md), the integration owner reviews and merges completed feature work into
-`dev`; contributors do not merge into `dev`. No commit, merge, push, new service registration, privacy
-grant, OAuth login, model download, or production credential change was performed. This report and
-the uncommitted diff are ready for that review.
+```sh
+cd /Users/horcrux/ActiveDev/Hex
+./script/build_and_run.sh
+```
+
+It clean-built the actual Debug app, verified the nested and outer signatures and absence of test
+instrumentation, refreshed the existing registered Hex Agent, and checked that the running helper's
+loaded inode matched the canonical bundled executable. It did not create a new LaunchAgent.
+The running app is:
+`/Users/horcrux/Library/Developer/Xcode/DerivedData/Hex-bomqcmhuauiemgflgzlxcpdesllh/Build/Products/Debug/Hex.app`.
+
+The actual General settings panel reported protocol **1.15**, app code
+`7EB47BE6-3098-3C70-B251-D45CF7D51C62`, and agent build prefix `EAB8256B`.
+The helper's complete Mach-O UUID is `EAB8256B-0309-3BF3-AE43-9D42E828BDA3`.
+The final resident PID and loaded-inode check are recorded in `canonical-activation.json`.
+
+Using the actual running Settings > Tools UI, two uniquely named disposable connections were added:
+`qa_http_b9547bd4` and `qa_stdio_b9547bd4`. The HTTP token was a synthetic fixture credential.
+The real Save action wrote the token through Keychain and restarted/reconnected the resident.
+Both connections reported **Connected · 1 tool** through the real installed XPC connection. Actual
+Check connection actions fetched fresh catalogs. Server-side journals recorded authenticated HTTP
+initialization, initialized notification, and tool discovery, plus real stdio protocol traffic.
+
+The HTTP fixture then rejected authorization with 401. Its row displayed actionable token-repair
+advice while stdio stayed connected. After the fixture restored authorization, the actual Retry action
+initialized a fresh session and recovered to **Connected · 1 tool**. No cloud inference was invoked in
+this additional live check. Harmless tool execution, receipt durability, cancellation, catalog and
+unknown-outcome boundaries were proven by the complete hosted/package checks above; the additional
+canonical check specifically proves installed setup, Keychain authorization, XPC discovery and recovery.
+
+Both temporary connections were removed using the real UI, and Save successfully applied cleanup,
+including the synthetic token deletion. Saved settings were compared against the pre-test baseline:
+all original choices were preserved; only the newly supported explicit default
+`requiresBearerToken=false` was serialized for the original connections. The owned HTTP process was
+stopped after identity verification, and neither fixture process remained. The canonical app and
+resident remain active with the original connection set.
+
+The configured Xcode connection reported a timeout before fixture setup and remains optional and
+isolated. Screen control exposed 26 tools before and during the fixture checks, then reported a timeout
+after the final cleanup restart and subsequent retries. Read-only inspection found that Peekaboo
+registered its 26 tools, started its server, and exited; Accessibility remained granted and no new crash
+report was found. The existing managed startup deadline and Peekaboo configuration are unchanged.
+No cause was established, and this report does not attribute that server-availability observation to
+the environment or the source change. Browser control remains connected with 24 tools.
+Availability of a particular external server is reported independently from the proven controlled
+MCP lifecycle. No external-provider, distribution/Release, privacy-grant or notarization claim is made.
+Unknown actions still require manual/server-specific inspection as described above.
+
+Closeout evidence in the directory above:
+
+- `canonical-build-run.log`: successful clean build, signature checks and registered helper refresh.
+- `canonical-activation.json`: canonical paths, binary identities and final loaded helper check.
+- `canonical-mcp-lifecycle-evidence.json`: real HTTP/stdio initialization, auth rejection, recovery and cleanup.
+- `canonical-settings-restored.json`: original saved settings preserved after removing test entries.
+- Native app screenshots and accessibility observations in the associated Codex task: protocol 1.15,
+  both connected catalogs, actionable authorization failure, recovery, and successful cleanup.
+
+The later closeout commit changes this report only; the running production source is identical to the
+qualified integration commit. Nothing was pushed or published.
 
 ## Exact changed files
 
