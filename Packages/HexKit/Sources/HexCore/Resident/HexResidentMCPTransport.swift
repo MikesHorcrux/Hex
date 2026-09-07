@@ -4,4 +4,5 @@ public enum HexResidentMCPTransport: String, Codable, Equatable, Sendable {
   case playwright
   case xcode
   case streamableHTTP
+  case stdio
 }

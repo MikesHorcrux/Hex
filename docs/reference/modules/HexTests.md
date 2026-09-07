@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**49 Swift files.** Generated; do not edit by hand.
+**52 Swift files.** Generated; do not edit by hand.
 
 ## HexTests/Agent
 
@@ -99,8 +99,16 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [HexMCPServerSetupTests.swift](../../../HexTests/Resident/HexMCPServerSetupTests.swift) | — |
+| [HexMCPSetupViewCaptureTests.swift](../../../HexTests/Resident/HexMCPSetupViewCaptureTests.swift) | Explicitly opted in: real SwiftUI controls and local protocol fixtures, no resident or live secrets. |
 | [HexManagedToolProcessRunnerTests.swift](../../../HexTests/Resident/HexManagedToolProcessRunnerTests.swift) | — |
 | [HexResidentGatewayActivationCheckerTests.swift](../../../HexTests/Resident/HexResidentGatewayActivationCheckerTests.swift) | — |
 | [HexResidentSetupModelTests.swift](../../../HexTests/Resident/HexResidentSetupModelTests.swift) | — |
 | [HexToolConnectionPresentationTests.swift](../../../HexTests/Resident/HexToolConnectionPresentationTests.swift) | — |
 | [HexToolConnectionsModelTests.swift](../../../HexTests/Resident/HexToolConnectionsModelTests.swift) | — |
+
+## HexTests/Support
+
+| Source file | Leading source documentation |
+| --- | --- |
+| [HexControlledMCPServerFixture.swift](../../../HexTests/Support/HexControlledMCPServerFixture.swift) | Real loopback HTTP and stdio protocol fixtures; never reads the user's environment or credentials. |

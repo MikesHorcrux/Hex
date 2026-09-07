@@ -4,7 +4,7 @@
 
 macOS app composition, observable models, services and SwiftUI views.
 
-**220 Swift files.** Generated; do not edit by hand.
+**225 Swift files.** Generated; do not edit by hand.
 
 ## Hex/App
 
@@ -132,7 +132,9 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexHTTPMCPServer.swift](../../../Hex/Models/Resident/HexHTTPMCPServer.swift) | — |
+| [HexMCPSecretChange.swift](../../../Hex/Models/Resident/HexMCPSecretChange.swift) | A transient edit; the value is never encoded into resident settings or diagnostics. |
 | [HexResidentSetupModel.swift](../../../Hex/Models/Resident/HexResidentSetupModel.swift) | — |
+| [HexStdioMCPServer.swift](../../../Hex/Models/Resident/HexStdioMCPServer.swift) | — |
 | [HexToolConnectionPresentation.swift](../../../Hex/Models/Resident/HexToolConnectionPresentation.swift) | Only vetted local strings become action guidance; server errors are never rendered verbatim. |
 | [HexToolConnectionsModel.swift](../../../Hex/Models/Resident/HexToolConnectionsModel.swift) | A live resident snapshot, deliberately separate from editable/saved integration settings. |
 
@@ -353,6 +355,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [HexComputerAccessView.swift](../../../Hex/Views/Settings/HexComputerAccessView.swift) | — |
 | [HexExternalComputerPermissionsView.swift](../../../Hex/Views/Settings/HexExternalComputerPermissionsView.swift) | — |
 | [HexGeneralSettingsView.swift](../../../Hex/Views/Settings/HexGeneralSettingsView.swift) | — |
+| [HexHTTPMCPServerRowView.swift](../../../Hex/Views/Settings/HexHTTPMCPServerRowView.swift) | — |
 | [HexHTTPMCPServersView.swift](../../../Hex/Views/Settings/HexHTTPMCPServersView.swift) | — |
 | [HexInferenceBackendFormView.swift](../../../Hex/Views/Settings/HexInferenceBackendFormView.swift) | — |
 | [HexInferenceBackendSettingsView.swift](../../../Hex/Views/Settings/HexInferenceBackendSettingsView.swift) | — |
@@ -374,6 +377,8 @@ macOS app composition, observable models, services and SwiftUI views.
 | [HexResidentSetupView.swift](../../../Hex/Views/Settings/HexResidentSetupView.swift) | — |
 | [HexSettingsPageHeaderView.swift](../../../Hex/Views/Settings/HexSettingsPageHeaderView.swift) | — |
 | [HexSettingsView.swift](../../../Hex/Views/Settings/HexSettingsView.swift) | — |
+| [HexStdioMCPServerRowView.swift](../../../Hex/Views/Settings/HexStdioMCPServerRowView.swift) | — |
+| [HexStdioMCPServersView.swift](../../../Hex/Views/Settings/HexStdioMCPServersView.swift) | — |
 | [HexToolConnectionRowView.swift](../../../Hex/Views/Settings/HexToolConnectionRowView.swift) | — |
 | [HexToolConnectionsSectionView.swift](../../../Hex/Views/Settings/HexToolConnectionsSectionView.swift) | — |
 | [HexToolsSettingsView.swift](../../../Hex/Views/Settings/HexToolsSettingsView.swift) | — |

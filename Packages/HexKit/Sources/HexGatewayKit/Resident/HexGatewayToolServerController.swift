@@ -77,6 +77,7 @@ public actor HexGatewayToolServerController {
     case .configurationInvalid: failure = .configurationInvalid
     case .connectionTimedOut: failure = .connectionTimedOut
     case .serverRejected: failure = .serverRejected
+    case .authenticationRejected: failure = .authenticationRejected
     case .invalidResponse: failure = .invalidResponse
     case .connectionFailed: failure = .connectionFailed
     case nil: failure = nil

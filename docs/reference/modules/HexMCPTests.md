@@ -4,13 +4,14 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**23 Swift files.** Generated; do not edit by hand.
+**26 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexMCPTests/Client
 
 | Source file | Leading source documentation |
 | --- | --- |
 | [LocalMCPClientSessionCatalogRefreshTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Client/LocalMCPClientSessionCatalogRefreshTests.swift) | — |
+| [LocalMCPClientSessionFailureOwnershipTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Client/LocalMCPClientSessionFailureOwnershipTests.swift) | — |
 | [LocalMCPClientSessionTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Client/LocalMCPClientSessionTests.swift) | — |
 | [MCPDeferredClientSessionTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Client/MCPDeferredClientSessionTests.swift) | — |
 | [ManagedMCPExternalIntegrationTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Client/ManagedMCPExternalIntegrationTests.swift) | — |
@@ -26,6 +27,8 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [MCPSSEEventFramerTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/HTTP/MCPSSEEventFramerTests.swift) | — |
+| [StreamableHTTPMCPClientSessionReceiptTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/HTTP/StreamableHTTPMCPClientSessionReceiptTests.swift) | — |
 | [StreamableHTTPMCPClientSessionTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/HTTP/StreamableHTTPMCPClientSessionTests.swift) | — |
 
 ## Packages/HexKit/Tests/HexMCPTests

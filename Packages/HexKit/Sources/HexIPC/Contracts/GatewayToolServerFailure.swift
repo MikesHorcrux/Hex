@@ -4,6 +4,7 @@ public enum GatewayToolServerFailure: String, Codable, Equatable, Sendable {
   case configurationInvalid
   case connectionTimedOut
   case serverRejected
+  case authenticationRejected
   case invalidResponse
   case connectionFailed
 }

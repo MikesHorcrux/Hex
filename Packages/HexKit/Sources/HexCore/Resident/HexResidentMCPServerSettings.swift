@@ -9,14 +9,30 @@ public struct HexResidentMCPServerSettings: Codable, Equatable, Sendable {
   public let transport: HexResidentMCPTransport
   public let endpointURL: URL?
   public let isEnabled: Bool
+  public let requiresBearerToken: Bool
+  public let executableURL: URL?
+  public let arguments: [String]
+  public let workingDirectory: URL?
 
   public init(
     serverID: String,
     transport: HexResidentMCPTransport,
     endpointURL: URL? = nil,
-    isEnabled: Bool = true
+    isEnabled: Bool = true,
+    requiresBearerToken: Bool = false,
+    executableURL: URL? = nil,
+    arguments: [String] = [],
+    workingDirectory: URL? = nil
   ) throws {
     guard Self.isValidServerID(serverID) else {
+      throw HexResidentRuntimeSettingsError.invalidMCPServers
+    }
+    if transport != .stdio,
+      executableURL != nil || !arguments.isEmpty || workingDirectory != nil
+    {
+      throw HexResidentRuntimeSettingsError.invalidMCPServers
+    }
+    if transport != .streamableHTTP && requiresBearerToken {
       throw HexResidentRuntimeSettingsError.invalidMCPServers
     }
     switch transport {
@@ -36,11 +52,24 @@ public struct HexResidentMCPServerSettings: Codable, Equatable, Sendable {
       guard let endpointURL, Self.isValidEndpoint(endpointURL) else {
         throw HexResidentRuntimeSettingsError.invalidMCPServers
       }
+    case .stdio:
+      guard endpointURL == nil,
+        !["peekaboo", "playwright", "xcode"].contains(serverID),
+        let executableURL, Self.isValidFileURL(executableURL),
+        let workingDirectory, Self.isValidFileURL(workingDirectory),
+        Self.isValidArguments(arguments)
+      else {
+        throw HexResidentRuntimeSettingsError.invalidMCPServers
+      }
     }
     self.serverID = serverID
     self.transport = transport
     self.endpointURL = endpointURL
     self.isEnabled = isEnabled
+    self.requiresBearerToken = requiresBearerToken
+    self.executableURL = executableURL
+    self.arguments = arguments
+    self.workingDirectory = workingDirectory
   }
 
   public static func xcode(isEnabled: Bool = true) throws -> Self {
@@ -60,6 +89,10 @@ public struct HexResidentMCPServerSettings: Codable, Equatable, Sendable {
     case transport
     case endpointURL
     case isEnabled
+    case requiresBearerToken
+    case executableURL
+    case arguments
+    case workingDirectory
   }
 
   public init(from decoder: Decoder) throws {
@@ -68,7 +101,12 @@ public struct HexResidentMCPServerSettings: Codable, Equatable, Sendable {
       serverID: container.decode(String.self, forKey: .serverID),
       transport: container.decode(HexResidentMCPTransport.self, forKey: .transport),
       endpointURL: container.decodeIfPresent(URL.self, forKey: .endpointURL),
-      isEnabled: container.decode(Bool.self, forKey: .isEnabled)
+      isEnabled: container.decode(Bool.self, forKey: .isEnabled),
+      requiresBearerToken: container.decodeIfPresent(Bool.self, forKey: .requiresBearerToken)
+        ?? false,
+      executableURL: container.decodeIfPresent(URL.self, forKey: .executableURL),
+      arguments: container.decodeIfPresent([String].self, forKey: .arguments) ?? [],
+      workingDirectory: container.decodeIfPresent(URL.self, forKey: .workingDirectory)
     )
   }
 
@@ -78,6 +116,28 @@ public struct HexResidentMCPServerSettings: Codable, Equatable, Sendable {
     try container.encode(transport, forKey: .transport)
     try container.encodeIfPresent(endpointURL, forKey: .endpointURL)
     try container.encode(isEnabled, forKey: .isEnabled)
+    try container.encode(requiresBearerToken, forKey: .requiresBearerToken)
+    try container.encodeIfPresent(executableURL, forKey: .executableURL)
+    if !arguments.isEmpty { try container.encode(arguments, forKey: .arguments) }
+    try container.encodeIfPresent(workingDirectory, forKey: .workingDirectory)
+  }
+
+  private static func isValidFileURL(_ url: URL) -> Bool {
+    url.isFileURL && url.path.hasPrefix("/") && url.path.utf8.count <= 4_096
+      && !url.path.contains("\0") && url.query == nil && url.fragment == nil
+      && url.user == nil && url.password == nil
+      && (url.host == nil || url.host == "" || url.host == "localhost")
+  }
+
+  private static func isValidArguments(_ arguments: [String]) -> Bool {
+    guard arguments.count <= 256 else { return false }
+    var totalBytes = 0
+    for argument in arguments {
+      guard !argument.contains("\0"), argument.utf8.count <= 64 * 1_024 else { return false }
+      totalBytes += argument.utf8.count + 1
+      guard totalBytes <= 256 * 1_024 else { return false }
+    }
+    return true
   }
 
   private static func isValidServerID(_ value: String) -> Bool {

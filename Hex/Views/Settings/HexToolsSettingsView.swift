@@ -14,6 +14,7 @@ struct HexToolsSettingsView: View {
         suppressAutomaticRefresh: suppressAutomaticRefresh)
       HexMCPIntegrationsView(model: model)
       HexHTTPMCPServersView(model: model)
+      HexStdioMCPServersView(model: model)
 
       if let statusMessage = model.statusMessage {
         HexInlineNoticeView(

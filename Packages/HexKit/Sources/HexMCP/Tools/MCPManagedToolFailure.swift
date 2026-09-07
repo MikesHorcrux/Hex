@@ -3,6 +3,7 @@ public enum MCPManagedToolFailure: String, Equatable, Sendable {
   case componentMissing
   case configurationInvalid
   case connectionTimedOut
+  case authenticationRejected
   case serverRejected
   case invalidResponse
   case connectionFailed
@@ -19,6 +20,7 @@ public enum MCPManagedToolFailure: String, Equatable, Sendable {
     case let error as MCPClientSessionError:
       switch error {
       case .requestTimedOut: return .connectionTimedOut
+      case .authenticationRejected: return .authenticationRejected
       case .unsupportedProtocolVersion, .toolsUnavailable, .remoteError: return .serverRejected
       case .protocolViolation, .limitExceeded: return .invalidResponse
       case .notConnected, .alreadyConnected, .connectionClosed: return .connectionFailed

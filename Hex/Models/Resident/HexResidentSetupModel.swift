@@ -17,6 +17,7 @@ final class HexResidentSetupModel {
   /// Loaded saved policy, or the exact policy whose save/apply completed. Never the editable draft.
   private(set) var savedAuthorizationMode: HexAuthorizationMode?
   private(set) var httpMCPServers: [HexHTTPMCPServer] = []
+  private(set) var stdioMCPServers: [HexStdioMCPServer] = []
 
   private(set) var isLoading = false
   private(set) var isSaving = false
@@ -43,6 +44,8 @@ final class HexResidentSetupModel {
   private var hasLoaded = false
   private var hasAttemptedLoad = false
   private var loadedMCPServers: [HexResidentMCPServerSettings] = []
+  private var mcpSecretChanges: [HexMCPSecretChange] = []
+  private var storedMCPSecretChangeKeys: Set<HexSecretKey> = []
   @ObservationIgnored private var screenPermissionTask: Task<Void, Never>?
   private var permissionGeneration = UUID()
 
@@ -146,15 +149,34 @@ final class HexResidentSetupModel {
         authorizationMode = settings.authorizationMode
         savedAuthorizationMode = settings.authorizationMode
         loadedMCPServers = settings.mcpServers
-        httpMCPServers = settings.mcpServers.compactMap { setting in
+        var loadedHTTPServers: [HexHTTPMCPServer] = []
+        for setting in settings.mcpServers {
           guard setting.transport == .streamableHTTP, let endpointURL = setting.endpointURL else {
-            return nil
+            continue
           }
-          return HexHTTPMCPServer(
-            serverID: setting.serverID,
-            endpointURL: endpointURL,
-            isEnabled: setting.isEnabled
-          )
+          let key = try HexSecretKey.mcpBearerToken(
+            serverID: setting.serverID, endpointURL: endpointURL)
+          let hasStoredToken =
+            setting.requiresBearerToken
+            ? try await Self.mcpTokenExists(key, in: secretStore) : false
+          try Task.checkCancellation()
+          loadedHTTPServers.append(
+            HexHTTPMCPServer(
+              serverID: setting.serverID,
+              endpointURL: endpointURL,
+              isEnabled: setting.isEnabled,
+              requiresBearerToken: setting.requiresBearerToken,
+              hasStoredBearerToken: hasStoredToken
+            ))
+        }
+        httpMCPServers = loadedHTTPServers
+        stdioMCPServers = settings.mcpServers.compactMap { setting in
+          guard setting.transport == .stdio, let executableURL = setting.executableURL,
+            let workingDirectory = setting.workingDirectory
+          else { return nil }
+          return HexStdioMCPServer(
+            serverID: setting.serverID, executableURL: executableURL, arguments: setting.arguments,
+            workingDirectory: workingDirectory, isEnabled: setting.isEnabled)
         }
         peekabooMCPEnabled = settings.mcpServers.contains {
           $0.serverID == "peekaboo" && $0.transport == .peekaboo && $0.isEnabled
@@ -192,6 +214,7 @@ final class HexResidentSetupModel {
   }
 
   func setPlaywrightEnabled(_ isEnabled: Bool) {
+    guard !isSaving else { return }
     guard isEnabled else {
       playwrightMCPEnabled = false
       return
@@ -200,6 +223,7 @@ final class HexResidentSetupModel {
   }
 
   func setPeekabooEnabled(_ isEnabled: Bool) {
+    guard !isSaving else { return }
     guard isEnabled else {
       peekabooMCPEnabled = false
       return
@@ -349,13 +373,15 @@ final class HexResidentSetupModel {
     }
   }
 
-  func addHTTPMCPServer(serverID: String, endpoint: String) -> Bool {
+  func addHTTPMCPServer(serverID: String, endpoint: String, bearerToken: String = "") -> Bool {
+    guard canEditMCPServers else { return false }
     let normalizedServerID = serverID.trimmingCharacters(in: .whitespacesAndNewlines)
     let normalizedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
     let reservedServerIDs: Set<String> = ["peekaboo", "playwright", "xcode"]
     guard
       !reservedServerIDs.contains(normalizedServerID),
       !httpMCPServers.contains(where: { $0.serverID == normalizedServerID }),
+      !stdioMCPServers.contains(where: { $0.serverID == normalizedServerID }),
       let endpointURL = URL(string: normalizedEndpoint),
       let setting = try? HexResidentMCPServerSettings(
         serverID: normalizedServerID,
@@ -369,21 +395,31 @@ final class HexResidentSetupModel {
       statusMessage = nil
       return false
     }
+    guard bearerToken.isEmpty || Self.isValidBearerToken(bearerToken) else {
+      reportInvalidBearerToken()
+      return false
+    }
     httpMCPServers.append(
       HexHTTPMCPServer(
         serverID: setting.serverID,
         endpointURL: validatedEndpointURL,
-        isEnabled: true
+        isEnabled: true,
+        requiresBearerToken: !bearerToken.isEmpty
       )
     )
     httpMCPServers.sort { $0.serverID < $1.serverID }
     errorMessage = nil
     statusMessage = nil
+    if !bearerToken.isEmpty {
+      _ = stageHTTPMCPBearerToken(setting.serverID, token: bearerToken)
+    }
     return true
   }
 
   func setHTTPMCPServerEnabled(_ serverID: String, isEnabled: Bool) {
-    guard let index = httpMCPServers.firstIndex(where: { $0.serverID == serverID }) else {
+    guard canEditMCPServers,
+      let index = httpMCPServers.firstIndex(where: { $0.serverID == serverID })
+    else {
       return
     }
     httpMCPServers[index].isEnabled = isEnabled
@@ -392,8 +428,141 @@ final class HexResidentSetupModel {
   }
 
   func removeHTTPMCPServer(_ serverID: String) {
+    guard canEditMCPServers else { return }
+    removeHTTPMCPBearerToken(serverID)
     httpMCPServers.removeAll { $0.serverID == serverID }
     errorMessage = nil
+    statusMessage = nil
+  }
+
+  var canEditMCPServers: Bool { hasLoaded && !isLoading && !isSaving }
+
+  func hasPendingBearerTokenChange(_ serverID: String) -> Bool {
+    guard let server = httpMCPServers.first(where: { $0.serverID == serverID }),
+      let key = try? HexSecretKey.mcpBearerToken(
+        serverID: serverID, endpointURL: server.endpointURL)
+    else { return false }
+    return mcpSecretChanges.contains { $0.key == key }
+  }
+
+  func isBearerTokenChangeStored(_ serverID: String) -> Bool {
+    guard let server = httpMCPServers.first(where: { $0.serverID == serverID }),
+      let key = try? HexSecretKey.mcpBearerToken(
+        serverID: serverID, endpointURL: server.endpointURL)
+    else { return false }
+    return storedMCPSecretChangeKeys.contains(key)
+  }
+
+  func stageHTTPMCPBearerToken(_ serverID: String, token: String) -> Bool {
+    guard canEditMCPServers,
+      let index = httpMCPServers.firstIndex(where: { $0.serverID == serverID }),
+      let key = try? HexSecretKey.mcpBearerToken(
+        serverID: serverID, endpointURL: httpMCPServers[index].endpointURL)
+    else { return false }
+    guard Self.isValidBearerToken(token) else {
+      reportInvalidBearerToken()
+      return false
+    }
+    mcpSecretChanges.removeAll { $0.key == key }
+    storedMCPSecretChangeKeys.remove(key)
+    mcpSecretChanges.append(HexMCPSecretChange(key: key, value: token))
+    httpMCPServers[index].requiresBearerToken = true
+    errorMessage = nil
+    statusMessage = "Token ready to save. Save to store it in Keychain and apply the connection."
+    return true
+  }
+
+  func removeHTTPMCPBearerToken(_ serverID: String) {
+    guard canEditMCPServers,
+      let index = httpMCPServers.firstIndex(where: { $0.serverID == serverID }),
+      let key = try? HexSecretKey.mcpBearerToken(
+        serverID: serverID, endpointURL: httpMCPServers[index].endpointURL)
+    else { return }
+    guard
+      httpMCPServers[index].requiresBearerToken
+        || httpMCPServers[index].hasStoredBearerToken != false
+        || mcpSecretChanges.contains(where: { $0.key == key })
+    else { return }
+    mcpSecretChanges.removeAll { $0.key == key }
+    storedMCPSecretChangeKeys.remove(key)
+    mcpSecretChanges.append(HexMCPSecretChange(key: key, value: nil))
+    httpMCPServers[index].requiresBearerToken = false
+    errorMessage = nil
+    statusMessage =
+      "Token removal ready to save. Save to remove it from Keychain and apply the connection."
+  }
+
+  func addStdioMCPServer(
+    serverID: String, executablePath: String, argumentsText: String, workingDirectoryPath: String
+  ) -> Bool {
+    guard canEditMCPServers else { return false }
+    let normalizedID = serverID.trimmingCharacters(in: .whitespacesAndNewlines)
+    let executable = executablePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    let directory = workingDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    let arguments = argumentsText.isEmpty ? [] : argumentsText.components(separatedBy: "\n")
+    guard !["peekaboo", "playwright", "xcode"].contains(normalizedID),
+      !httpMCPServers.contains(where: { $0.serverID == normalizedID }),
+      !stdioMCPServers.contains(where: { $0.serverID == normalizedID }),
+      executable.hasPrefix("/"), directory.hasPrefix("/"),
+      let setting = try? HexResidentMCPServerSettings(
+        serverID: normalizedID, transport: .stdio,
+        executableURL: URL(fileURLWithPath: executable), arguments: arguments,
+        workingDirectory: URL(fileURLWithPath: directory)),
+      let executableURL = setting.executableURL, let workingDirectory = setting.workingDirectory
+    else {
+      errorMessage =
+        "Enter a unique lowercase connection name and absolute executable and working folder paths."
+      statusMessage = nil
+      return false
+    }
+    stdioMCPServers.append(
+      HexStdioMCPServer(
+        serverID: normalizedID, executableURL: executableURL, arguments: arguments,
+        workingDirectory: workingDirectory, isEnabled: true))
+    stdioMCPServers.sort { $0.serverID < $1.serverID }
+    errorMessage = nil
+    statusMessage = nil
+    return true
+  }
+
+  func setStdioMCPServerEnabled(_ serverID: String, isEnabled: Bool) {
+    guard canEditMCPServers,
+      let index = stdioMCPServers.firstIndex(where: { $0.serverID == serverID })
+    else { return }
+    stdioMCPServers[index].isEnabled = isEnabled
+    errorMessage = nil
+    statusMessage = nil
+  }
+
+  func removeStdioMCPServer(_ serverID: String) {
+    guard canEditMCPServers else { return }
+    stdioMCPServers.removeAll { $0.serverID == serverID }
+    errorMessage = nil
+    statusMessage = nil
+  }
+
+  private static func isValidBearerToken(_ token: String) -> Bool {
+    !token.isEmpty && token.utf8.count <= 16 * 1_024 - 7
+      && token.utf8.allSatisfy { (0x21...0x7E).contains($0) }
+  }
+
+  private static func mcpTokenExists(_ key: HexSecretKey, in store: any HexSecretStore) async throws
+    -> Bool?
+  {
+    do {
+      let exists = try await store.exists(key)
+      try Task.checkCancellation()
+      return exists
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      try Task.checkCancellation()
+      return nil
+    }
+  }
+
+  private func reportInvalidBearerToken() {
+    errorMessage = "Enter a bearer token without spaces or line breaks (up to 16 KB)."
     statusMessage = nil
   }
 
@@ -451,20 +620,25 @@ final class HexResidentSetupModel {
 
     let settings: HexResidentRuntimeSettings
     do {
-      let builtInServerIDs: Set<String> = ["peekaboo", "playwright", "xcode"]
-      var mcpServers = loadedMCPServers.filter {
-        !builtInServerIDs.contains($0.serverID) && $0.transport != .streamableHTTP
-      }
+      var mcpServers: [HexResidentMCPServerSettings] = []
       mcpServers.append(
         contentsOf: try httpMCPServers.map { server in
           try HexResidentMCPServerSettings(
             serverID: server.serverID,
             transport: .streamableHTTP,
             endpointURL: server.endpointURL,
-            isEnabled: server.isEnabled
+            isEnabled: server.isEnabled,
+            requiresBearerToken: server.requiresBearerToken
           )
         }
       )
+      mcpServers.append(
+        contentsOf: try stdioMCPServers.map { server in
+          try HexResidentMCPServerSettings(
+            serverID: server.serverID, transport: .stdio, isEnabled: server.isEnabled,
+            executableURL: server.executableURL, arguments: server.arguments,
+            workingDirectory: server.workingDirectory)
+        })
       if peekabooMCPEnabled {
         mcpServers.append(try .peekaboo())
       }
@@ -486,20 +660,40 @@ final class HexResidentSetupModel {
     }
 
     isSaving = true
-    return SaveRequest(settings: settings, apiKey: normalizedAPIKey)
+    return SaveRequest(
+      settings: settings, apiKey: normalizedAPIKey, mcpSecretChanges: mcpSecretChanges)
   }
 
   private func persist(_ request: SaveRequest) async -> Bool {
     defer { isSaving = false }
     guard let settingsStore, let secretStore else { return false }
     var isReloading = false
+    var didSaveSettings = false
     do {
       try Task.checkCancellation()
       // Keep settings and credential persistence separate; a failed settings write cannot replace
       // a credential still used by the resident. The awaited result covers both stores and reload.
       try await settingsStore.save(request.settings)
+      didSaveSettings = true
+      try Task.checkCancellation()
       if !request.apiKey.isEmpty {
         try await secretStore.save(request.apiKey, for: .openAIAPIKey)
+      }
+      for change in request.mcpSecretChanges {
+        try Task.checkCancellation()
+        if let value = change.value {
+          try await secretStore.save(value, for: change.key)
+        } else {
+          try await secretStore.delete(change.key)
+        }
+        storedMCPSecretChangeKeys.insert(change.key)
+      }
+      for index in httpMCPServers.indices {
+        let server = httpMCPServers[index]
+        let key = try HexSecretKey.mcpBearerToken(
+          serverID: server.serverID, endpointURL: server.endpointURL)
+        httpMCPServers[index].hasStoredBearerToken =
+          server.requiresBearerToken ? try await Self.mcpTokenExists(key, in: secretStore) : false
       }
       hasStoredAPIKey = try await secretStore.exists(.openAIAPIKey)
       apiKey = ""
@@ -511,17 +705,26 @@ final class HexResidentSetupModel {
       try await configurationReloader?.reloadAfterConfigurationChange()
       try Task.checkCancellation()
       savedAuthorizationMode = request.settings.authorizationMode
+      mcpSecretChanges = []
+      storedMCPSecretChangeKeys = []
       saveGeneration += 1
       statusMessage = "Resident settings saved."
       errorMessage = nil
       return true
     } catch is CancellationError {
+      if didSaveSettings {
+        errorMessage =
+          "Settings were saved, but applying credentials or connections was interrupted. Save again to finish."
+        statusMessage = nil
+      }
       return false
     } catch {
       errorMessage =
         isReloading
         ? "Settings were saved, but Hex Agent could not apply them. Try saving again."
-        : Self.safeMessage(for: error)
+        : didSaveSettings
+          ? "Settings were saved, but credentials could not be fully applied. Check Keychain access and save again."
+          : Self.safeMessage(for: error)
       statusMessage = nil
       return false
     }
@@ -530,6 +733,7 @@ final class HexResidentSetupModel {
   private struct SaveRequest: Sendable {
     let settings: HexResidentRuntimeSettings
     let apiKey: String
+    let mcpSecretChanges: [HexMCPSecretChange]
   }
 
   private static func isValidModelID(_ value: String) -> Bool {

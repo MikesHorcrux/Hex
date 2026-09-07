@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**35 Swift files.** Generated; do not edit by hand.
+**38 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexGatewayTests/Authorization
 
@@ -46,12 +46,14 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [HexGatewayControlledMCPIntegrationTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayControlledMCPIntegrationTests.swift) | — |
 | [HexGatewayResidentConfigurationTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayResidentConfigurationTests.swift) | — |
 | [HexGatewayResidentHostLifecycleTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayResidentHostLifecycleTests.swift) | — |
 | [HexGatewayResidentOptionalMCPTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayResidentOptionalMCPTests.swift) | — |
 | [HexGatewayResidentPersistenceTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayResidentPersistenceTests.swift) | — |
 | [HexGatewayScreenControlPermissionFailureMapperTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayScreenControlPermissionFailureMapperTests.swift) | — |
 | [HexGatewayToolServerControllerTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayToolServerControllerTests.swift) | — |
+| [HexMCPSecretHTTPHeaderProviderTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexMCPSecretHTTPHeaderProviderTests.swift) | — |
 
 ## Packages/HexKit/Tests/HexGatewayTests/SelfKnowledge
 
@@ -64,6 +66,7 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [ControlledMCPServerFixture.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Support/ControlledMCPServerFixture.swift) | Real loopback HTTP and stdio protocol fixtures; never reads the user's environment or credentials. |
 | [GatewayEventCollector.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Support/GatewayEventCollector.swift) | — |
 | [GatewayMalformedEventJournal.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Support/GatewayMalformedEventJournal.swift) | — |
 | [GatewayTestAuthorizationProvider.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Support/GatewayTestAuthorizationProvider.swift) | — |
