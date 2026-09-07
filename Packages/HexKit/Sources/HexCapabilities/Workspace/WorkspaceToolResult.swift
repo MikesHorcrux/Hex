@@ -108,13 +108,16 @@ enum WorkspaceToolResult {
       code = "replacement_count_mismatch"
     case WorkspaceFileSystemError.ioFailure:
       code = "io_failure"
+    case WorkspaceFileSystemError.accessDenied:
+      code = "file_access_denied"
     default:
       throw error
     }
     return ToolResult(
       toolCallID: callID,
       status: .failure,
-      output: .object(["error": .string(code)])
+      output: .object(["error": .string(code)]),
+      requiresUserAttention: code == "file_access_denied"
     )
   }
 }

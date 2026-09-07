@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**32 Swift files.** Generated; do not edit by hand.
+**33 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexRuntimeTests/Agent
 
@@ -18,6 +18,7 @@ Focused test target; consult suites for exercised boundaries.
 | [AgentRuntimeContinuationTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeContinuationTests.swift) | — |
 | [AgentRuntimeFailureTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeFailureTests.swift) | — |
 | [AgentRuntimeHappyPathTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeHappyPathTests.swift) | — |
+| [AgentRuntimeMacPermissionTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeMacPermissionTests.swift) | — |
 | [AgentRuntimeToolDiscoveryChoiceTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeToolDiscoveryChoiceTests.swift) | — |
 | [AgentRuntimeValidationTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeValidationTests.swift) | — |
 

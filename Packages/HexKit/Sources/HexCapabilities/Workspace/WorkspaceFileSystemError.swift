@@ -16,5 +16,6 @@ public enum WorkspaceFileSystemError: Error, Equatable, Sendable {
   case revisionConflict
   case replacementCountMismatch
   case ioFailure
+  case accessDenied
   case outcomeUncertain
 }

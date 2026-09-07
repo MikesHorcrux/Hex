@@ -124,6 +124,8 @@ public actor CapabilityAuthorizationCenter: AuthorizationProvider {
     sessionGrants.remove(key)
   }
 
+  public func sessionGrantKeys() -> Set<AuthorizationGrantKey> { sessionGrants }
+
   public func revokePersistentGrant(_ key: AuthorizationGrantKey) async throws {
     try await persistentStore.remove(key)
   }

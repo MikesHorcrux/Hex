@@ -11,7 +11,7 @@ struct HexExternalComputerPermissionsView: View {
   var body: some View {
     browserControl
     screenControl
-    protectedFolders
+    HexProtectedFoldersPermissionView(model: model.folderAccess)
   }
 
   private var browserControl: some View {
@@ -48,7 +48,7 @@ struct HexExternalComputerPermissionsView: View {
         tint: screenStatusTint
       )
 
-      if model.isRequestingScreenControl {
+      if model.isRequestingScreenControl || model.isCheckingScreenControl {
         ProgressView("Checking screen control…")
           .controlSize(.small)
       } else if let status = model.screenControlPermissionStatus {
@@ -59,10 +59,17 @@ struct HexExternalComputerPermissionsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+      } else if let error = model.screenControlPermissionError {
+        Text("Could not verify screen permissions. \(error)")
+          .font(.caption).foregroundStyle(.orange)
       } else {
-        Text("Hex will install screen control first, then ask macOS for the access it needs.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        Text(
+          model.peekabooAvailability == .ready
+            ? "Screen control is installed. Verify its Mac permissions, or request access if needed."
+            : "Hex will install screen control first, then ask macOS for the access it needs."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
 
       if model.screenSetupStatus == .disabled {
@@ -76,14 +83,15 @@ struct HexExternalComputerPermissionsView: View {
       }
 
       HStack(spacing: 8) {
-        if model.screenControlPermissionsGranted == true {
+        if model.peekabooAvailability == .ready {
           Button("Verify Again") {
             Task {
               await model.refreshScreenControlPermissions()
             }
           }
           .buttonStyle(.hexSecondaryAction)
-        } else {
+        }
+        if model.screenControlPermissionsGranted != true {
           Button("Allow Screen Permissions") {
             model.requestScreenControlPermissions()
           }
@@ -103,35 +111,15 @@ struct HexExternalComputerPermissionsView: View {
           .buttonStyle(.hexSecondaryAction)
         }
       }
-      .disabled(model.isRequestingScreenControl)
-    }
-    .padding(.vertical, 6)
-  }
-
-  private var protectedFolders: some View {
-    VStack(alignment: .leading, spacing: 9) {
-      capabilityHeader(
-        title: "Protected folders",
-        systemImage: "internaldrive",
-        status: "Manual setup",
-        tint: HexBrandPalette.apricot
-      )
-
-      Text(
-        "For files macOS protects, add Hex Agent to Full Disk Access. Hex cannot approve this for you."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-
-      HStack(spacing: 8) {
-        Button("Show Hex Agent") {
-          revealResidentAgent()
+      .disabled(model.isRequestingScreenControl || model.isCheckingScreenControl)
+      if let bundle = model.screenControlBundleURL, model.peekabooAvailability == .ready {
+        Text("Screen permissions belong to Hex’s screen helper (PeekabooCLI), not the chat window.")
+          .font(.caption).foregroundStyle(.secondary)
+        Button("Show Screen Helper") { NSWorkspace.shared.activateFileViewerSelecting([bundle]) }
+          .buttonStyle(.hexSecondaryAction)
+        DisclosureGroup("Screen helper location") {
+          Text(bundle.path).font(.caption2.monospaced()).textSelection(.enabled)
         }
-        .buttonStyle(.hexSecondaryAction)
-        Button("Open Full Disk Access") {
-          openPrivacySettings("Privacy_AllFiles")
-        }
-        .buttonStyle(.hexSecondaryAction)
       }
     }
     .padding(.vertical, 6)
@@ -206,16 +194,10 @@ struct HexExternalComputerPermissionsView: View {
     .foregroundStyle(isGranted ? HexBrandPalette.successInk : .orange)
   }
 
-  private func revealResidentAgent() {
-    let url = Bundle.main.bundleURL
-      .appendingPathComponent("Contents/Resources/HexGateway.app", isDirectory: true)
-    NSWorkspace.shared.activateFileViewerSelecting([url])
-  }
-
   private func openPrivacySettings(_ anchor: String) {
     guard
       let url = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)"
+        string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(anchor)"
       )
     else {
       return

@@ -177,6 +177,7 @@ struct HexApp: App {
         managedToolLayout: setupDependencies.managedToolLayout,
         managedToolInstaller: setupDependencies.managedToolInstaller,
         screenControlPermissionService: resolvedScreenControlPermissionService,
+        permissionManagementService: client as? any HexPermissionManaging,
         configurationReloader: startAtLogin
       )
     )

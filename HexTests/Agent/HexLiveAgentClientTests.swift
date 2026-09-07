@@ -8,6 +8,49 @@ import Testing
 @Suite("Live agent client connection reuse")
 struct HexLiveAgentClientTests {
   @Test
+  func scheduledHistoryUsesTheLiveClientProtocolWitnessWithoutStartingWork() async throws {
+    let transport = CountingTransport()
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: HexGatewayClientAdapter(
+        client: HexGatewayClient(transport: transport),
+        authorizationTransport: NoopAuthorizationTransport()))
+    let service: any HexHeartbeatManaging = client
+    let request = GatewayHeartbeatRunListRequest(scheduleID: UUID(), limit: 7)
+
+    let page = try await service.listHeartbeatRuns(request)
+    #expect(page.runs.count == 1)
+    #expect(page.runs.first?.scheduleID == request.scheduleID)
+    #expect(page.runs.first?.scheduleName == "Saved scheduled read")
+    #expect(await transport.historyRequests == [request])
+    #expect(await transport.handshakeCallCount == 1)
+    #expect(await transport.startCallCount == 0)
+  }
+
+  @Test
+  func scheduledHistoryConnectionFailureRequiresAFreshHandshake() async throws {
+    let transport = CountingTransport(historyFailure: .staleSession)
+    let client = HexLiveAgentClient(
+      configuration: HexDeveloperConfiguration(environment: [:]),
+      route: .residentXPC(machServiceName: "com.example.hex.test"),
+      initialGatewayAdapter: HexGatewayClientAdapter(
+        client: HexGatewayClient(transport: transport),
+        authorizationTransport: NoopAuthorizationTransport()))
+    let service: any HexHeartbeatManaging = client
+    do {
+      _ = try await service.listHeartbeatRuns(GatewayHeartbeatRunListRequest())
+      Issue.record("A stale history connection must not return a page.")
+    } catch let failure as GatewayFailure {
+      #expect(failure.code == .staleSession)
+    }
+    _ = try await client.connect()
+    #expect(await transport.handshakeCallCount == 2)
+    #expect(await transport.historyRequests.count == 1)
+    #expect(await transport.startCallCount == 0)
+  }
+
+  @Test
   func rejectsAStaleOrUnidentifiedHelperBeforeAnyRunCanStart() async throws {
     let expected = UUID()
     for received in [UUID?.none, UUID?.some(UUID())] {
@@ -243,22 +286,26 @@ struct HexLiveAgentClientTests {
     private(set) var disconnectCallCount = 0
     private(set) var screenControlStatusCallCount = 0
     private(set) var startCallCount = 0
+    private(set) var historyRequests: [GatewayHeartbeatRunListRequest] = []
     private var connectedLease: GatewayTransportConnectionLease?
     private let yieldsBeforeHandshakeResponse: Bool
     private let streamFailure: GatewayFailureCode?
     private let terminalRunFailure: Bool
     private let executableID: UUID?
+    private let historyFailure: GatewayFailureCode?
 
     init(
       yieldsBeforeHandshakeResponse: Bool = false,
       streamFailure: GatewayFailureCode? = nil,
       terminalRunFailure: Bool = false,
-      executableID: UUID? = nil
+      executableID: UUID? = nil,
+      historyFailure: GatewayFailureCode? = nil
     ) {
       self.yieldsBeforeHandshakeResponse = yieldsBeforeHandshakeResponse
       self.streamFailure = streamFailure
       self.terminalRunFailure = terminalRunFailure
       self.executableID = executableID
+      self.historyFailure = historyFailure
     }
 
     func handshake(
@@ -350,6 +397,24 @@ struct HexLiveAgentClientTests {
     ) async throws -> GatewayResidentStatus {
       try requireConnection(lease)
       return .paused
+    }
+
+    func listHeartbeatRuns(
+      _ request: GatewayHeartbeatRunListRequest,
+      lease: GatewayTransportConnectionLease
+    ) async throws -> GatewayHeartbeatRunPage {
+      try requireConnection(lease)
+      historyRequests.append(request)
+      if let historyFailure {
+        throw GatewayFailure(code: historyFailure, message: "Synthetic history connection loss.")
+      }
+      return GatewayHeartbeatRunPage(
+        storeID: UUID(),
+        runs: [
+          GatewayHeartbeatRun(
+            scheduleID: request.scheduleID ?? UUID(), dueAt: Date(),
+            scheduleName: "Saved scheduled read")
+        ])
     }
 
     func resumeHeartbeats(

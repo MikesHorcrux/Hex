@@ -7,6 +7,7 @@ struct HexHeartbeatManagementView: View {
   let suppressAutomaticRefresh: Bool
   @State private var isPresentingEditor = false
   @State private var isPresentingHistory = false
+  @State private var isPresentingApprovals = false
 
   init(
     model: HexHeartbeatManagementModel,
@@ -27,6 +28,7 @@ struct HexHeartbeatManagementView: View {
             .foregroundStyle(.secondary)
         }
         Spacer()
+        Button("Approval inbox", systemImage: "hand.raised") { isPresentingApprovals = true }
         Button("Run history", systemImage: "clock.arrow.circlepath") {
           model.history.show()
           isPresentingHistory = true
@@ -81,27 +83,26 @@ struct HexHeartbeatManagementView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        List {
-          ForEach(model.schedules) { schedule in
-            HexHeartbeatScheduleRow(
-              schedule: schedule,
-              isBusy: model.isBusy,
-              onTogglePause: {
-                Task { await model.togglePause(for: schedule) }
-              },
-              onRemove: {
-                Task { await model.removeSchedule(id: schedule.id) }
-              },
-              onViewResults: {
-                model.history.show(scheduleID: schedule.id, name: schedule.name)
-                isPresentingHistory = true
-              }
-            )
-            .listRowInsets(EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
-            .listRowSeparator(.hidden)
+        ScrollView {
+          LazyVStack(spacing: 10) {
+            ForEach(model.schedules) { schedule in
+              HexHeartbeatScheduleRow(
+                schedule: schedule,
+                isBusy: model.isBusy,
+                onTogglePause: {
+                  Task { await model.togglePause(for: schedule) }
+                },
+                onRemove: {
+                  Task { await model.removeSchedule(id: schedule.id) }
+                },
+                onViewResults: {
+                  model.history.show(scheduleID: schedule.id, name: schedule.name)
+                  isPresentingHistory = true
+                }
+              )
+            }
           }
         }
-        .listStyle(.plain)
       }
 
       HStack {
@@ -129,6 +130,9 @@ struct HexHeartbeatManagementView: View {
       HexHeartbeatScheduleEditorView { request in
         await model.addSchedule(request)
       }
+    }
+    .sheet(isPresented: $isPresentingApprovals) {
+      HexApprovalInboxView(model: model.approvals)
     }
     .sheet(isPresented: $isPresentingHistory) {
       HexHeartbeatRunHistoryView(

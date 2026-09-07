@@ -53,7 +53,7 @@ struct AgentWorkspaceRetryTests {
   }
 
   @Test @MainActor
-  func interruptedStreamReusesRunIdentity() async throws {
+  func interruptedStreamAutomaticallyReusesRunIdentity() async throws {
     let client = RetryRecordingAgentClient(failsViaTransport: true)
     let model = AgentWorkspaceModel(
       client: client,
@@ -66,17 +66,11 @@ struct AgentWorkspaceRetryTests {
     model.send()
     try await waitUntil {
       let requestCount = await client.requestCount()
-      return model.runState == .failed && requestCount == 1
-    }
-
-    let firstRequest = try #require(await client.requests().first)
-    model.retryLastFailure()
-    try await waitUntil {
-      let requestCount = await client.requestCount()
       let recoveryCount = await client.recoveryCount()
       return model.runState == .completed && requestCount == 1 && recoveryCount == 1
     }
 
+    let firstRequest = try #require(await client.requests().first)
     #expect(await client.requests() == [firstRequest])
     #expect(model.errorMessage == nil)
     #expect(!model.canRetryLastFailure)

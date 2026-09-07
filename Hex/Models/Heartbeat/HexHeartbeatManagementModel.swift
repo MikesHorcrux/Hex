@@ -14,6 +14,7 @@ final class HexHeartbeatManagementModel {
 
   private let service: any HexHeartbeatManaging
   let history: HexHeartbeatRunHistoryModel
+  let approvals: HexApprovalInboxModel
 
   init(
     service: any HexHeartbeatManaging = HexUnavailableHeartbeatService(),
@@ -21,6 +22,7 @@ final class HexHeartbeatManagementModel {
   ) {
     self.service = service
     history = HexHeartbeatRunHistoryModel(service: service, client: client)
+    approvals = HexApprovalInboxModel(client: client)
   }
 
   var isBusy: Bool {

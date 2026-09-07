@@ -2,6 +2,7 @@ import HexCore
 import SwiftUI
 
 struct HexApprovalModeRow: View {
+  @Environment(\.isEnabled) private var isEnabled
   let mode: HexAuthorizationMode
   let isSelected: Bool
   let onSelect: () -> Void
@@ -40,6 +41,12 @@ struct HexApprovalModeRow: View {
       .contentShape(RoundedRectangle(cornerRadius: 8))
     }
     .buttonStyle(.plain)
+    .focusable()
+    .onKeyPress(keys: [.return, .space], phases: .down) { _ in
+      guard isEnabled else { return .ignored }
+      onSelect()
+      return .handled
+    }
     .onHover { isHovered = $0 }
     // Preserve Button's native role and press action. An .ignore element replaces those semantics.
     .accessibilityLabel(mode.permissionTitle)

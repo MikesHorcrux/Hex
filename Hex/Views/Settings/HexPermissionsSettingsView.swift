@@ -6,10 +6,19 @@ struct HexPermissionsSettingsView: View {
   @Bindable var startAtLogin: HexStartAtLoginModel
   @Bindable var accessibilityPermission: HexAccessibilityPermissionModel
   let suppressAutomaticRefresh: Bool
+  var approvals: HexApprovalInboxModel?
+  @State private var isShowingApprovals = false
 
   var body: some View {
     Form {
       HexAuthorizationModePickerView(model: model)
+      if approvals != nil {
+        Section {
+          Button("Approval inbox", systemImage: "hand.raised") { isShowingApprovals = true }
+          Text("Review waiting actions and revoke session approvals, including scheduled work.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }
       HexComputerAccessView(
         model: model,
         accessibilityPermission: accessibilityPermission,
@@ -54,6 +63,9 @@ struct HexPermissionsSettingsView: View {
     .tint(HexBrandPalette.coral)
     .task {
       await model.load()
+    }
+    .sheet(isPresented: $isShowingApprovals) {
+      if let approvals { HexApprovalInboxView(model: approvals) }
     }
   }
 }

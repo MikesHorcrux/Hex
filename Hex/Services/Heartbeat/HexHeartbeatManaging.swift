@@ -23,13 +23,3 @@ nonisolated protocol HexHeartbeatManaging: Sendable {
     _ mutation: GatewayHeartbeatScheduleMutation
   ) async throws -> GatewayHeartbeatScheduleList
 }
-
-extension HexHeartbeatManaging {
-  func listHeartbeatRuns(_ request: GatewayHeartbeatRunListRequest) async throws
-    -> GatewayHeartbeatRunPage
-  {
-    throw GatewayFailure(
-      code: .transportUnavailable,
-      message: "The connected resident does not expose scheduled run history.")
-  }
-}

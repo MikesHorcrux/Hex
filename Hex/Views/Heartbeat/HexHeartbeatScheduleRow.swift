@@ -63,18 +63,22 @@ struct HexHeartbeatScheduleRow: View {
       VStack(alignment: .trailing, spacing: 6) {
         Button("View results", action: onViewResults)
           .buttonStyle(.link).font(.caption)
+          .accessibilityIdentifier("heartbeatResults-\(schedule.id.uuidString)")
         Button(schedule.isPaused ? "Resume" : "Pause", action: onTogglePause)
           .buttonStyle(.bordered)
           .controlSize(.small)
           .disabled(isBusy)
+          .accessibilityIdentifier("heartbeatPause-\(schedule.id.uuidString)")
         Button("Remove", role: .destructive, action: onRemove)
           .buttonStyle(.link)
           .font(.caption)
           .disabled(isBusy)
+          .accessibilityIdentifier("heartbeatRemove-\(schedule.id.uuidString)")
       }
     }
     .padding(12)
     .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+    .accessibilityElement(children: .contain)
   }
 
   private var intervalDescription: String {

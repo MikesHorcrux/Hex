@@ -4,13 +4,15 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**33 Swift files.** Generated; do not edit by hand.
+**35 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexGatewayTests/Authorization
 
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexGatewayAuthorizationBrokerTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayAuthorizationBrokerTests.swift) | — |
+| [HexGatewayPermissionManagerTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPermissionManagerTests.swift) | — |
+| [HexGatewayScreenPermissionToolExecutorTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayScreenPermissionToolExecutorTests.swift) | — |
 
 ## Packages/HexKit/Tests/HexGatewayTests/Composition
 

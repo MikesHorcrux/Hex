@@ -9,6 +9,7 @@ struct HexApprovalModeOptionsView: View {
   var onUseSavedDefault: (() -> Void)? = nil
   let onSelect: (HexAuthorizationMode) -> Void
   @State private var showsDetails = false
+  @FocusState private var focusedMode: HexAuthorizationMode?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
@@ -34,6 +35,7 @@ struct HexApprovalModeOptionsView: View {
         HexApprovalModeRow(mode: mode, isSelected: mode == selectedMode) {
           onSelect(mode)
         }
+        .focused($focusedMode, equals: mode)
       }
 
       Text(scopeDescription)
@@ -75,5 +77,18 @@ struct HexApprovalModeOptionsView: View {
     .padding(10)
     .frame(width: 420)
     .background(HexBrandPalette.raisedSurface)
+    .onAppear { focusedMode = selectedMode }
+    .onMoveCommand { direction in
+      let modes = HexAuthorizationMode.allCases
+      guard let current = modes.firstIndex(of: focusedMode ?? selectedMode) else { return }
+      switch direction {
+      case .up:
+        focusedMode = modes[(current + modes.count - 1) % modes.count]
+      case .down:
+        focusedMode = modes[(current + 1) % modes.count]
+      default:
+        break
+      }
+    }
   }
 }

@@ -4,7 +4,7 @@
 
 Gateway wire contracts, clients, services, XPC and recovery.
 
-**128 Swift files.** Generated; do not edit by hand.
+**134 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexIPC/Artifacts
 
@@ -18,8 +18,10 @@ Gateway wire contracts, clients, services, XPC and recovery.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [GatewayApprovalInbox.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/GatewayApprovalInbox.swift) | Only live resident waiters are actionable. Historical requests remain in the event journal. |
 | [GatewayAuthorizationDecisionChoice.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/GatewayAuthorizationDecisionChoice.swift) | The small, stable choice vocabulary the interactive app sends back to a resident gateway. This stays in HexIPC so the app and the gateway never need to exchange an app-only enum or concrete authorization provider type. |
 | [GatewayAuthorizationDecisionRequest.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/GatewayAuthorizationDecisionRequest.swift) | A bounded, exact authorization response payload. The full request is echoed back intentionally: the resident broker compares every field, rather than trusting only the request identifier. |
+| [GatewaySessionGrant.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/GatewaySessionGrant.swift) | An exact grant in one resident lifetime, never a wildcard or a grant after restart. |
 | [HexGatewayAuthorizationCommitGate.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationCommitGate.swift) | Excludes authorization invalidation from the final broker commit for one XPC connection.  The gate is deliberately synchronous: the caller holds the lock while it validates and consumes the pending request, so connection invalidation cannot… |
 | [HexGatewayAuthorizationDecisionFailure.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationDecisionFailure.swift) | Optional error seam for authorization brokers crossing the XPC boundary. The wire codec maps these errors to a bounded `GatewayFailure` without exposing provider or credential details. |
 | [HexGatewayAuthorizationDecisionTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationDecisionTransport.swift) | Optional extension to the gateway transport for interactive authorization responses. It is a separate protocol so preview and in-process transports do not acquire a fake XPC requirement. |
@@ -44,6 +46,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | [HexGatewayClient+HeartbeatHistory.swift](../../../Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+HeartbeatHistory.swift) | — |
 | [HexGatewayClient+HeartbeatManagement.swift](../../../Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+HeartbeatManagement.swift) | — |
 | [HexGatewayClient+ModelCatalog.swift](../../../Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+ModelCatalog.swift) | — |
+| [HexGatewayClient+PermissionManagement.swift](../../../Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+PermissionManagement.swift) | — |
 | [HexGatewayClient+Recovery.swift](../../../Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+Recovery.swift) | — |
 | [HexGatewayClient+ResidentControl.swift](../../../Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+ResidentControl.swift) | — |
 | [HexGatewayClient+RunLifecycle.swift](../../../Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+RunLifecycle.swift) | — |
@@ -66,6 +69,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | [GatewayEventEnvelope.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayEventEnvelope.swift) | A gateway event bound to the exact server-issued invocation that produced it.  `AgentEventRecord` identifies a logical run but intentionally has no gateway-generation field. The envelope prevents a delayed or hostile transport from relabell… |
 | [GatewayFailure.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayFailure.swift) | — |
 | [GatewayFailureCode.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayFailureCode.swift) | — |
+| [GatewayFolderAccessStatus.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayFolderAccessStatus.swift) | An actual directory read in the resident process, not a claim of Full Disk Access. |
 | [GatewayHandshakeRequest.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayHandshakeRequest.swift) | — |
 | [GatewayHandshakeResponse.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayHandshakeResponse.swift) | — |
 | [GatewayHeartbeatOutcome.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayHeartbeatOutcome.swift) | A redacted, bounded summary of the most recent heartbeat outcome. Lease and occurrence identities remain resident-only; the app receives only the information needed to render status. |
@@ -128,6 +132,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | [GatewayExecutableIdentity.swift](../../../Packages/HexKit/Sources/HexIPC/Service/GatewayExecutableIdentity.swift) | Mach-O build UUIDs distinguish rebuilt helpers that still speak the same wire protocol. This is build-coherence evidence, not a replacement for XPC code-signing admission. |
 | [HexGatewayAccessibilityPermissionHandlers.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayAccessibilityPermissionHandlers.swift) | Accessibility callbacks owned by the resident gateway composition root. The request callback may ask macOS to display its standard consent prompt, so it must only be invoked in response to an explicit user action. |
 | [HexGatewayConnectionAdmissionPolicy.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayConnectionAdmissionPolicy.swift) | Admission policy for the resident gateway's local Mach-service clients.  The listener installs `codeSigningRequirement` before activation, which makes the operating system reject a peer that does not satisfy the requirement before the deleg… |
+| [HexGatewayPermissionManagementHandlers.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayPermissionManagementHandlers.swift) | — |
 | [HexGatewayResidentControlHandlers.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayResidentControlHandlers.swift) | Optional resident control callbacks owned by the gateway composition root. A missing status callback reports `.unavailable`; missing mutation callbacks fail closed with a transport error. Callbacks are intentionally narrow so the XPC servic… |
 | [HexGatewayRunDriver.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayRunDriver.swift) | The composition seam between gateway lifecycle policy and an agent runtime. Implementations must durably create records before emitting them, emit exactly increasing per-run sequences beginning at one, emit one terminal record, and propagat… |
 | [HexGatewayScreenControlPermissionHandlers.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayScreenControlPermissionHandlers.swift) | Screen-control permission callbacks owned by the resident gateway composition root. The request callback may ask macOS to display standard consent prompts, so it must only be invoked in response to an explicit user action. |
@@ -151,6 +156,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | [HexGatewayAccessibilityPermissionTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayAccessibilityPermissionTransport.swift) | Optional transport capability for querying and requesting Accessibility in the resident gateway process. Every call is bound to the authenticated connection lease owned by the client. |
 | [HexGatewayArtifactReadTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayArtifactReadTransport.swift) | Optional, session-bound read-only access to immutable output already stored by the resident. |
 | [HexGatewayModelCatalogTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayModelCatalogTransport.swift) | Optional catalog operation bound to the current authenticated local gateway session. |
+| [HexGatewayPermissionManagementTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayPermissionManagementTransport.swift) | — |
 | [HexGatewayResidentControlTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayResidentControlTransport.swift) | Optional transport capability for resident gateway status and heartbeat controls. The lease is supplied by the owning `HexGatewayClient`; implementations must bind every operation to the exact authenticated connection represented by that le… |
 | [HexGatewayScreenControlPermissionTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayScreenControlPermissionTransport.swift) | Optional transport capability for querying and requesting the screen-control tool's macOS permissions in the resident gateway process. Every call is bound to the authenticated connection lease owned by the client. |
 | [HexGatewayToolServerControlTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayToolServerControlTransport.swift) | — |

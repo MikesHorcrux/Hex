@@ -67,13 +67,33 @@ public final class HexGatewayResidentHost {
     let mcpToolExecutors = try configuration.mcpClientSessions.map {
       try MCPManagedToolExecutor(session: $0, waitsForInitialDiscovery: false)
     }
+    let screenControlPermissionController = try configuration.managedToolLayout.map {
+      try MCPPeekabooPermissionController(layout: $0)
+    }
+    let protectedMCPExecutors: [any ToolExecutor] = mcpToolExecutors.map { executor in
+      guard
+        configuration.mcpServerSettings.contains(where: {
+          $0.serverID == executor.serverID && $0.transport == .peekaboo
+        })
+      else { return executor }
+      return HexGatewayScreenPermissionToolExecutor(base: executor) {
+        guard let controller = screenControlPermissionController else {
+          throw GatewayFailure(
+            code: .transportUnavailable, message: "Screen control cannot be verified.")
+        }
+        let status = try await controller.status()
+        return GatewayScreenControlPermissionStatus(
+          accessibilityGranted: status.accessibilityGranted,
+          screenRecordingGranted: status.screenRecordingGranted)
+      }
+    }
     let toolServerController = try HexGatewayToolServerController(
       executors: mcpToolExecutors, settings: configuration.mcpServerSettings)
     let routedToolExecutor = try CompositeToolExecutor(
       executors: [
         personalToolExecutor, personalMemoryToolExecutor,
         try ArtifactToolExecutor(reader: artifactStore),
-      ] + mcpToolExecutors
+      ] + protectedMCPExecutors
     )
     let authorizationCenter = CapabilityAuthorizationCenter(
       prompter: heartbeatAuthorizationPolicy,
@@ -111,9 +131,6 @@ public final class HexGatewayResidentHost {
       artifactReader: artifactStore
     )
     let heartbeatConfiguration = try HexHeartbeatSchedulerConfiguration.standard.validated()
-    let screenControlPermissionController = try configuration.managedToolLayout.map {
-      try MCPPeekabooPermissionController(layout: $0)
-    }
     // Nothing has been advertised or started yet. Retain each opened resource before the next
     // suspension, so cancellation or any later construction failure has one explicit unwind path.
     var openedComposition: HexGatewayComposition?
@@ -157,7 +174,12 @@ public final class HexGatewayResidentHost {
         mcpToolExecutors: mcpToolExecutors,
         toolServerController: toolServerController,
         inferenceProvider: inferenceProvider,
-        screenControlPermissionController: screenControlPermissionController
+        screenControlPermissionController: screenControlPermissionController,
+        permissionManager: HexGatewayPermissionManager(
+          broker: authorizationBroker, center: authorizationCenter,
+          defaultMode: configuration.authorizationMode,
+          folderProbe: HexGatewayFolderAccessProbe(
+            directory: configuration.workspaceRoot, agentBundle: Bundle.main.bundleURL))
       )
     } catch {
       // Both close operations deliberately remain available to a cancelled caller. Preserve the
@@ -178,7 +200,8 @@ public final class HexGatewayResidentHost {
     mcpToolExecutors: [MCPManagedToolExecutor],
     toolServerController: HexGatewayToolServerController,
     inferenceProvider: any InferenceProvider,
-    screenControlPermissionController: MCPPeekabooPermissionController?
+    screenControlPermissionController: MCPPeekabooPermissionController?,
+    permissionManager: HexGatewayPermissionManager
   ) {
     self.configuration = configuration
     self.composition = composition
@@ -292,6 +315,10 @@ public final class HexGatewayResidentHost {
           accessibilityPermissionHandlers: accessibilityPermissionHandlers,
           screenControlPermissionHandlers: screenControlPermissionHandlers,
           modelCatalogHandler: { try await inferenceProvider.availableModels() },
+          permissionManagementHandlers: HexGatewayPermissionManagementHandlers(
+            inbox: { try await permissionManager.inbox() },
+            revoke: { try await permissionManager.revoke($0) },
+            folder: { try await permissionManager.folderAccessStatus() }),
           toolServerControlHandlers: HexGatewayToolServerControlHandlers(
             list: { try await toolServerController.health() },
             refresh: { try await toolServerController.refresh($0) }

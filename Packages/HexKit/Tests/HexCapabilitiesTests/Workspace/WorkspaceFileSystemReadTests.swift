@@ -7,6 +7,29 @@ import Testing
 @Suite("Workspace file-system reads")
 struct WorkspaceFileSystemReadTests {
   @Test
+  func revokedFileReadProducesAPermissionBlockerNotARetryableIOFailure() async throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.container) }
+    let file = fixture.root.appendingPathComponent("revoked.txt")
+    try Data("permission fixture".utf8).write(to: file)
+    let fileSystem = try WorkspaceFileSystem(root: fixture.root)
+    #expect(
+      try await fileSystem.readTextFile(at: "revoked.txt", relativeTo: nil).content
+        == "permission fixture")
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+    await #expect(throws: WorkspaceFileSystemError.accessDenied) {
+      try await fileSystem.readTextFile(at: "revoked.txt", relativeTo: nil)
+    }
+    let result = try WorkspaceToolResult.failure(
+      WorkspaceFileSystemError.accessDenied, callID: ToolCallID())
+    #expect(result.requiresUserAttention)
+    #expect(result.output == .object(["error": .string("file_access_denied")]))
+  }
+
+  @Test
   func readsUTF8AndListsDeterministically() async throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.container) }

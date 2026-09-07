@@ -93,6 +93,13 @@ struct HexHeartbeatManagementTests {
       try response().validated()
     }
 
+    func listHeartbeatRuns(_ request: GatewayHeartbeatRunListRequest) async throws
+      -> GatewayHeartbeatRunPage
+    {
+      throw GatewayFailure(
+        code: .transportUnavailable, message: "This schedule-only fixture has no saved runs.")
+    }
+
     func addHeartbeatSchedule(
       _ request: GatewayHeartbeatScheduleRequest
     ) async throws -> GatewayHeartbeatScheduleList {

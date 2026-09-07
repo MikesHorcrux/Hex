@@ -9,14 +9,16 @@ import Testing
 
 @Suite("Scheduled authorization through the real runtime")
 struct HexHeartbeatAuthorizationWorkflowTests {
-  @Test(arguments: [GrantMode.fullAccess, .storedGrant, .missingGrant])
+  @Test(arguments: [
+    GrantMode.fullAccess, .storedGrant, .missingGrant, .denied, .approveLowRisk, .approveHighRisk,
+  ])
   func actualPromptBoundaryDeterminesWhetherScheduledWorkCanProceed(_ mode: GrantMode) async throws
   {
     let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
       .appendingPathComponent("hex-heartbeat-authorization-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let tool = CapturingTool()
+    let tool = CapturingTool(lowRisk: mode == .approveLowRisk)
     let call = ToolCall(
       id: ToolCallID(rawValue: "scheduled-probe"), name: "scheduled_probe", arguments: [:])
     let provider = GatewayTestInferenceProvider(toolCall: call)
@@ -31,7 +33,7 @@ struct HexHeartbeatAuthorizationWorkflowTests {
     }
     let center = CapabilityAuthorizationCenter(
       prompter: policy, persistentStore: grants,
-      authorizationMode: mode == .fullAccess ? .fullAccess : .askEveryTime)
+      authorizationMode: mode.authorizationMode)
     let composition = try await HexGatewayComposition.open(
       configuration: HexGatewayCompositionConfiguration(
         journalConfiguration: SQLiteAgentEventJournalConfiguration(
@@ -45,8 +47,30 @@ struct HexHeartbeatAuthorizationWorkflowTests {
         client: client, authorizationPolicy: policy, modelID: provider.modelID,
         workspaceRoot: directory,
         configuration: HexHeartbeatSchedulerConfiguration(
-          leaseDurationSeconds: 10, runTimeoutSeconds: 5))
-      let result = try await runner.run(executionRequest())
+          leaseDurationSeconds: 10, runTimeoutSeconds: 0.5))
+      let execution = try executionRequest()
+      let run = Task { try await runner.run(execution) }
+      defer { run.cancel() }
+      if mode == .missingGrant || mode == .denied || mode == .approveHighRisk {
+        for _ in 0..<200 {
+          if let request = await tool.request, await broker.isPending(request.id) { break }
+          try await Task.sleep(for: .milliseconds(5))
+        }
+        let pending = try #require(await tool.request)
+        #expect(await broker.isPending(pending.id))
+        #expect(await tool.executionCount == 0)
+        let waitingRecords = try await composition.journal.records(
+          for: pending.runID, after: nil, limit: 128)
+        #expect(waitingRecords.contains { $0.event == .authorizationRequested(pending) })
+        // Human decision time is not execution time. Nothing may run or time out while waiting.
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(await broker.isPending(pending.id))
+        #expect(await tool.executionCount == 0)
+        try await broker.submit(
+          pending, choice: mode == .denied ? .deny : .allowOnce,
+          gate: HexGatewayAuthorizationCommitGate())
+      }
+      let result = try await run.value
       let authorization = try #require(await tool.request)
       let records = try await composition.journal.records(
         for: authorization.runID, after: nil, limit: 128)
@@ -57,19 +81,11 @@ struct HexHeartbeatAuthorizationWorkflowTests {
         })
       #expect(!(await broker.isPending(authorization.id)))
       #expect(await policy.registrationCount == 0)
-      if mode == .missingGrant {
-        guard case .failed(let failure) = result else {
-          Issue.record(
-            "A missing grant must stop the background run, not suspend an interactive prompt.")
-          try await client.disconnect()
-          try await composition.close()
-          return
-        }
-        #expect(failure.code == .authorizationRequired)
-        #expect(!failure.retryable)
+      #expect(result == .succeeded)
+      if mode == .denied {
         #expect(await tool.executionCount == 0)
         #expect(
-          !records.contains {
+          records.contains {
             if case .authorizationDecided = $0.event { return true }
             return false
           })
@@ -83,12 +99,8 @@ struct HexHeartbeatAuthorizationWorkflowTests {
           return nil
         }
         #expect(skipped.map(\.toolCallID) == [call.id])
-        #expect(skipped.allSatisfy { $0.notExecutedReason == .runStopped })
-        #expect(
-          records.last.map {
-            if case .runFailed = $0.event { return true }
-            return false
-          } == true)
+        #expect(skipped.allSatisfy { $0.notExecutedReason == .authorizationDenied })
+        #expect(records.last?.event == .runCompleted)
       } else {
         #expect(result == .succeeded)
         #expect(await tool.executionCount == 1)
@@ -121,11 +133,24 @@ struct HexHeartbeatAuthorizationWorkflowTests {
         runID: AgentRunID()))
   }
 
-  enum GrantMode: Sendable { case fullAccess, storedGrant, missingGrant }
+  enum GrantMode: Sendable {
+    case fullAccess, storedGrant, missingGrant, denied, approveLowRisk, approveHighRisk
+
+    var authorizationMode: HexAuthorizationMode {
+      switch self {
+      case .fullAccess: .fullAccess
+      case .approveLowRisk, .approveHighRisk: .approveForMe
+      default: .askEveryTime
+      }
+    }
+  }
 
   private actor CapturingTool: ToolExecutor {
+    private let lowRisk: Bool
     private(set) var request: AuthorizationRequest?
     private(set) var executionCount = 0
+
+    init(lowRisk: Bool) { self.lowRisk = lowRisk }
 
     func availableTools() -> [ToolDefinition] {
       [
@@ -141,7 +166,9 @@ struct HexHeartbeatAuthorizationWorkflowTests {
     {
       let request = AuthorizationRequest(
         runID: context.runID, toolCallID: call.id,
-        capability: CapabilityID(rawValue: "tool.scheduled_probe"), operation: "execute",
+        capability: CapabilityID(rawValue: lowRisk ? "workspace.read" : "tool.scheduled_probe"),
+        operation: lowRisk ? "read" : "execute",
+        resource: lowRisk ? "/tmp/scheduled-probe.txt" : nil,
         explanation: "Run the scheduled probe.")
       self.request = request
       return request

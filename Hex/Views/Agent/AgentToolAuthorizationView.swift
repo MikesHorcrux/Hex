@@ -16,6 +16,7 @@ struct AgentToolAuthorizationView: View {
           Text("Hex needs your approval")
             .font(.headline)
             .foregroundStyle(HexBrandPalette.ink)
+            .accessibilityIdentifier("toolAuthorizationRequest")
           Text("This exact operation is paused until you choose.")
             .font(.caption)
             .foregroundStyle(HexBrandPalette.mutedInk)
@@ -56,7 +57,7 @@ struct AgentToolAuthorizationView: View {
         Button(AuthorizationDecisionChoice.deny.buttonTitle, role: .destructive) {
           onChoice(.deny)
         }
-        .keyboardShortcut(.escape)
+        .accessibilityIdentifier("denyAuthorization")
 
         Spacer()
 
@@ -64,14 +65,19 @@ struct AgentToolAuthorizationView: View {
           onChoice(.allowOnce)
         }
         .buttonStyle(.hexSecondaryAction)
+        .accessibilityIdentifier("allowAuthorizationOnce")
 
         Button(AuthorizationDecisionChoice.allowForSession.buttonTitle) {
           onChoice(.allowForSession)
         }
         .buttonStyle(.hexPrimaryAction)
-        .keyboardShortcut(.defaultAction)
+        .accessibilityIdentifier("allowAuthorizationForSession")
       }
       .disabled(isSubmitting)
+      Text(
+        "Allow once covers only this action. Allow for session remembers this exact operation and target across conversations and scheduled work until Hex Agent restarts; revoke it in the Approval inbox."
+      )
+      .font(.caption).foregroundStyle(HexBrandPalette.mutedInk)
     }
     .padding(16)
     .hexSurface(
@@ -80,7 +86,6 @@ struct AgentToolAuthorizationView: View {
       border: HexBrandPalette.apricot.opacity(0.36),
       shadowRadius: 7
     )
-    .accessibilityIdentifier("toolAuthorizationRequest")
   }
 
   @ViewBuilder

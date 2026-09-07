@@ -109,7 +109,9 @@ struct AgentWorkspaceNonExecutionHistoryTests {
       try await waitUntil { model.currentAppliedSequence == resultSequence }
       await model.conversationPersistenceTask?.value
       #expect(model.pendingAuthorizations == [approvals[1]])
-      #expect(model.pendingAuthorization == approvals[1])
+      // Retain the exact pending request in the checkpoint, but never expose an approval action
+      // while cancellation is draining its native receipts.
+      #expect(model.pendingAuthorization == nil)
       #expect(!model.submittedAuthorizationIDs.contains(approvals[0].id))
       #expect(model.authorizationSubmissionID == secondSubmission)
       #expect(model.authorizationSubmittingRequestID == approvals[1].id)

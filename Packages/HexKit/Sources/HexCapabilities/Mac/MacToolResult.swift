@@ -124,7 +124,8 @@ enum MacToolResult {
     return ToolResult(
       toolCallID: callID,
       status: .failure,
-      output: .object(["error": .string(code)])
+      output: .object(["error": .string(code)]),
+      requiresUserAttention: code == "accessibility_permission_required"
     )
   }
 

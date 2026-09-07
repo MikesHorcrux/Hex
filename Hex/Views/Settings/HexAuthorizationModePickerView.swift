@@ -15,13 +15,12 @@ struct HexAuthorizationModePickerView: View {
           }
         }
       }
-      .accessibilityIdentifier("authorizationModePicker")
       .disabled(model.isSaving || model.isLoading || model.needsLoadRetry)
     } header: {
       Text("Default action permissions")
     } footer: {
       Text(
-        "Saving applies this default to conversations using the default and to scheduled work. Choose a different mode for an individual conversation in its composer. macOS privacy permissions remain separate."
+        "Saving applies this default to conversations using the default and to scheduled work. It restarts an enabled Hex Agent, interrupting active work and clearing waiting requests and session approvals. For a conversation-only change without a restart, use its composer. macOS privacy permissions remain separate."
       )
     }
     .confirmationDialog(

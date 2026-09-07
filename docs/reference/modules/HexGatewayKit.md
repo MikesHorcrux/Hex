@@ -4,13 +4,16 @@
 
 Resident composition, lifecycle, heartbeats and self-knowledge.
 
-**75 Swift files.** Generated; do not edit by hand.
+**78 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexGatewayKit/Authorization
 
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexGatewayAuthorizationBroker.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayAuthorizationBroker.swift) | Resident-side authorization broker. Runtime prompts remain suspended in the gateway process until the interactive app returns the complete request and a choice over the authenticated XPC session. Every field is compared before a waiter is r… |
+| [HexGatewayFolderAccessProbe.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayFolderAccessProbe.swift) | Reads one entry (without retaining its name) in the actual configured directory. There is no public macOS Full Disk Access status API; this deliberately says nothing about other folders. |
+| [HexGatewayPermissionManager.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPermissionManager.swift) | Reads live authority from its owners. It never reconstructs an actionable approval from history. |
+| [HexGatewayScreenPermissionToolExecutor.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayScreenPermissionToolExecutor.swift) | Rechecks the responsible screen helper immediately before dispatch, including in Full Access. The health catalog remains independent of TCC, so a revoked grant does not hide the tool. |
 
 ## Packages/HexKit/Sources/HexGatewayKit/Composition
 
@@ -36,7 +39,7 @@ Resident composition, lifecycle, heartbeats and self-knowledge.
 | --- | --- |
 | [HexGatewayHeartbeatRunInspector.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Heartbeats/HexGatewayHeartbeatRunInspector.swift) | Uses the same authenticated, read-only recovery path as the app's saved-run reader. |
 | [HexGatewayHeartbeatRunner.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Heartbeats/HexGatewayHeartbeatRunner.swift) | Runs one durable heartbeat instruction through the host's already-composed gateway client.  The client is intentionally injected and shared by the resident host. Every heartbeat therefore enters the same gateway admission path as an interac… |
-| [HexHeartbeatAuthorizationPolicy.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Heartbeats/HexHeartbeatAuthorizationPolicy.swift) | Applied only after the authorization center has checked Full Access and exact grants. Scheduled runs must stop on an actual missing grant, not create an interactive waiter nobody can answer. |
+| [HexHeartbeatAuthorizationPolicy.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Heartbeats/HexHeartbeatAuthorizationPolicy.swift) | Applied only after the authorization center has checked Full Access and exact grants. Scheduled runs wait in the resident approval inbox. Human waiting time does not consume execution time. |
 | [HexHeartbeatAuthorizationProvider.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Heartbeats/HexHeartbeatAuthorizationProvider.swift) | Preserves the center's policy and grant lifecycle while keeping a scheduled run classified as background until its actual runtime ends, even if its observer disconnects first. |
 | [HexHeartbeatClaimDisposition.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Heartbeats/HexHeartbeatClaimDisposition.swift) | — |
 | [HexHeartbeatClock.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Heartbeats/HexHeartbeatClock.swift) | — |

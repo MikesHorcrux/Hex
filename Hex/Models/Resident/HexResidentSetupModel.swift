@@ -26,6 +26,9 @@ final class HexResidentSetupModel {
   private(set) var isInstallingPeekaboo = false
   private(set) var isInstallingPlaywright = false
   private(set) var isRequestingScreenControl = false
+  private(set) var isCheckingScreenControl = false
+  private(set) var screenControlPermissionError: String?
+  let folderAccess: HexFolderAccessModel
   private(set) var screenControlPermissionStatus: GatewayScreenControlPermissionStatus?
   private(set) var statusMessage: String?
   private(set) var errorMessage: String?
@@ -40,6 +43,8 @@ final class HexResidentSetupModel {
   private var hasLoaded = false
   private var hasAttemptedLoad = false
   private var loadedMCPServers: [HexResidentMCPServerSettings] = []
+  @ObservationIgnored private var screenPermissionTask: Task<Void, Never>?
+  private var permissionGeneration = UUID()
 
   init(
     initialModelID: String = "",
@@ -48,6 +53,7 @@ final class HexResidentSetupModel {
     managedToolLayout: MCPManagedToolLayout? = nil,
     managedToolInstaller: (any HexManagedToolInstalling)? = nil,
     screenControlPermissionService: (any HexScreenControlPermissionServicing)? = nil,
+    permissionManagementService: (any HexPermissionManaging)? = nil,
     configurationReloader: (any HexResidentConfigurationReloading)? = nil
   ) {
     modelID = initialModelID
@@ -56,11 +62,17 @@ final class HexResidentSetupModel {
     self.managedToolLayout = managedToolLayout
     self.managedToolInstaller = managedToolInstaller
     self.screenControlPermissionService = screenControlPermissionService
+    folderAccess = HexFolderAccessModel(service: permissionManagementService)
     self.configurationReloader = configurationReloader
   }
 
   var screenControlPermissionsGranted: Bool? {
     screenControlPermissionStatus?.isGranted
+  }
+
+  var screenControlBundleURL: URL? {
+    managedToolLayout?.peekabooExecutableURL
+      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
   }
 
   var isInstallingManagedTool: Bool {
@@ -85,7 +97,7 @@ final class HexResidentSetupModel {
       enabled: peekabooMCPEnabled,
       savedEnabled: loadedMCPServers.contains { $0.transport == .peekaboo && $0.isEnabled },
       installed: peekabooAvailability == .ready,
-      checking: isRequestingScreenControl || isInstallingPeekaboo,
+      checking: isRequestingScreenControl || isInstallingPeekaboo || isCheckingScreenControl,
       permissionsGranted: screenControlPermissionsGranted
     )
   }
@@ -95,7 +107,7 @@ final class HexResidentSetupModel {
   }
 
   var canSave: Bool {
-    hasLoaded && !isLoading && !isSaving && !isInstallingManagedTool
+    hasLoaded && !isLoading && !isSaving && !isInstallingManagedTool && !isRequestingScreenControl
       && settingsStore != nil && secretStore != nil
   }
 
@@ -196,21 +208,42 @@ final class HexResidentSetupModel {
   }
 
   func refreshScreenControlPermissions() async {
-    guard peekabooAvailability == .ready, let screenControlPermissionService else {
-      screenControlPermissionStatus = nil
+    guard !isRequestingScreenControl, !isCheckingScreenControl, !isInstallingPeekaboo else {
       return
     }
-    do {
-      screenControlPermissionStatus =
-        try await screenControlPermissionService.screenControlPermissionStatus()
-    } catch {
-      screenControlPermissionStatus = nil
+    if let managedToolLayout {
+      peekabooAvailability = managedToolLayout.availability(for: .peekaboo)
     }
+    screenControlPermissionError = nil
+    screenControlPermissionStatus = nil
+    guard peekabooAvailability == .ready, let screenControlPermissionService else {
+      return
+    }
+    isCheckingScreenControl = true
+    let expected = permissionGeneration
+    defer { isCheckingScreenControl = false }
+    do {
+      let status = try await screenControlPermissionService.screenControlPermissionStatus()
+      try Task.checkCancellation()
+      guard permissionGeneration == expected else { return }
+      screenControlPermissionStatus = status
+    } catch {
+      guard permissionGeneration == expected else { return }
+      if !(error is CancellationError) {
+        screenControlPermissionError = Self.safeManagedToolMessage(error)
+      }
+    }
+  }
+
+  func invalidateVerifiedPermissions() {
+    permissionGeneration = UUID()
+    screenControlPermissionStatus = nil
+    folderAccess.invalidate()
   }
 
   func requestScreenControlPermissions() {
     guard
-      !isRequestingScreenControl,
+      !isRequestingScreenControl, !isCheckingScreenControl, !isInstallingManagedTool, !isSaving,
       let managedToolInstaller,
       let screenControlPermissionService
     else {
@@ -218,13 +251,22 @@ final class HexResidentSetupModel {
       return
     }
     isRequestingScreenControl = true
+    let expected = permissionGeneration
+    screenControlPermissionError = nil
+    screenControlPermissionStatus = nil
     errorMessage = nil
-    Task { [weak self] in
+    screenPermissionTask = Task { [weak self] in
       guard let self else { return }
+      defer {
+        isRequestingScreenControl = false
+        screenPermissionTask = nil
+      }
       do {
         try await managedToolInstaller.install(.peekaboo)
         let permissionStatus =
           try await screenControlPermissionService.requestScreenControlPermission()
+        try Task.checkCancellation()
+        guard permissionGeneration == expected else { return }
         peekabooAvailability = .ready
         screenControlPermissionStatus = permissionStatus
         statusMessage =
@@ -232,13 +274,15 @@ final class HexResidentSetupModel {
           ? "Screen control permissions are ready."
           : "Allow the requested Mac permissions in System Settings, then return to Hex."
       } catch is CancellationError {
-        // The owning view disappeared; preserve the last verified state.
+        // This bounded operation belongs to the app's setup model, not a settings tab's lifetime.
+        if permissionGeneration == expected { screenControlPermissionStatus = nil }
       } catch {
+        guard permissionGeneration == expected else { return }
         screenControlPermissionStatus = nil
         errorMessage = Self.safeManagedToolMessage(error)
+        screenControlPermissionError = errorMessage
         statusMessage = nil
       }
-      isRequestingScreenControl = false
     }
   }
 
@@ -373,7 +417,7 @@ final class HexResidentSetupModel {
       statusMessage = nil
       return nil
     }
-    guard !isInstallingManagedTool else {
+    guard !isInstallingManagedTool, !isRequestingScreenControl else {
       errorMessage = "Wait for browser or screen control to finish setting up, then continue."
       statusMessage = nil
       return nil

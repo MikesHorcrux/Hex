@@ -61,6 +61,10 @@ public actor HexGatewayAuthorizationBroker: AuthorizationPrompting {
 
   public init() {}
 
+  public func pendingRequests() -> [AuthorizationRequest] {
+    waiters.values.map(\.request).sorted { $0.id.description < $1.id.description }
+  }
+
   public func isPending(_ requestID: AuthorizationRequestID) -> Bool {
     waiters[requestID] != nil || registeringRequestIDs.contains(requestID)
   }

@@ -46,11 +46,13 @@ struct AgentStructuredConversationTests {
     await model.connect()
     model.draft = "Say hello"
     model.send()
-    await model.runTask?.value
-    #expect(model.runState == .failed)
-    #expect(model.connectionState == .disconnected)
-    model.retryLastFailure()
-    await model.runTask?.value
+    // Delivery recovery transfers ownership to a new task. Await the final owner, not just the
+    // original stream task, and prove that automatic recovery never readmits the user's request.
+    for _ in 0..<200 where model.runTask != nil {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(model.runTask == nil)
+    #expect(model.connectionState == .connected)
     let requests = await client.requests
     #expect(requests.count == 1)
     #expect(await client.recoveryRequests.map(\.runID) == requests.map(\.runID))

@@ -21,6 +21,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
     private let toolServerControlHandlers: HexGatewayToolServerControlHandlers
     private let accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers
     private let screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers
+    private let permissionManagementHandlers: HexGatewayPermissionManagementHandlers
     private let modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])?
     private let artifactReadHandler:
       (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)?
@@ -45,6 +46,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
       toolServerControlHandlers: HexGatewayToolServerControlHandlers,
       accessibilityPermissionHandlers: HexGatewayAccessibilityPermissionHandlers,
       screenControlPermissionHandlers: HexGatewayScreenControlPermissionHandlers,
+      permissionManagementHandlers: HexGatewayPermissionManagementHandlers,
       modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])?,
       artifactReadHandler:
         (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)?
@@ -56,6 +58,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
       self.toolServerControlHandlers = toolServerControlHandlers
       self.accessibilityPermissionHandlers = accessibilityPermissionHandlers
       self.screenControlPermissionHandlers = screenControlPermissionHandlers
+      self.permissionManagementHandlers = permissionManagementHandlers
       self.modelCatalogHandler = modelCatalogHandler
       self.artifactReadHandler = artifactReadHandler
       authorizationCommitGate = HexGatewayAuthorizationCommitGate()
@@ -283,6 +286,39 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
           body: nil
         )
 
+      case .approvalInbox:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = permissionManagementHandlers.inbox else {
+          throw GatewayFailure(
+            code: .transportUnavailable, message: "The approval inbox is unavailable.")
+        }
+        let inbox = try await handler().validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .approvalInbox, value: inbox)
+
+      case .revokeSessionGrant:
+        _ = try currentSession(for: envelope)
+        guard let handler = permissionManagementHandlers.revoke else {
+          throw GatewayFailure(
+            code: .transportUnavailable, message: "Grant revocation is unavailable.")
+        }
+        let grant = try codec.decode(GatewaySessionGrant.self, from: envelope.body).validated()
+        let inbox = try await handler(grant).validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .revokeSessionGrant, value: inbox)
+
+      case .folderAccessStatus:
+        _ = try currentSession(for: envelope)
+        try requireEmptyBody(for: envelope)
+        guard let handler = permissionManagementHandlers.folder else {
+          throw GatewayFailure(
+            code: .transportUnavailable, message: "Folder access checks are unavailable.")
+        }
+        let status = try await handler().validated()
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .folderAccessStatus, value: status)
+
       case .accessibilityPermissionStatus:
         _ = try currentSession(for: envelope)
         try requireEmptyBody(for: envelope)
@@ -493,7 +529,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         }
       case .startRun, .cancelRun, .recoverRun, .readRunHistory, .readArtifact, .availableModels,
         .toolServerHealth, .refreshToolServer,
-        .submitAuthorizationDecision,
+        .submitAuthorizationDecision, .approvalInbox, .revokeSessionGrant, .folderAccessStatus,
         .accessibilityPermissionStatus,
         .requestAccessibilityPermission, .screenControlPermissionStatus,
         .requestScreenControlPermission, .status, .pauseHeartbeats, .resumeHeartbeats,
@@ -723,6 +759,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
     modelCatalogHandler: (@Sendable () async throws -> [ModelDescriptor])? = nil,
     artifactReadHandler:
       (@Sendable (GatewayArtifactReadRequest) async throws -> GatewayArtifactReadResponse)? = nil,
+    permissionManagementHandlers: HexGatewayPermissionManagementHandlers = .unavailable,
     toolServerControlHandlers: HexGatewayToolServerControlHandlers
   ) {
     state = State(
@@ -732,6 +769,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
       toolServerControlHandlers: toolServerControlHandlers,
       accessibilityPermissionHandlers: accessibilityPermissionHandlers,
       screenControlPermissionHandlers: screenControlPermissionHandlers,
+      permissionManagementHandlers: permissionManagementHandlers,
       modelCatalogHandler: modelCatalogHandler, artifactReadHandler: artifactReadHandler)
     super.init()
   }

@@ -4,13 +4,19 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**77 Swift files.** Generated; do not edit by hand.
+**78 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexIPCTests/Accessibility
 
 | Source file | Leading source documentation |
 | --- | --- |
 | [AccessibilityPermissionIPCTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Accessibility/AccessibilityPermissionIPCTests.swift) | — |
+
+## Packages/HexKit/Tests/HexIPCTests/Authorization
+
+| Source file | Leading source documentation |
+| --- | --- |
+| [PermissionManagementIPCTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Authorization/PermissionManagementIPCTests.swift) | — |
 
 ## Packages/HexKit/Tests/HexIPCTests/Client
 

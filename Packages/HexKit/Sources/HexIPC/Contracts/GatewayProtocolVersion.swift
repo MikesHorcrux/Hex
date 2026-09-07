@@ -4,9 +4,10 @@ public struct GatewayProtocolVersion: Codable, Comparable, Sendable {
   /// nonexecution receipts, and bounded scheduled-run history remain part of this contract.
   /// Version 1.13 also identifies non-admission during idle tool maintenance. Older peers cannot
   /// safely interpret that new outcome, so both endpoints must implement the current contract.
-  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 13)
-  /// Version 1.13 adds bounded tool-server health and targeted reconnect controls.
-  public static let current = GatewayProtocolVersion(major: 1, minor: 13)
+  /// Version 1.14 requires an approval inbox for scheduled work that waits for a human decision.
+  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 14)
+  /// Version 1.14 adds session-grant revocation and resident folder access verification.
+  public static let current = GatewayProtocolVersion(major: 1, minor: 14)
 
   public let major: UInt16
   public let minor: UInt16

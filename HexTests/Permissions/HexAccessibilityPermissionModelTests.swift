@@ -6,6 +6,23 @@ import Testing
 @Suite("Accessibility permission model")
 struct HexAccessibilityPermissionModelTests {
   @Test @MainActor
+  func replyFromAnInvalidatedAgentCannotRestoreAGreenPermissionState() async throws {
+    let service = SuspendedPermissionService()
+    let model = HexAccessibilityPermissionModel(service: service)
+    let refresh = Task { await model.refresh() }
+    for _ in 0..<200 {
+      if await service.isWaiting { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(await service.isWaiting)
+    model.invalidate()
+    await service.complete()
+    await refresh.value
+    #expect(model.state == .unchecked)
+    #expect(!model.hasVerifiedGateway)
+  }
+
+  @Test @MainActor
   func requestWaitsForALaterRefreshBeforeReportingGranted() async {
     let service = PermissionService(status: .notTrusted, requestStatus: .trusted)
     let model = HexAccessibilityPermissionModel(service: service)
@@ -65,6 +82,19 @@ struct HexAccessibilityPermissionModelTests {
 
     func setStatus(_ status: GatewayAccessibilityPermissionStatus) {
       self.status = status
+    }
+  }
+
+  private actor SuspendedPermissionService: HexAccessibilityPermissionServicing {
+    private var continuation: CheckedContinuation<GatewayAccessibilityPermissionStatus, Never>?
+    var isWaiting: Bool { continuation != nil }
+    func accessibilityPermissionStatus() async -> GatewayAccessibilityPermissionStatus {
+      await withCheckedContinuation { continuation = $0 }
+    }
+    func requestAccessibilityPermission() -> GatewayAccessibilityPermissionStatus { .notTrusted }
+    func complete() {
+      continuation?.resume(returning: .trusted)
+      continuation = nil
     }
   }
 

@@ -42,6 +42,8 @@ extension WorkspaceFileSystem {
     let descriptor: Int32
     do {
       descriptor = try openDirectory(components: relativeComponents)
+    } catch WorkspaceFileSystemError.accessDenied {
+      throw WorkspaceFileSystemError.accessDenied
     } catch {
       throw WorkspaceFileSystemError.invalidWorkingDirectory
     }
@@ -130,10 +132,7 @@ extension WorkspaceFileSystem {
   func entryStatus(named name: String, in directoryDescriptor: Int32) throws -> stat {
     var status = stat()
     guard fstatat(directoryDescriptor, name, &status, AT_SYMLINK_NOFOLLOW) == 0 else {
-      if errno == ENOENT {
-        throw WorkspaceFileSystemError.notFound
-      }
-      throw WorkspaceFileSystemError.ioFailure
+      throw mappedOpenError()
     }
     return status
   }
@@ -146,6 +145,8 @@ extension WorkspaceFileSystem {
       return .notDirectory
     case ELOOP:
       return .symbolicLinkRejected
+    case EACCES, EPERM:
+      return .accessDenied
     default:
       return .ioFailure
     }

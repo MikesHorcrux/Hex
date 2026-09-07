@@ -2,15 +2,16 @@ import HexCapabilities
 import HexCore
 
 /// Applied only after the authorization center has checked Full Access and exact grants. Scheduled
-/// runs must stop on an actual missing grant, not create an interactive waiter nobody can answer.
+/// runs wait in the resident approval inbox. Human waiting time does not consume execution time.
 public actor HexHeartbeatAuthorizationPolicy: AuthorizationPrompting {
   public enum PolicyError: Error, Equatable, Sendable {
     case registrationUnavailable
-    case interactiveAuthorizationRequired
   }
 
   private struct Registration {
-    var authorizationRequired = false
+    let startedAt = ContinuousClock.now
+    var waitingSince: ContinuousClock.Instant?
+    var completedWait: Duration = .zero
     var observerReleased = false
     var runtimeEnded = false
   }
@@ -52,8 +53,12 @@ public actor HexHeartbeatAuthorizationPolicy: AuthorizationPrompting {
     }
   }
 
-  func requiresInteractiveAuthorization(for runID: AgentRunID) -> Bool {
-    registrations[runID]?.authorizationRequired == true
+  func executionTime(for runID: AgentRunID) -> Duration {
+    guard let registration = registrations[runID] else { return .zero }
+    let now = ContinuousClock.now
+    let currentWait = registration.waitingSince.map { $0.duration(to: now) } ?? .zero
+    return max(
+      .zero, registration.startedAt.duration(to: now) - registration.completedWait - currentWait)
   }
 
   var registrationCount: Int { registrations.count }
@@ -63,10 +68,19 @@ public actor HexHeartbeatAuthorizationPolicy: AuthorizationPrompting {
   {
     try Task.checkCancellation()
     if var registration = registrations[request.runID] {
-      registration.authorizationRequired = true
+      registration.waitingSince = .now
       registrations[request.runID] = registration
-      throw PolicyError.interactiveAuthorizationRequired
     }
+    defer { finishWaiting(for: request.runID) }
     return try await interactivePrompter.requestDecision(for: request)
+  }
+
+  private func finishWaiting(for runID: AgentRunID) {
+    guard var registration = registrations[runID], let started = registration.waitingSince else {
+      return
+    }
+    registration.completedWait += started.duration(to: .now)
+    registration.waitingSince = nil
+    registrations[runID] = registration
   }
 }

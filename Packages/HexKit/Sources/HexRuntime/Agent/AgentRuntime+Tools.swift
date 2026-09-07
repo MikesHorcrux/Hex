@@ -157,7 +157,7 @@ extension AgentRuntime {
         }
         if result.requiresUserAttention {
           throw AgentRuntimeError.toolExecutionFailure(
-            "Hex stopped because preserving this tool's output requires your attention. The command may already have changed files or external state. Inspect the saved result and partial output before deciding what to do next; Hex will not repeat it automatically."
+            userAttentionMessage(for: result)
           )
         }
         let resultByteCount = try serializedToolResultByteCount(result)
@@ -182,6 +182,28 @@ extension AgentRuntime {
     }
 
     return (results, messages, totalSerializedToolResultBytes)
+  }
+
+  private func userAttentionMessage(for result: ToolResult) -> String {
+    if case .object(let output) = result.output {
+      switch output["error"] {
+      case .string("accessibility_permission_required"):
+        return
+          "macOS Accessibility access is missing or was revoked. Open Hex Settings → Mac access, verify Hex Agent’s Accessibility permission, then start a new request. This run stopped and will not retry automatically."
+      case .string("file_access_denied"):
+        return
+          "macOS or filesystem permissions denied access to the requested file or folder. Check Hex Settings → Mac access and the target’s folder permissions. Full access in Hex cannot override macOS. This run stopped and will not retry automatically."
+      case .string("screen_permissions_required"):
+        return
+          "Screen control’s Accessibility or Screen Recording permission is missing or was revoked. Open Hex Settings → Mac access, allow the missing permission for the screen helper, then verify again. No screen action was dispatched; this run will not retry automatically."
+      case .string("screen_permissions_unverified"):
+        return
+          "Hex could not verify the screen helper’s Mac permissions. Open Hex Settings → Mac access and verify or repair screen control. No screen action was dispatched; this run will not retry automatically."
+      default: break
+      }
+    }
+    return
+      "Hex stopped because preserving this tool’s output requires your attention. The command may already have changed files or external state. Inspect the saved result and partial output before deciding what to do next; Hex will not repeat it automatically."
   }
 
   private func deniedToolResult(for call: ToolCall, reason: String?) -> ToolResult {

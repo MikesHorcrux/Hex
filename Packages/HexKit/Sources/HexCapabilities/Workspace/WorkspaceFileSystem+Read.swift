@@ -57,7 +57,7 @@ extension WorkspaceFileSystem {
         if errno == EINTR {
           continue
         }
-        throw WorkspaceFileSystemError.ioFailure
+        throw mappedOpenError()
       }
       let (candidateCount, overflowed) = data.count.addingReportingOverflow(bytesRead)
       guard !overflowed, candidateCount <= maximumBytes else {
@@ -81,8 +81,9 @@ extension WorkspaceFileSystem {
     }
     let descriptor = try openDirectory(components: components)
     guard let directory = fdopendir(descriptor) else {
+      let failure = mappedOpenError()
       Darwin.close(descriptor)
-      throw WorkspaceFileSystemError.ioFailure
+      throw failure
     }
     defer { closedir(directory) }
 
@@ -95,7 +96,7 @@ extension WorkspaceFileSystem {
       errno = 0
       guard let rawEntry = readdir(directory) else {
         guard errno == 0 else {
-          throw WorkspaceFileSystemError.ioFailure
+          throw mappedOpenError()
         }
         break
       }

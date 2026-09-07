@@ -13,6 +13,9 @@ public enum GatewayXPCOperation: String, Codable, Hashable, Sendable {
   case toolServerHealth
   case refreshToolServer
   case submitAuthorizationDecision
+  case approvalInbox
+  case revokeSessionGrant
+  case folderAccessStatus
   case accessibilityPermissionStatus
   case requestAccessibilityPermission
   case screenControlPermissionStatus

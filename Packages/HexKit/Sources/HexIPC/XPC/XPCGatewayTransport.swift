@@ -8,7 +8,7 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
   HexGatewayResidentControlTransport, HexGatewayAccessibilityPermissionTransport,
   HexGatewayScreenControlPermissionTransport, HexGatewayModelCatalogTransport,
   HexGatewayRunRecoveryTransport, HexGatewayArtifactReadTransport,
-  HexGatewayToolServerControlTransport
+  HexGatewayToolServerControlTransport, HexGatewayPermissionManagementTransport
 {
   private struct ConnectionState: Sendable {
     let generation: UUID
@@ -614,6 +614,46 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
         message: "The gateway XPC reply unexpectedly contained a result."
       )
     }
+  }
+
+  public func approvalInbox(lease: GatewayTransportConnectionLease) async throws
+    -> GatewayApprovalInbox
+  {
+    let response: GatewayApprovalInbox = try await permissionResponse(
+      operation: .approvalInbox, lease: lease)
+    return try response.validated()
+  }
+
+  public func revokeSessionGrant(
+    _ grant: GatewaySessionGrant, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayApprovalInbox
+  {
+    let response: GatewayApprovalInbox = try await permissionResponse(
+      operation: .revokeSessionGrant, body: codec.encode(grant.validated()), lease: lease)
+    return try response.validated()
+  }
+
+  public func folderAccessStatus(lease: GatewayTransportConnectionLease) async throws
+    -> GatewayFolderAccessStatus
+  {
+    let response: GatewayFolderAccessStatus = try await permissionResponse(
+      operation: .folderAccessStatus, lease: lease)
+    return try response.validated()
+  }
+
+  private func permissionResponse<Response: Codable & Sendable>(
+    operation: GatewayXPCOperation, body: Data = Data(), lease: GatewayTransportConnectionLease
+  ) async throws -> Response {
+    let state = try requireConnected(lease: lease)
+    try Task.checkCancellation()
+    let envelope = try encodeEnvelope(
+      GatewayXPCRequestEnvelope(
+        operation: operation, lease: lease, sessionID: state.sessionID, body: body))
+    let rawResponse = try await state.connection.request(envelope)
+    try Task.checkCancellation()
+    try requireCurrentConnection(state)
+    return try decodeResponse(rawResponse, operation: operation, as: Response.self)
   }
 
   private func residentControlResponse(

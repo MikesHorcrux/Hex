@@ -36,6 +36,7 @@ struct HexAccessibilityPermissionView: View {
       }
       .buttonStyle(.hexPrimaryAction)
       .accessibilityIdentifier("requestAccessibilityButton")
+      refreshButton(title: "Verify Accessibility")
 
     case .requestSent:
       Label("Accessibility request sent", systemImage: "clock.badge.checkmark")
@@ -90,7 +91,8 @@ struct HexAccessibilityPermissionView: View {
   private func openAccessibilitySettings() {
     guard
       let url = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        string:
+          "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
       )
     else {
       return

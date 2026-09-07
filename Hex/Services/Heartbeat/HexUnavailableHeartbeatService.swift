@@ -16,6 +16,12 @@ struct HexUnavailableHeartbeatService: HexHeartbeatManaging {
     throw ServiceError.unavailable
   }
 
+  func listHeartbeatRuns(_ request: GatewayHeartbeatRunListRequest) async throws
+    -> GatewayHeartbeatRunPage
+  {
+    throw ServiceError.unavailable
+  }
+
   func addHeartbeatSchedule(
     _ request: GatewayHeartbeatScheduleRequest
   ) async throws -> GatewayHeartbeatScheduleList {

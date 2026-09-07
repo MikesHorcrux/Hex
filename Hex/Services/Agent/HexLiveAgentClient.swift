@@ -11,7 +11,7 @@ import HexProviders
 /// silently privileged app-local agent.
 actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHeartbeatManaging,
   HexAccessibilityPermissionServicing, HexScreenControlPermissionServicing,
-  HexResidentGatewayConnectionResetting, HexToolServerHealthServicing
+  HexResidentGatewayConnectionResetting, HexToolServerHealthServicing, HexPermissionManaging
 {
   enum ClientError: Error, Equatable, LocalizedError, Sendable {
     case applicationSupportUnavailable
@@ -77,6 +77,27 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
 
   func connect() async throws -> GatewayConnectionResult {
     try await ensureConnected()
+  }
+
+  func approvalInbox() async throws -> GatewayApprovalInbox {
+    do { return try await connectedGatewayAdapter().approvalInbox() } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func revokeSessionGrant(_ grant: GatewaySessionGrant) async throws -> GatewayApprovalInbox {
+    do { return try await connectedGatewayAdapter().revokeSessionGrant(grant) } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func folderAccessStatus() async throws -> GatewayFolderAccessStatus {
+    do { return try await connectedGatewayAdapter().folderAccessStatus() } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
   }
 
   func availableModels() async throws -> [ModelDescriptor] {
@@ -309,6 +330,17 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     do {
       let adapter = try await connectedGatewayAdapter()
       return try await adapter.listHeartbeatSchedules()
+    } catch {
+      clearConnectionIfUnavailable(error)
+      throw error
+    }
+  }
+
+  func listHeartbeatRuns(_ request: GatewayHeartbeatRunListRequest) async throws
+    -> GatewayHeartbeatRunPage
+  {
+    do {
+      return try await connectedGatewayAdapter().listHeartbeatRuns(request)
     } catch {
       clearConnectionIfUnavailable(error)
       throw error

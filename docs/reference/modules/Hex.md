@@ -4,7 +4,7 @@
 
 macOS app composition, observable models, services and SwiftUI views.
 
-**214 Swift files.** Generated; do not edit by hand.
+**220 Swift files.** Generated; do not edit by hand.
 
 ## Hex/App
 
@@ -112,7 +112,9 @@ macOS app composition, observable models, services and SwiftUI views.
 | --- | --- |
 | [HexAccessibilityPermissionModel.swift](../../../Hex/Models/Permissions/HexAccessibilityPermissionModel.swift) | — |
 | [HexAccessibilityPermissionState.swift](../../../Hex/Models/Permissions/HexAccessibilityPermissionState.swift) | UI state for the resident agent's macOS Accessibility permission. An unavailable gateway is deliberately distinct from a reachable gateway that reports no permission. |
+| [HexApprovalInboxModel.swift](../../../Hex/Models/Permissions/HexApprovalInboxModel.swift) | — |
 | [HexCapabilitySetupStatus.swift](../../../Hex/Models/Permissions/HexCapabilitySetupStatus.swift) | Separates configuration, installed components and Mac grants from live tool connectivity. |
+| [HexFolderAccessModel.swift](../../../Hex/Models/Permissions/HexFolderAccessModel.swift) | — |
 
 ## Hex/Models/Personality
 
@@ -178,6 +180,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [HexGatewayClientAdapter+AccessibilityPermission.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter+AccessibilityPermission.swift) | — |
 | [HexGatewayClientAdapter+Artifacts.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter+Artifacts.swift) | — |
 | [HexGatewayClientAdapter+HeartbeatManagement.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter+HeartbeatManagement.swift) | — |
+| [HexGatewayClientAdapter+PermissionManagement.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter+PermissionManagement.swift) | — |
 | [HexGatewayClientAdapter+Recovery.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter+Recovery.swift) | — |
 | [HexGatewayClientAdapter+ResidentControl.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter+ResidentControl.swift) | — |
 | [HexGatewayClientAdapter+ScreenControlPermission.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter+ScreenControlPermission.swift) | — |
@@ -228,6 +231,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexAccessibilityPermissionServicing.swift](../../../Hex/Services/Permissions/HexAccessibilityPermissionServicing.swift) | App-facing boundary for Accessibility checks performed by the resident gateway process. |
+| [HexPermissionManaging.swift](../../../Hex/Services/Permissions/HexPermissionManaging.swift) | — |
 | [HexScreenControlPermissionServicing.swift](../../../Hex/Services/Permissions/HexScreenControlPermissionServicing.swift) | App-facing boundary for screen-control permission checks performed by the resident gateway. Keeping this separate from installation ensures macOS attributes every request to the same always-on process that later launches the screen-control … |
 | [HexUnavailableAccessibilityPermissionService.swift](../../../Hex/Services/Permissions/HexUnavailableAccessibilityPermissionService.swift) | Fail-closed permission service used when this app composition has no resident gateway route. |
 | [HexUnavailableScreenControlPermissionService.swift](../../../Hex/Services/Permissions/HexUnavailableScreenControlPermissionService.swift) | Fail-closed screen-control service used when this app composition has no resident gateway. |
@@ -342,6 +346,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexAccessibilityPermissionView.swift](../../../Hex/Views/Settings/HexAccessibilityPermissionView.swift) | — |
+| [HexApprovalInboxView.swift](../../../Hex/Views/Settings/HexApprovalInboxView.swift) | — |
 | [HexAuthorizationModePickerView.swift](../../../Hex/Views/Settings/HexAuthorizationModePickerView.swift) | — |
 | [HexBuildDetailsView.swift](../../../Hex/Views/Settings/HexBuildDetailsView.swift) | — |
 | [HexChatGPTAuthenticationSettingsView.swift](../../../Hex/Views/Settings/HexChatGPTAuthenticationSettingsView.swift) | — |
@@ -362,6 +367,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [HexPersonalityProfileCollectionView.swift](../../../Hex/Views/Settings/HexPersonalityProfileCollectionView.swift) | — |
 | [HexPersonalityProfileView.swift](../../../Hex/Views/Settings/HexPersonalityProfileView.swift) | — |
 | [HexPersonalitySettingsView.swift](../../../Hex/Views/Settings/HexPersonalitySettingsView.swift) | — |
+| [HexProtectedFoldersPermissionView.swift](../../../Hex/Views/Settings/HexProtectedFoldersPermissionView.swift) | — |
 | [HexResidentAgentAccessView.swift](../../../Hex/Views/Settings/HexResidentAgentAccessView.swift) | — |
 | [HexResidentConfigurationFormView.swift](../../../Hex/Views/Settings/HexResidentConfigurationFormView.swift) | — |
 | [HexResidentSetupLoadRetryView.swift](../../../Hex/Views/Settings/HexResidentSetupLoadRetryView.swift) | — |

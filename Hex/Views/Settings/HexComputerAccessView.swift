@@ -31,6 +31,21 @@ struct HexComputerAccessView: View {
       Divider()
 
       HexExternalComputerPermissionsView(model: model)
+      if model.screenControlPermissionError != nil,
+        !accessibilityPermission.state.canRepairByRestartingGateway,
+        startAtLogin.status == .enabled
+      {
+        Button("Restart Hex Agent") {
+          Task {
+            await startAtLogin.restart()
+            guard startAtLogin.message == nil else { return }
+            await refreshGatewayAndPermission()
+          }
+        }
+        .disabled(!startAtLogin.canRestart || model.isRequestingScreenControl)
+        Text("Restarting interrupts active work. No Mac privacy permission will be changed.")
+          .font(.caption).foregroundStyle(.secondary)
+      }
     } header: {
       Text("Mac permissions")
     } footer: {
@@ -43,9 +58,14 @@ struct HexComputerAccessView: View {
       await refreshGatewayAndPermission()
     }
     .onChange(of: startAtLogin.status) { _, status in
-      guard !suppressAutomaticRefresh, status == .enabled else { return }
+      guard !suppressAutomaticRefresh else { return }
+      guard status == .enabled else {
+        model.invalidateVerifiedPermissions()
+        accessibilityPermission.invalidate()
+        return
+      }
       Task {
-        await accessibilityPermission.refresh()
+        await refreshGatewayAndPermission()
       }
     }
     .onChange(of: scenePhase) { _, phase in
@@ -58,8 +78,14 @@ struct HexComputerAccessView: View {
 
   private func refreshGatewayAndPermission() async {
     await startAtLogin.refresh()
-    await model.refreshScreenControlPermissions()
-    guard startAtLogin.status == .enabled else { return }
-    await accessibilityPermission.refresh()
+    guard startAtLogin.status == .enabled else {
+      model.invalidateVerifiedPermissions()
+      accessibilityPermission.invalidate()
+      return
+    }
+    async let accessibility: Void = accessibilityPermission.refresh()
+    async let screen: Void = model.refreshScreenControlPermissions()
+    async let folder: Void = model.folderAccess.refresh(ifPreviouslyRequested: true)
+    _ = await (accessibility, screen, folder)
   }
 }

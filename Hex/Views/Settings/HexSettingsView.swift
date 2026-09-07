@@ -131,7 +131,8 @@ struct HexSettingsView: View {
         model: residentSetup,
         startAtLogin: startAtLogin,
         accessibilityPermission: accessibilityPermission,
-        suppressAutomaticRefresh: suppressAutomaticRefresh
+        suppressAutomaticRefresh: suppressAutomaticRefresh,
+        approvals: heartbeat.approvals
       )
     case .personality:
       HexPersonalitySettingsView(model: personality)

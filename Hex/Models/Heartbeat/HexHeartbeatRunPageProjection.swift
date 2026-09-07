@@ -70,8 +70,12 @@ nonisolated struct HexHeartbeatRunPageProjection {
           row(
             .tool, AgentMessagePresentation.toolResultText(result),
             artifacts: result.artifacts, callID: result.toolCallID))
-      case .authorizationRequested:
-        rows.append(row(.event, "Approval was requested."))
+      case .authorizationRequested(let request):
+        rows.append(
+          row(
+            .event,
+            "Approval requested · \(request.explanation)\n\(request.capability.rawValue) · \(request.operation)\n\(request.resource ?? "No specific target")\nAnswer live requests in the Approval inbox. Historical requests cannot be replayed."
+          ))
       case .authorizationDecided(_, let decision):
         switch decision {
         case .allow: rows.append(row(.event, "Approval granted."))

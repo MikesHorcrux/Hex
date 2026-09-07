@@ -4,8 +4,8 @@ import Testing
 @Suite("Gateway implemented version")
 struct GatewayImplementedVersionTests {
   @Test
-  func currentRequiresToolMaintenanceAdmissionSemantics() {
-    let acknowledgedEventsVersion = GatewayProtocolVersion(major: 1, minor: 13)
+  func currentRequiresScheduledApprovalInboxSemantics() {
+    let acknowledgedEventsVersion = GatewayProtocolVersion(major: 1, minor: 14)
 
     #expect(GatewayProtocolVersion.minimumSupported == acknowledgedEventsVersion)
     #expect(GatewayProtocolVersion.current == acknowledgedEventsVersion)
@@ -13,7 +13,7 @@ struct GatewayImplementedVersionTests {
 
   @Test
   func clientCannotAcceptVersionBelowItsImplementedMinimum() async throws {
-    let unsupported = GatewayProtocolVersion(major: 1, minor: 12)
+    let unsupported = GatewayProtocolVersion(major: 1, minor: 13)
     let client = HexGatewayClient(
       transport: HostileLifecycleGatewayTransport(selectedVersion: unsupported),
       minimumVersion: unsupported,

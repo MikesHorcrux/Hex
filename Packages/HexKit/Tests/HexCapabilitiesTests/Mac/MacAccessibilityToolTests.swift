@@ -62,6 +62,7 @@ struct MacAccessibilityToolTests {
     let result = try await tool.execute(call, in: context)
 
     #expect(result.status == .failure)
+    #expect(result.requiresUserAttention)
     #expect(
       result.output == .object(["error": .string("accessibility_permission_required")])
     )

@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**48 Swift files.** Generated; do not edit by hand.
+**49 Swift files.** Generated; do not edit by hand.
 
 ## HexTests/Agent
 
@@ -87,6 +87,7 @@ Focused test target; consult suites for exercised boundaries.
 | --- | --- |
 | [HexAccessibilityPermissionModelTests.swift](../../../HexTests/Permissions/HexAccessibilityPermissionModelTests.swift) | — |
 | [HexCapabilitySetupStatusTests.swift](../../../HexTests/Permissions/HexCapabilitySetupStatusTests.swift) | — |
+| [HexPermissionManagementModelTests.swift](../../../HexTests/Permissions/HexPermissionManagementModelTests.swift) | — |
 
 ## HexTests/Personality
 
