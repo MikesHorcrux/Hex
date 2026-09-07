@@ -438,7 +438,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
       mcpClientSessions = try Self.makeMCPClientSessions(
         from: settings.mcpServers,
         managedToolLayout: managedToolLayout,
-        workspaceRoot: settings.workspaceRoot
+        workspaceRoot: settings.workspaceRoot,
+        secretStore: resolvedSecretStore
       )
     } catch {
       throw ConfigurationError.mcpConfigurationUnavailable
@@ -511,7 +512,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
   private static func makeMCPClientSessions(
     from settings: [HexResidentMCPServerSettings],
     managedToolLayout: MCPManagedToolLayout,
-    workspaceRoot: URL
+    workspaceRoot: URL,
+    secretStore: any HexSecretStore
   ) throws -> [any MCPClientSession] {
     try settings.filter(\.isEnabled).map { setting in
       switch setting.transport {
@@ -541,12 +543,29 @@ public struct HexGatewayResidentConfiguration: Sendable {
         guard let endpointURL = setting.endpointURL else {
           throw ConfigurationError.mcpConfigurationUnavailable
         }
+        let headerProvider: any MCPHTTPHeaderProvider =
+          setting.requiresBearerToken
+          ? try HexMCPSecretHTTPHeaderProvider(
+            serverID: setting.serverID, endpointURL: endpointURL, secretStore: secretStore)
+          : MCPEmptyHTTPHeaderProvider()
         return StreamableHTTPMCPClientSession(
           configuration: try MCPStreamableHTTPServerConfiguration(
             serverID: setting.serverID,
             endpointURL: endpointURL
-          )
+          ),
+          headerProvider: headerProvider
         )
+      case .stdio:
+        guard let executableURL = setting.executableURL,
+          let workingDirectory = setting.workingDirectory
+        else { throw ConfigurationError.mcpConfigurationUnavailable }
+        return try MCPDeferredClientSession(serverID: setting.serverID) {
+          LocalMCPClientSession(
+            configuration: try MCPServerConfiguration(
+              serverID: setting.serverID, executableURL: executableURL,
+              arguments: setting.arguments, workingDirectory: workingDirectory,
+              environment: MCPProcessEnvironment.sanitized()))
+        }
       }
     }
   }

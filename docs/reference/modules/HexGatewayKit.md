@@ -4,7 +4,7 @@
 
 Resident composition, lifecycle, heartbeats and self-knowledge.
 
-**78 Swift files.** Generated; do not edit by hand.
+**79 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexGatewayKit/Authorization
 
@@ -104,6 +104,7 @@ Resident composition, lifecycle, heartbeats and self-knowledge.
 | [HexGatewayScreenControlPermissionFailureMapper.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Resident/HexGatewayScreenControlPermissionFailureMapper.swift) | Converts resident screen-control failures into bounded, actionable messages that can safely cross the XPC boundary without exposing subprocess details or local paths. |
 | [HexGatewayServiceIdentity.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Resident/HexGatewayServiceIdentity.swift) | Canonical identity shared by the resident executable, the app's XPC transport, and the future launch-agent template. Keeping these values in the package avoids silently drifting Mach names between lifecycle glue and client code. |
 | [HexGatewayToolServerController.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Resident/HexGatewayToolServerController.swift) | Maps the running resident's enabled tool servers to bounded, secret-free control-plane values. Installation, saved settings, Mac privacy grants and successful task execution are separate facts. |
+| [HexMCPSecretHTTPHeaderProvider.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Resident/HexMCPSecretHTTPHeaderProvider.swift) | Resolves one endpoint-bound credential immediately before a request. Never caches a token. |
 
 ## Packages/HexKit/Sources/HexGatewayKit/SelfKnowledge
 

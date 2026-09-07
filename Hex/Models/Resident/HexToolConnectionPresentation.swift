@@ -10,7 +10,7 @@ nonisolated struct HexToolConnectionPresentation {
     case .playwright: "Browser control"
     case .peekaboo: "Screen control"
     case .xcode: "Xcode control"
-    case .streamableHTTP, nil: status.serverID
+    case .streamableHTTP, .stdio, nil: status.serverID
     }
   }
 
@@ -47,6 +47,8 @@ nonisolated struct HexToolConnectionPresentation {
         "The tool did not respond in time. Check that it is available, then retry the connection."
       case .serverRejected:
         "The tool server refused the connection. Check its access settings, then retry."
+      case .authenticationRejected:
+        "The tool server rejected its authorization. Add or replace its bearer token in HTTP tool servers below, save, then retry the connection."
       case .invalidResponse:
         "The tool server returned an unsupported response. Check its version or settings, then retry."
       case .connectionFailed:

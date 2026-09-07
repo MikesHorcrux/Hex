@@ -6,6 +6,7 @@ public enum MCPClientSessionError: Error, Equatable, Sendable {
   case protocolViolation
   case limitExceeded
   case requestTimedOut
+  case authenticationRejected
   case connectionClosed
   case remoteError(code: Int64)
 }

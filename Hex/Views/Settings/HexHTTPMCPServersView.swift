@@ -5,6 +5,7 @@ struct HexHTTPMCPServersView: View {
   @Bindable var model: HexResidentSetupModel
   @State private var serverID = ""
   @State private var endpoint = ""
+  @State private var bearerToken = ""
 
   var body: some View {
     Section {
@@ -17,45 +18,25 @@ struct HexHTTPMCPServersView: View {
       }
 
       ForEach(model.httpMCPServers) { server in
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-          Toggle(
-            isOn: Binding(
-              get: { server.isEnabled },
-              set: { model.setHTTPMCPServerEnabled(server.serverID, isEnabled: $0) }
-            )
-          ) {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(server.serverID)
-                .font(.body.monospaced())
-              Text(server.endpointURL.absoluteString)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            }
-          }
-
-          Button(role: .destructive) {
-            model.removeHTTPMCPServer(server.serverID)
-          } label: {
-            Image(systemName: "trash")
-          }
-          .buttonStyle(.borderless)
-          .accessibilityLabel("Remove \(server.serverID) MCP server")
-        }
+        HexHTTPMCPServerRowView(model: model, server: server)
       }
 
       TextField("Connection name (for example, local_docs)", text: $serverID)
         .accessibilityIdentifier("residentHTTPMCPServerIDField")
       TextField("Secure server address", text: $endpoint)
         .accessibilityIdentifier("residentHTTPMCPEndpointField")
+      SecureField("Bearer token (optional)", text: $bearerToken)
+        .accessibilityIdentifier("residentHTTPMCPBearerTokenField")
 
       HStack {
         Spacer()
         Button("Add Server") {
-          if model.addHTTPMCPServer(serverID: serverID, endpoint: endpoint) {
+          if model.addHTTPMCPServer(
+            serverID: serverID, endpoint: endpoint, bearerToken: bearerToken)
+          {
             serverID = ""
             endpoint = ""
+            bearerToken = ""
           }
         }
         .buttonStyle(.hexSecondaryAction)
@@ -63,12 +44,13 @@ struct HexHTTPMCPServersView: View {
       }
 
       Text(
-        "For advanced integrations. Hex accepts secure internet addresses and local addresses on this Mac. Sign-in headers are not stored here."
+        "Use an HTTPS or local HTTP MCP address. Tokens are stored in Keychain when you save. After saving, use Check connection above to discover tools."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
     } header: {
-      Text("Extra tool servers")
+      Text("HTTP tool servers")
     }
+    .disabled(!model.canEditMCPServers)
   }
 }

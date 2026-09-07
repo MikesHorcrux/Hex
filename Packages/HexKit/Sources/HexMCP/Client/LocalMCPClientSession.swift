@@ -218,19 +218,20 @@ public actor LocalMCPClientSession: MCPClientSession {
     method: String,
     params: JSONValue
   ) async throws -> JSONValue {
+    let generation = lifecycleGeneration
     do {
       return try await connection.request(method: method, params: params)
     } catch is CancellationError {
-      await invalidate()
+      if lifecycleGeneration == generation { await invalidate() }
       throw CancellationError()
     } catch let error as MCPClientSessionError {
       if case .remoteError = error {
         throw error
       }
-      await invalidate()
+      if lifecycleGeneration == generation { await invalidate() }
       throw error
     } catch {
-      await invalidate()
+      if lifecycleGeneration == generation { await invalidate() }
       throw error
     }
   }

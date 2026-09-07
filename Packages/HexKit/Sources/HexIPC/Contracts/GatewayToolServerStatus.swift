@@ -25,7 +25,7 @@ public struct GatewayToolServerStatus: Codable, Equatable, Sendable {
     case .playwright: guard serverID == "playwright" else { throw invalidStatus() }
     case .peekaboo: guard serverID == "peekaboo" else { throw invalidStatus() }
     case .xcode: guard serverID == "xcode" else { throw invalidStatus() }
-    case .streamableHTTP, nil: break
+    case .streamableHTTP, .stdio, nil: break
     }
     guard failure == nil || state == .unavailable else { throw invalidStatus() }
     if state == .ready {

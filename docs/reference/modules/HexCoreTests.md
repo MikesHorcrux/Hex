@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**17 Swift files.** Generated; do not edit by hand.
+**19 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexCoreTests/Authorization
 
@@ -63,7 +63,9 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [HexMCPConnectionSettingsTests.swift](../../../Packages/HexKit/Tests/HexCoreTests/Resident/HexMCPConnectionSettingsTests.swift) | — |
 | [HexResidentRuntimeSettingsTests.swift](../../../Packages/HexKit/Tests/HexCoreTests/Resident/HexResidentRuntimeSettingsTests.swift) | — |
+| [HexSecretKeyTests.swift](../../../Packages/HexKit/Tests/HexCoreTests/Resident/HexSecretKeyTests.swift) | — |
 
 ## Packages/HexKit/Tests/HexCoreTests/Tools
 

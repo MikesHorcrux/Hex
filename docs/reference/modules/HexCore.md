@@ -117,7 +117,7 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | [HexResidentRuntimeSettings.swift](../../../Packages/HexKit/Sources/HexCore/Resident/HexResidentRuntimeSettings.swift) | Non-secret settings needed to start Hex's resident runtime.  Credentials intentionally do not belong in this value or its Codable representation. The workspace is represented as an absolute file URL so a persisted setting cannot silently de… |
 | [HexResidentRuntimeSettingsError.swift](../../../Packages/HexKit/Sources/HexCore/Resident/HexResidentRuntimeSettingsError.swift) | Validation failures for persisted resident runtime settings. |
 | [HexResidentRuntimeSettingsStore.swift](../../../Packages/HexKit/Sources/HexCore/Resident/HexResidentRuntimeSettingsStore.swift) | Asynchronous persistence boundary for the non-secret resident runtime settings. |
-| [HexSecretKey.swift](../../../Packages/HexKit/Sources/HexCore/Resident/HexSecretKey.swift) | Stable identifiers for secrets owned by Hex. This type identifies a secret without carrying its value through settings, persistence metadata, or diagnostics. |
+| [HexSecretKey.swift](../../../Packages/HexKit/Sources/HexCore/Resident/HexSecretKey.swift) | A secret identifier, never its value. Existing provider identifiers retain their wire format. |
 | [HexSecretStore.swift](../../../Packages/HexKit/Sources/HexCore/Resident/HexSecretStore.swift) | Generic secret storage boundary. Implementations must not log or persist secret values outside their protected store, and callers should request a value only immediately before use. |
 
 ## Packages/HexKit/Sources/HexCore/Tools

@@ -90,5 +90,6 @@ struct HexMCPIntegrationsView: View {
         "Hex installs missing browser and screen-control components for you. macOS permission prompts remain separate and visible."
       )
     }
+    .disabled(model.isSaving)
   }
 }

@@ -16,8 +16,11 @@ The resident gateway can also construct handshake-era Streamable HTTP clients th
 revision `2025-11-25`. HTTPS is required except for literal loopback HTTP endpoints. The transport
 rejects redirects, URL credentials and queries, caller overrides of transport-owned headers,
 duplicate JSON members, oversized responses, and unbounded SSE streams. HTTP authentication headers
-come from an injected process-only `MCPHTTPHeaderProvider`; they are not part of resident Codable
-settings. The stateless `2026-07-28` revision remains a separate future negotiation path.
+come from an injected request-time `MCPHTTPHeaderProvider`; they are not part of resident Codable
+settings. The resident composes `HexMCPSecretHTTPHeaderProvider` for connections that explicitly
+require bearer authentication. Its Keychain identifier hashes the server ID and exact endpoint,
+and lookup/validation failures stop authenticated dispatch without exposing the underlying error.
+The stateless `2026-07-28` revision remains a separate future negotiation path.
 
 Configured servers are wrapped independently and merged with Hex's native Mac, web, terminal, and
 workspace tools through `CompositeToolExecutor`. Discovery starts each MCP connection lazily at an
@@ -59,9 +62,12 @@ enabling the adapter cannot grant those permissions. Hex invokes the component's
 requests and verifies both grants after the user returns. Full Disk Access has no public grant API;
 Hex reveals its exact resident agent bundle for the user to add in System Settings.
 
-Xcode remains a built-in local stdio adapter, and additional servers can be saved as HTTPS or
-literal-loopback HTTP endpoints. Secrets for HTTP authentication are process-only and are not
-written into resident settings.
+Xcode remains a built-in local stdio adapter. Additional servers can be saved as HTTPS or loopback
+HTTP endpoints, or as explicit executable/argument/working-directory stdio configurations. Stdio
+construction is deferred so an unavailable optional executable does not prevent resident startup.
+Bearer values live in the shared data-protection Keychain, are read immediately before a request,
+and are never written into resident settings. App/helper protocol 1.15 is required for custom stdio
+transport identity and the authentication-rejected health category.
 
 ## Boundary rules
 

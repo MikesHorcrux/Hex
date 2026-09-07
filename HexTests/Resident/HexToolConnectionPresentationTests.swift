@@ -8,7 +8,7 @@ import Testing
 struct HexToolConnectionPresentationTests {
   @Test(arguments: ["playwright", "peekaboo", "xcode"])
   func customServerKeepsItsOwnNameAndGenericRepair(serverID: String) {
-    for transport: HexResidentMCPTransport? in [.streamableHTTP, nil] {
+    for transport: HexResidentMCPTransport? in [.streamableHTTP, .stdio, nil] {
       let row = HexToolConnectionPresentation(
         status: .init(
           serverID: serverID, state: .unavailable, failure: .componentMissing,
@@ -17,6 +17,17 @@ struct HexToolConnectionPresentationTests {
       #expect(row.detail?.contains("Built-in tools") == false)
       #expect(row.detail?.contains("Open Xcode") == false)
     }
+  }
+
+  @Test
+  func revokedAuthorizationProvidesTheCredentialRepairPath() {
+    let row = HexToolConnectionPresentation(
+      status: .init(
+        serverID: "local", state: .unavailable, failure: .authenticationRejected,
+        transport: .streamableHTTP))
+    #expect(row.detail?.contains("bearer token") == true)
+    #expect(row.detail?.contains("save, then retry") == true)
+    #expect(row.actionTitle == "Retry connection")
   }
 
   @Test

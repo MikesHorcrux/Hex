@@ -4,7 +4,7 @@
 
 MCP protocol, transports, managed adapters and discovery.
 
-**88 Swift files.** Generated; do not edit by hand.
+**89 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexMCP/Client
 
@@ -40,6 +40,7 @@ MCP protocol, transports, managed adapters and discovery.
 | [MCPHTTPRedirectRejectingDelegate.swift](../../../Packages/HexKit/Sources/HexMCP/HTTP/MCPHTTPRedirectRejectingDelegate.swift) | — |
 | [MCPHTTPResponse.swift](../../../Packages/HexKit/Sources/HexMCP/HTTP/MCPHTTPResponse.swift) | — |
 | [MCPHTTPTransport.swift](../../../Packages/HexKit/Sources/HexMCP/HTTP/MCPHTTPTransport.swift) | — |
+| [MCPSSEEventFramer.swift](../../../Packages/HexKit/Sources/HexMCP/HTTP/MCPSSEEventFramer.swift) | Frames SSE events across arbitrary byte boundaries, including CR, LF and CRLF endings. |
 | [MCPSSEMessageDecoder.swift](../../../Packages/HexKit/Sources/HexMCP/HTTP/MCPSSEMessageDecoder.swift) | — |
 | [MCPStreamableHTTPJSONRPCConnection.swift](../../../Packages/HexKit/Sources/HexMCP/HTTP/MCPStreamableHTTPJSONRPCConnection.swift) | — |
 | [MCPStreamableHTTPResponseDecoder.swift](../../../Packages/HexKit/Sources/HexMCP/HTTP/MCPStreamableHTTPResponseDecoder.swift) | — |

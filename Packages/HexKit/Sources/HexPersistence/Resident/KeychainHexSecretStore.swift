@@ -218,6 +218,8 @@ public actor KeychainHexSecretStore: HexSecretStore {
       configuredAccount
     case .openAIChatGPTOAuth:
       "\(configuredAccount).chatgpt-oauth"
+    default:
+      "\(configuredAccount).\(key.rawValue)"
     }
   }
 

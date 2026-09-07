@@ -93,6 +93,29 @@ struct StreamableHTTPMCPClientSessionTests {
     #expect(requests.isEmpty)
   }
 
+  @Test(
+    "HTTP authorization rejection is distinct from an unavailable server",
+    arguments: [401, 403, 500])
+  func classifiesHTTPRejection(statusCode: Int) async throws {
+    let endpoint = try #require(URL(string: "http://127.0.0.1:8765/mcp"))
+    let transport = StubTransport(responses: [
+      MCPHTTPResponse(
+        statusCode: statusCode, headers: [:], body: Data("Untrusted server detail".utf8),
+        finalURL: endpoint)
+    ])
+    let session = StreamableHTTPMCPClientSession(
+      configuration: try MCPStreamableHTTPServerConfiguration(
+        serverID: "remote", endpointURL: endpoint),
+      headerProvider: MCPEmptyHTTPHeaderProvider(), transport: transport)
+    let expected: MCPClientSessionError =
+      statusCode == 500
+      ? .connectionClosed : .authenticationRejected
+    await #expect(throws: expected) { try await session.connect() }
+    #expect(
+      MCPManagedToolFailure.classify(expected)
+        == (statusCode == 500 ? .connectionFailed : .authenticationRejected))
+  }
+
   private static func initializationResult() -> JSONValue {
     .object([
       "protocolVersion": .string("2025-11-25"),
