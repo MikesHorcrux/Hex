@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 import HexIPC
 
@@ -8,19 +9,31 @@ nonisolated struct HexGatewayClientAdapter: HexAgentClient, Sendable {
   let client: HexGatewayClient
   private let authorizationTransport: any HexAuthorizationDecisionSubmitting
   private let modelCatalog: (@Sendable () async throws -> [ModelDescriptor])?
+  private let expectedExecutableID: UUID?
 
   init(
     client: HexGatewayClient,
     authorizationTransport: any HexAuthorizationDecisionSubmitting,
-    modelCatalog: (@Sendable () async throws -> [ModelDescriptor])? = nil
+    modelCatalog: (@Sendable () async throws -> [ModelDescriptor])? = nil,
+    expectedExecutableID: UUID? = nil
   ) {
     self.client = client
     self.authorizationTransport = authorizationTransport
     self.modelCatalog = modelCatalog
+    self.expectedExecutableID = expectedExecutableID
   }
 
   func connect() async throws -> GatewayConnectionResult {
-    try await client.connect()
+    let result = try await client.connect()
+    if let expectedExecutableID, result.response.executableID != expectedExecutableID {
+      try? await client.disconnect()
+      throw GatewayFailure(
+        code: .transportUnavailable,
+        message:
+          "Hex Agent is from a different or unverified build. Restart the agent from this Hex app, then reconnect.",
+        isRetryable: false)
+    }
+    return result
   }
 
   func disconnect() async throws {

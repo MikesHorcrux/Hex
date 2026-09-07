@@ -4,7 +4,7 @@
 
 Gateway wire contracts, clients, services, XPC and recovery.
 
-**127 Swift files.** Generated; do not edit by hand.
+**128 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexIPC/Artifacts
 
@@ -125,6 +125,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | Source file | Leading source documentation |
 | --- | --- |
 | [GatewayDriverDrainWaiter.swift](../../../Packages/HexKit/Sources/HexIPC/Service/GatewayDriverDrainWaiter.swift) | A local lifecycle caller's deadline and completion receipt, owned by HexGatewayService. |
+| [GatewayExecutableIdentity.swift](../../../Packages/HexKit/Sources/HexIPC/Service/GatewayExecutableIdentity.swift) | Mach-O build UUIDs distinguish rebuilt helpers that still speak the same wire protocol. This is build-coherence evidence, not a replacement for XPC code-signing admission. |
 | [HexGatewayAccessibilityPermissionHandlers.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayAccessibilityPermissionHandlers.swift) | Accessibility callbacks owned by the resident gateway composition root. The request callback may ask macOS to display its standard consent prompt, so it must only be invoked in response to an explicit user action. |
 | [HexGatewayConnectionAdmissionPolicy.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayConnectionAdmissionPolicy.swift) | Admission policy for the resident gateway's local Mach-service clients.  The listener installs `codeSigningRequirement` before activation, which makes the operating system reject a peer that does not satisfy the requirement before the deleg… |
 | [HexGatewayResidentControlHandlers.swift](../../../Packages/HexKit/Sources/HexIPC/Service/HexGatewayResidentControlHandlers.swift) | Optional resident control callbacks owned by the gateway composition root. A missing status callback reports `.unavailable`; missing mutation callbacks fail closed with a transport error. Callbacks are intentionally narrow so the XPC servic… |

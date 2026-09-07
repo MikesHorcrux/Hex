@@ -31,13 +31,20 @@ manager for every third-party service. Do not put bearer tokens in URLs or check
 
 ## Lifecycle and errors
 
-Discovery is lazy at a run boundary. Managed connection state includes retry/cooldown and health
-handling, so the older description “only retry on the next run” is incomplete. Reconnect should
+The resident starts optional connection warm-up without waiting before becoming available. Run
+discovery returns ready catalogs while cold/retrying servers remain explicitly connecting or
+unavailable in health status. Explicit no-tool requests skip discovery entirely. The reusable MCP
+executor still supports a bounded waiting mode for callers that deliberately need initial discovery.
+Connection state includes retry/cooldown and health handling. Reconnect should
 target the failed connection and respect active-run admission, rather than restart every tool.
 
 Distinguish transport failure, protocol failure, tool-declared error and successful tool content.
 Server-provided content remains untrusted data. An uncertain mutation must not be automatically
 duplicated: use the server's operation lookup/idempotency contract when available.
+
+Capability names and repair advice use transport identity supplied by the running resident. A
+custom HTTP server named `playwright`, `peekaboo` or `xcode` is not a managed capability. Older
+peers without transport metadata remain unnamed/unclassified beyond their literal server ID.
 
 See [detailed MCP design](../architecture/mcp.md) and
 [settings contract](../../Packages/HexKit/Sources/HexCore/Resident/HexResidentMCPServerSettings.swift).

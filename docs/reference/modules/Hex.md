@@ -4,7 +4,7 @@
 
 macOS app composition, observable models, services and SwiftUI views.
 
-**208 Swift files.** Generated; do not edit by hand.
+**214 Swift files.** Generated; do not edit by hand.
 
 ## Hex/App
 
@@ -42,6 +42,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [AgentConversationStoring.swift](../../../Hex/Models/Agent/AgentConversationStoring.swift) | Save completion acknowledges an atomic file replacement, not power-loss durability. An implementation must not report cancellation after committing the supplied snapshot. |
 | [AgentMessagePresentation.swift](../../../Hex/Models/Agent/AgentMessagePresentation.swift) | Shared, side-effect-free text presentation for live and retained run output. |
 | [AgentRunState.swift](../../../Hex/Models/Agent/AgentRunState.swift) | — |
+| [AgentStreamingTextLayout.swift](../../../Hex/Models/Agent/AgentStreamingTextLayout.swift) | Keep immutable prefixes reusable while a response grows. A chunk ends only at an existing newline; joining the chunks with that separator recovers the provider's exact text. |
 | [AgentWorkspaceModel+Admission.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+Admission.swift) | — |
 | [AgentWorkspaceModel+Artifacts.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+Artifacts.swift) | — |
 | [AgentWorkspaceModel+Checkpoints.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+Checkpoints.swift) | — |
@@ -52,6 +53,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [AgentWorkspaceModel+ErrorPresentation.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+ErrorPresentation.swift) | — |
 | [AgentWorkspaceModel+History.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+History.swift) | — |
 | [AgentWorkspaceModel+Permissions.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+Permissions.swift) | — |
+| [AgentWorkspaceModel+Presentation.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+Presentation.swift) | — |
 | [AgentWorkspaceModel+Recovery.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+Recovery.swift) | — |
 | [AgentWorkspaceModel+RunLifecycle.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+RunLifecycle.swift) | — |
 | [AgentWorkspaceModel+ToolEffects.swift](../../../Hex/Models/Agent/AgentWorkspaceModel+ToolEffects.swift) | — |
@@ -95,6 +97,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [MarkdownBlock.swift](../../../Hex/Models/Markdown/MarkdownBlock.swift) | — |
+| [MarkdownLayout.swift](../../../Hex/Models/Markdown/MarkdownLayout.swift) | Keep list layout bounded: neither one nested stack per line nor one unbounded text layout. This is a presentation transform only; original transcript text and all numbering survive. |
 
 ## Hex/Models/Onboarding
 
@@ -267,8 +270,10 @@ macOS app composition, observable models, services and SwiftUI views.
 | [AgentSidebarConversationRow.swift](../../../Hex/Views/Agent/AgentSidebarConversationRow.swift) | — |
 | [AgentSidebarStatusView.swift](../../../Hex/Views/Agent/AgentSidebarStatusView.swift) | — |
 | [AgentSidebarView.swift](../../../Hex/Views/Agent/AgentSidebarView.swift) | — |
+| [AgentStreamingTextView.swift](../../../Hex/Views/Agent/AgentStreamingTextView.swift) | — |
 | [AgentToolAuthorizationView.swift](../../../Hex/Views/Agent/AgentToolAuthorizationView.swift) | — |
 | [AgentWorkspaceHeaderView.swift](../../../Hex/Views/Agent/AgentWorkspaceHeaderView.swift) | — |
+| [AgentWorkspaceStatusView.swift](../../../Hex/Views/Agent/AgentWorkspaceStatusView.swift) | Observe history/title changes here rather than invalidating the whole transcript hierarchy for every canonical history watermark. Transcript rendering has its own coalesced snapshot. |
 | [AgentWorkspaceView.swift](../../../Hex/Views/Agent/AgentWorkspaceView.swift) | — |
 | [HexApprovalModeOptionsView.swift](../../../Hex/Views/Agent/HexApprovalModeOptionsView.swift) | — |
 | [HexApprovalModeRow.swift](../../../Hex/Views/Agent/HexApprovalModeRow.swift) | — |
@@ -338,6 +343,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | --- | --- |
 | [HexAccessibilityPermissionView.swift](../../../Hex/Views/Settings/HexAccessibilityPermissionView.swift) | — |
 | [HexAuthorizationModePickerView.swift](../../../Hex/Views/Settings/HexAuthorizationModePickerView.swift) | — |
+| [HexBuildDetailsView.swift](../../../Hex/Views/Settings/HexBuildDetailsView.swift) | — |
 | [HexChatGPTAuthenticationSettingsView.swift](../../../Hex/Views/Settings/HexChatGPTAuthenticationSettingsView.swift) | — |
 | [HexComputerAccessView.swift](../../../Hex/Views/Settings/HexComputerAccessView.swift) | — |
 | [HexExternalComputerPermissionsView.swift](../../../Hex/Views/Settings/HexExternalComputerPermissionsView.swift) | — |

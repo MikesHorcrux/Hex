@@ -199,6 +199,7 @@ struct GatewayClientReentrancyTests {
     )
     await driver.finish(1)
     await driver.waitUntilStopped(1)
+    try await GatewayTestValues.waitForDriverCleanup(in: service)
 
     _ = try await service.startRun(
       GatewayTestValues.request(runID: evictionRunID),
@@ -215,6 +216,7 @@ struct GatewayClientReentrancyTests {
     )
     await driver.finish(2)
     await driver.waitUntilStopped(2)
+    try await GatewayTestValues.waitForDriverCleanup(in: service)
 
     let replacementStart = try await service.startRun(
       GatewayTestValues.request(runID: reusedRunID),

@@ -17,8 +17,10 @@ OpenClaw or an MCP subprocess.
 7. Append tool results to continuation context and return to inference. A valid stop produces a
    durable completed outcome; cancellation or failure remains explicit.
 
-The implementation presently discovers tools even for a request whose tool choice is `none`.
-This can contribute setup latency. Tool batches are currently executed serially by the runtime;
+An explicit `none` tool choice skips discovery and sends no tool schemas. Tool-enabled runs retain
+a validated snapshot, including a named call's continuation. Resident optional MCP servers warm up
+in owned background attempts; cold or unavailable servers do not hold up ordinary discovery. Only
+ready catalogs are advertised. Tool batches are currently executed serially by the runtime;
 a provider's parallel-tool-call capability does not imply concurrent host execution.
 
 ## Tools and side effects

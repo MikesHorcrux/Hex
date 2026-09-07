@@ -1,3 +1,4 @@
+import HexCore
 import HexIPC
 
 /// Only vetted local strings become action guidance; server errors are never rendered verbatim.
@@ -5,11 +6,11 @@ nonisolated struct HexToolConnectionPresentation {
   let status: GatewayToolServerStatus
 
   var name: String {
-    switch status.serverID {
-    case "playwright": "Browser control"
-    case "peekaboo": "Screen control"
-    case "xcode": "Xcode control"
-    default: status.serverID
+    switch status.transport {
+    case .playwright: "Browser control"
+    case .peekaboo: "Screen control"
+    case .xcode: "Xcode control"
+    case .streamableHTTP, nil: status.serverID
     }
   }
 
@@ -35,9 +36,11 @@ nonisolated struct HexToolConnectionPresentation {
     if let failure = status.failure {
       return switch failure {
       case .componentMissing:
-        status.serverID == "xcode"
+        status.transport == .xcode
           ? "Open Xcode and your project, check that Xcode's tool access is enabled, then retry."
-          : "A component is missing. In Built-in tools below, turn this tool off and back on to retry installation. Wait for setup to finish, then save and retry the connection."
+          : status.transport == .playwright || status.transport == .peekaboo
+            ? "A component is missing. In Built-in tools below, turn this tool off and back on to retry installation. Wait for setup to finish, then save and retry the connection."
+            : "A component is missing. Check this server's installation and saved settings, then retry."
       case .configurationInvalid:
         "Check this tool's saved settings below, save the changes, then retry the connection."
       case .connectionTimedOut:
@@ -47,7 +50,7 @@ nonisolated struct HexToolConnectionPresentation {
       case .invalidResponse:
         "The tool server returned an unsupported response. Check its version or settings, then retry."
       case .connectionFailed:
-        status.serverID == "xcode"
+        status.transport == .xcode
           ? "Open Xcode and your project, check that Xcode's tool access is enabled, then retry."
           : "Hex could not connect to this tool. Check its availability and saved settings, then retry."
       }

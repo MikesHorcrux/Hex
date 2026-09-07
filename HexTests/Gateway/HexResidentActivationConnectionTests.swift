@@ -69,6 +69,50 @@ struct HexResidentActivationConnectionTests {
     #expect(await client.connectCount == 2)
   }
 
+  @Test(arguments: [false, true]) @MainActor
+  func restartReplacesTheOldConnectionWithoutReversingExplicitDisconnect(disconnected: Bool) async {
+    let client = SpyClient()
+    let workspace = AgentWorkspaceModel(client: client)
+    await workspace.connect()
+    if disconnected { await workspace.disconnect() }
+    let controller = LifecycleController(status: .enabled)
+    let activation = HexStartAtLoginModel(
+      controller: controller, readinessChecker: ReadinessChecker(),
+      onConnectionReset: { workspace.markGatewayDisconnected() },
+      onBecameReady: { await workspace.residentGatewayBecameReady() })
+    await activation.refresh()
+    #expect(await client.connectCount == 1)
+
+    await activation.restart()
+
+    #expect(activation.message == nil)
+    #expect(workspace.connectionState == (disconnected ? .disconnected : .connected))
+    #expect(await client.connectCount == (disconnected ? 1 : 2))
+    await activation.refresh()
+    #expect(await client.connectCount == (disconnected ? 1 : 2))
+    #expect(await client.startCount == 0)
+  }
+
+  @Test @MainActor
+  func failedRestartClearsOldConnectedStateAndDoesNotReportReady() async {
+    let client = SpyClient()
+    let workspace = AgentWorkspaceModel(client: client)
+    await workspace.connect()
+    let controller = LifecycleController(status: .enabled, failsRegistration: true)
+    let activation = HexStartAtLoginModel(
+      controller: controller, readinessChecker: ReadinessChecker(),
+      onConnectionReset: { workspace.markGatewayDisconnected() },
+      onBecameReady: { await workspace.residentGatewayBecameReady() })
+    await activation.refresh()
+
+    await activation.restart()
+
+    #expect(activation.message != nil)
+    #expect(workspace.connectionState == .disconnected)
+    #expect(await client.connectCount == 1)
+    #expect(await client.startCount == 0)
+  }
+
   @Test @MainActor
   func activationDoesNotReplaceActiveWorkButRecoversPendingWorkWithoutResending() async throws {
     let client = SpyClient()
@@ -138,14 +182,19 @@ struct HexResidentActivationConnectionTests {
     }
   }
 
-  private enum FixtureFailure: Error { case timedOut }
+  private enum FixtureFailure: Error { case timedOut, failedRegistration }
 
   private actor LifecycleController: HexGatewayLifecycleControlling {
     var value: HexGatewayLifecycleStatus
+    private let failsRegistration: Bool
     private(set) var registerCount = 0
-    init(status: HexGatewayLifecycleStatus = .notRegistered) { value = status }
+    init(status: HexGatewayLifecycleStatus = .notRegistered, failsRegistration: Bool = false) {
+      value = status
+      self.failsRegistration = failsRegistration
+    }
     func status() async -> HexGatewayLifecycleStatus { value }
     func register() async throws {
+      if failsRegistration { throw FixtureFailure.failedRegistration }
       registerCount += 1
       value = .enabled
     }

@@ -30,12 +30,7 @@ struct AgentWorkspaceView: View {
         .ignoresSafeArea()
 
         VStack(spacing: 0) {
-          AgentWorkspaceHeaderView(
-            conversationTitle: model.selectedConversationTitle ?? "New conversation",
-            activity: model.activity,
-            connectionState: model.connectionState,
-            runState: model.runState
-          )
+          AgentWorkspaceStatusView(model: model)
 
           if let error = model.errorMessage {
             ErrorBannerView(
@@ -56,7 +51,7 @@ struct AgentWorkspaceView: View {
           }
 
           AgentConversationView(
-            items: model.transcript,
+            items: model.presentedTranscript,
             onPromptSuggestion: { prompt in
               model.draft = prompt
               isComposerFocused = true

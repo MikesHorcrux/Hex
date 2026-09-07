@@ -96,7 +96,9 @@ extension AgentWorkspaceModel {
   private func canContinueAutomaticDeliveryRecovery(
     _ request: GatewayStartRunRequest, conversationID: UUID
   ) -> Bool {
-    !Task.isCancelled && !automaticConnectionSuppressedByUser && !cancellationRequested
+    // Cancelling resident work is not cancelling this read-only observer. Its terminal receipt
+    // can still be missing after a dropped stream; recover it without starting or cancelling again.
+    !Task.isCancelled && !automaticConnectionSuppressedByUser
       && currentRunID == request.runID && currentRunRequest == request
       && selectedConversationID == conversationID
   }

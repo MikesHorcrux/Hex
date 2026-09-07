@@ -1,13 +1,18 @@
 import Foundation
 import SwiftUI
 
-struct MarkdownMessageView: View {
+struct MarkdownMessageView: View, Equatable {
   let markdown: String
   private let parser = MarkdownParser()
 
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.markdown == rhs.markdown
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
-      ForEach(Array(parser.parse(markdown).enumerated()), id: \.offset) { _, block in
+      ForEach(Array(MarkdownLayout.blocks(parser.parse(markdown)).enumerated()), id: \.offset) {
+        _, block in
         rendered(block)
       }
     }

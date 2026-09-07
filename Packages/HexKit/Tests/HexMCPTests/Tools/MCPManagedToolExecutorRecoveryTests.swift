@@ -5,6 +5,54 @@ import Testing
 
 @Suite("Optional MCP background recovery")
 struct MCPManagedToolExecutorRecoveryTests {
+  @Test("Cold optional startup returns promptly, coalesces, and later publishes real tools")
+  func nonblockingColdDiscoveryPreservesAnOwnedAttempt() async throws {
+    let session = GatedSession(failFirstConnection: false)
+    let executor = try MCPManagedToolExecutor(
+      session: session, startupTimeout: .seconds(5), waitsForInitialDiscovery: false)
+    let safetyRelease = releaseEventually(session)
+    let began = ContinuousClock.now
+    #expect(try await executor.availableTools().isEmpty)
+    try await session.waitUntilConnections(1)
+    await executor.warmUp()
+    for _ in 0..<20 { #expect(try await executor.availableTools().isEmpty) }
+    #expect(ContinuousClock.now - began < .milliseconds(1_500))
+    #expect(await executor.currentState() == .connecting)
+    #expect(await session.connectionCount() == 1)
+    await session.releaseConnection()
+    try await executor.refreshCatalog()
+    safetyRelease.cancel()
+    await safetyRelease.value
+    #expect(try await executor.availableTools().map(\.name) == ["mcp_7_fixture_echo"])
+    #expect(await session.connectionCount() == 1)
+    await executor.stop()
+  }
+
+  @Test("Resident warm-up is idempotent and cannot publish ready after shutdown")
+  func warmUpIsOwnedByShutdown() async throws {
+    let session = GatedSession(failFirstConnection: false)
+    let executor = try MCPManagedToolExecutor(session: session, waitsForInitialDiscovery: false)
+    let safetyRelease = releaseEventually(session)
+    await executor.warmUp()
+    await executor.warmUp()
+    try await session.waitUntilConnections(1)
+    #expect(try await executor.availableTools().isEmpty)
+    let shutdown = Task { await executor.stop() }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while await executor.currentState() != .disconnected {
+      guard ContinuousClock.now < deadline else { throw FixtureError.waitTimedOut }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    await executor.warmUp()
+    #expect(await session.connectionCount() == 1)
+    await session.releaseConnection()
+    await shutdown.value
+    safetyRelease.cancel()
+    await safetyRelease.value
+    #expect(await executor.currentState() == .disconnected)
+    #expect(await session.disconnectionCount() == 1)
+  }
+
   @Test("Repeated discoveries do not retry a known failure during its cooldown")
   func failedServerCooldownDoesNotBlockDiscovery() async throws {
     let session = GatedSession()
@@ -115,10 +163,15 @@ struct MCPManagedToolExecutorRecoveryTests {
     private var disconnects = 0
     private var released = false
     private var connectionContinuation: CheckedContinuation<Void, Never>?
+    private let failFirstConnection: Bool
+
+    init(failFirstConnection: Bool = true) {
+      self.failFirstConnection = failFirstConnection
+    }
 
     func connect() async throws {
       connects += 1
-      if connects == 1 { throw FixtureError.unavailable }
+      if connects == 1, failFirstConnection { throw FixtureError.unavailable }
       if !released {
         // Intentionally ignore cancellation until released: stop must join even a late activation.
         await withCheckedContinuation { connectionContinuation = $0 }

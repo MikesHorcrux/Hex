@@ -1,8 +1,22 @@
 import Foundation
 import HexCore
-import HexIPC
+import Testing
+
+@testable import HexIPC
 
 enum GatewayTestValues {
+  /// A driver returning and the service recording its exit are separate actor turns. Capacity
+  /// tests must wait for the latter, not assume task.value also ran the exit observer.
+  static func waitForDriverCleanup(in service: HexGatewayService, retaining count: Int = 0)
+    async throws
+  {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while await service.liveDriverTasks.count != count {
+      try #require(ContinuousClock.now < deadline, "Gateway driver cleanup did not settle.")
+      try await Task.sleep(for: .milliseconds(1))
+    }
+  }
+
   static func uuid(_ value: UInt8) -> UUID {
     UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, value))
   }

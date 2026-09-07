@@ -12,6 +12,7 @@ struct HexGeneralSettingsView: View {
 
   var body: some View {
     Form {
+      HexBuildDetailsView(gatewaySummary: workspace.gatewaySummary)
       Section {
         LabeledContent(
           "Agent mode",
@@ -26,6 +27,12 @@ struct HexGeneralSettingsView: View {
             tint: HexBrandPalette.apricot
           )
         } else if startAtLogin.isAvailable {
+          Button("Restart Hex Agent") {
+            Task { await startAtLogin.restart() }
+          }
+          .buttonStyle(.hexSecondaryAction)
+          .disabled(!startAtLogin.canRestart || workspace.isRunActive)
+          .accessibilityIdentifier("restartResidentAgentFromGeneralButton")
           Button(startAtLogin.buttonTitle) {
             startAtLogin.toggle()
           }

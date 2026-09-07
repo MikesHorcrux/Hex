@@ -1,4 +1,5 @@
 import Foundation
+import HexCore
 import HexIPC
 import Testing
 
@@ -188,7 +189,7 @@ struct HexToolConnectionsModelTests {
   }
 
   private static var readyStatus: GatewayToolServerStatus {
-    .init(serverID: "playwright", state: .ready, availableToolCount: 4)
+    .init(serverID: "playwright", state: .ready, availableToolCount: 4, transport: .playwright)
   }
   private static var readyHealth: GatewayToolServerHealth {
     .init(servers: [readyStatus])

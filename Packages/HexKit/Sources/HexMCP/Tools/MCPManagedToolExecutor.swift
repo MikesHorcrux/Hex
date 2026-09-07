@@ -4,7 +4,7 @@ import Synchronization
 
 /// Keeps one MCP server optional at the runtime boundary.
 ///
-/// The first discovery waits for a bounded cold start. Once a server is known to be unavailable,
+/// Cold discovery may wait or return the current catalog while an owned startup runs. Once unavailable,
 /// discovery returns without waiting and may start one cooldown-limited background retry. Healthy
 /// servers keep their tools; a recovered server rejoins the catalog at the next discovery boundary.
 /// Explicit refresh bypasses the cooldown and waits for the same bounded attempt.
@@ -73,6 +73,7 @@ public actor MCPManagedToolExecutor: ToolExecutor {
   private let executor: MCPToolExecutor
   private let startupTimeout: Duration
   private let retryDelay: Duration
+  private let waitsForInitialDiscovery: Bool
   private var state = MCPManagedToolExecutorState.disconnected
   private var failure: MCPManagedToolFailure?
   private var availableToolCount: Int?
@@ -85,16 +86,22 @@ public actor MCPManagedToolExecutor: ToolExecutor {
   private var catalogID: UUID?
 
   public init(session: any MCPClientSession) throws {
+    try self.init(session: session, waitsForInitialDiscovery: true)
+  }
+
+  public init(session: any MCPClientSession, waitsForInitialDiscovery: Bool) throws {
     try self.init(
       session: session,
-      startupTimeout: Self.productionStartupTimeout
+      startupTimeout: Self.productionStartupTimeout,
+      waitsForInitialDiscovery: waitsForInitialDiscovery
     )
   }
 
   init(
     session: any MCPClientSession,
     startupTimeout: Duration,
-    retryDelay: Duration = productionRetryDelay
+    retryDelay: Duration = productionRetryDelay,
+    waitsForInitialDiscovery: Bool = true
   ) throws {
     guard
       startupTimeout > .zero,
@@ -108,6 +115,7 @@ public actor MCPManagedToolExecutor: ToolExecutor {
     executor = try MCPToolExecutor(sessions: [session])
     self.startupTimeout = startupTimeout
     self.retryDelay = retryDelay
+    self.waitsForInitialDiscovery = waitsForInitialDiscovery
   }
 
   public func availableTools() async throws -> [ToolDefinition] {
@@ -231,6 +239,13 @@ public actor MCPManagedToolExecutor: ToolExecutor {
     await invalidate(nextState: .disconnected)
   }
 
+  /// Starts only one owned cold attempt; does not wait for the server or bypass a failure cooldown.
+  /// Stop joins/fences this attempt just like a discovery-owned retry.
+  public func warmUp() {
+    guard state == .disconnected, startup == nil, shutdown == nil else { return }
+    _ = beginStartup(isBackground: true)
+  }
+
   public func currentState() -> MCPManagedToolExecutorState {
     state
   }
@@ -258,7 +273,8 @@ public actor MCPManagedToolExecutor: ToolExecutor {
       }
       return false
     }
-    return try await waitForStartup(beginStartup(isBackground: false))
+    let attempt = beginStartup(isBackground: !waitsForInitialDiscovery)
+    return waitsForInitialDiscovery ? try await waitForStartup(attempt) : false
   }
 
   private func beginStartup(

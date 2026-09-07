@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 import HexIPC
 import HexMCP
@@ -64,6 +65,35 @@ struct HexGatewayToolServerControllerTests {
     #expect(throws: GatewayFailure.self) {
       try HexGatewayToolServerController(executors: [first, second])
     }
+  }
+
+  @Test
+  func statusCarriesConfiguredTransportWithoutInferringItFromServerName() async throws {
+    let executor = try MCPManagedToolExecutor(session: Session(serverID: "playwright"))
+    let custom = try HexResidentMCPServerSettings(
+      serverID: "playwright", transport: .streamableHTTP,
+      endpointURL: #require(URL(string: "http://127.0.0.1:8080/mcp")))
+    let controller = try HexGatewayToolServerController(executors: [executor], settings: [custom])
+    let status = try #require(await controller.health().servers.first)
+    #expect(status.transport == .streamableHTTP)
+    let encoded = try JSONEncoder().encode(status)
+    #expect(try JSONDecoder().decode(GatewayToolServerStatus.self, from: encoded) == status)
+    let unknown = try HexGatewayToolServerController(executors: [executor])
+    #expect(try await unknown.health().servers.first?.transport == nil)
+    let managed = try HexGatewayToolServerController(
+      executors: [executor], settings: [.playwright()])
+    #expect(try await managed.health().servers.first?.transport == .playwright)
+    #expect(throws: GatewayFailure.self) {
+      try HexGatewayToolServerController(executors: [executor], settings: [.xcode()])
+    }
+    #expect(throws: GatewayFailure.self) {
+      try GatewayToolServerStatus(
+        serverID: "custom", state: .disconnected,
+        transport: .playwright
+      ).validated()
+    }
+    let legacy = Data(#"{"serverID":"playwright","state":"disconnected"}"#.utf8)
+    #expect(try JSONDecoder().decode(GatewayToolServerStatus.self, from: legacy).transport == nil)
   }
 
   private actor Session: MCPClientSession {

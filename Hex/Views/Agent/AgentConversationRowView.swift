@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AgentConversationRowView: View {
   let item: ConversationItem
+  var bubbleWidth: CGFloat?
   var onOpenArtifact: (ArtifactReference) -> Void = { _ in }
 
   var body: some View {
@@ -38,8 +39,12 @@ struct AgentConversationRowView: View {
           Text(item.text)
             .font(.system(.callout, design: .monospaced))
             .textSelection(.enabled)
+        } else if item.isStreaming {
+          AgentStreamingTextView(text: item.text.isEmpty ? "…" : item.text)
+            .equatable()
         } else {
           MarkdownMessageView(markdown: item.text.isEmpty ? "…" : item.text)
+            .equatable()
         }
         ForEach(item.artifacts, id: \.id) { artifact in
           Button {
@@ -56,7 +61,14 @@ struct AgentConversationRowView: View {
       }
       .padding(.horizontal, 15)
       .padding(.vertical, 12)
-      .frame(maxWidth: item.role == .user ? 620 : 720, alignment: .leading)
+      // A fixed, viewport-derived width avoids repeated zero/infinite-width typesetting probes
+      // through every older multi-screen answer when the current row grows.
+      .frame(
+        width: bubbleWidth.map { min($0, item.role == .user ? 620 : 720) }, alignment: .leading
+      )
+      .frame(
+        maxWidth: bubbleWidth == nil ? (item.role == .user ? 620 : 720) : nil, alignment: .leading
+      )
       .hexSurface(
         cornerRadius: 18,
         fill: bubbleColor,

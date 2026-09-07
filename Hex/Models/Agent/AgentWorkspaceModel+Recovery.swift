@@ -51,77 +51,99 @@ extension AgentWorkspaceModel {
       }
     }
     do {
-      let response = try await client.recoverRun(GatewayRunRecoveryRequest(runID: runID))
-      try requireCurrentRecovery(runID: runID, gatewayInstanceID: response.gatewayInstanceID)
-      guard response.runID == runID else { throw invalidRecovery() }
-      switch response.disposition {
-      case .unknown:
-        throw GatewayFailure(
-          code: .runNotFound,
-          message:
-            "No recoverable record of this task was found. Its outcome is unknown; Hex has not sent it again."
-        )
-      case .journaled(let journal):
-        guard journal.terminalRecord != nil else { throw invalidRecovery() }
-        try await recoverHistory(
-          journal, through: journal.latestSequence,
-          gatewayInstanceID: response.gatewayInstanceID, runID: runID)
-        guard currentRunRequest == nil || isTerminalHistory(runID: runID) else {
-          throw invalidRecovery()
-        }
-      case .resident(let snapshot, let minimumReplaySequence, let journal):
-        guard snapshot.runID == runID, snapshot.latestSequence >= currentAppliedSequence else {
-          throw invalidRecovery()
-        }
-        if let priorInvocation = currentInvocationID {
-          guard priorInvocation == snapshot.invocationID,
-            currentRunGatewayInstanceID == response.gatewayInstanceID
-          else {
+      // Journal replay and attachment are not atomic. A producer can advance or finish while
+      // pages are being saved. Refresh a raced live cursor within this one read-only recovery.
+      for attachmentAttempt in 0..<3 {
+        let response = try await client.recoverRun(GatewayRunRecoveryRequest(runID: runID))
+        try requireCurrentRecovery(runID: runID, gatewayInstanceID: response.gatewayInstanceID)
+        guard response.runID == runID else { throw invalidRecovery() }
+        switch response.disposition {
+        case .unknown:
+          throw GatewayFailure(
+            code: .runNotFound,
+            message:
+              "No recoverable record of this task was found. Its outcome is unknown; Hex has not sent it again."
+          )
+        case .journaled(let journal):
+          guard journal.terminalRecord != nil else { throw invalidRecovery() }
+          try await recoverHistory(
+            journal, through: journal.latestSequence,
+            gatewayInstanceID: response.gatewayInstanceID, runID: runID)
+          guard currentRunRequest == nil || isTerminalHistory(runID: runID) else {
+            throw invalidRecovery()
+          }
+        case .resident(let snapshot, let minimumReplaySequence, let journal):
+          guard snapshot.runID == runID, snapshot.latestSequence >= currentAppliedSequence else {
+            throw invalidRecovery()
+          }
+          if let priorInvocation = currentInvocationID {
+            guard priorInvocation == snapshot.invocationID,
+              currentRunGatewayInstanceID == response.gatewayInstanceID
+            else {
+              throw GatewayFailure(
+                code: .staleSession,
+                message:
+                  "The saved task belongs to a different resident invocation. No action was repeated."
+              )
+            }
+          }
+          currentInvocationID = snapshot.invocationID
+          currentRunGatewayInstanceID = response.gatewayInstanceID
+          updateHistoryOutcome(.inProgress)
+          if let journal {
+            // A commit can precede publication by one event. Stay at the resident's published prefix
+            // before attaching; its later stream delivers the committed-but-unpublished suffix.
+            try await recoverHistory(
+              journal, through: min(journal.latestSequence, snapshot.latestSequence),
+              gatewayInstanceID: response.gatewayInstanceID, runID: runID)
+          }
+          if isTerminalHistory(runID: runID) { return }
+          guard currentAppliedSequence >= minimumReplaySequence else {
             throw GatewayFailure(
-              code: .staleSession,
+              code: .invalidEventSequence,
               message:
-                "The saved task belongs to a different resident invocation. No action was repeated."
+                "The resident no longer retains the missing events and durable history is unavailable."
+            )
+          }
+          guard await saveCurrentRunCheckpoint() else { throw checkpointSaveFailure() }
+          try requireCurrentRecovery(runID: runID, gatewayInstanceID: response.gatewayInstanceID)
+          let stream: AsyncThrowingStream<GatewayEventEnvelope, any Error>
+          do {
+            stream = try await client.eventRecords(
+              for: runID, invocationID: snapshot.invocationID, afterSequence: currentAppliedSequence
+            )
+          } catch let failure as GatewayFailure
+            where journal != nil && attachmentAttempt < 2
+            && [.invalidCursor, .replayUnavailable, .staleRunInvocation].contains(failure.code)
+          {
+            // Keep the applied checkpoint and identity. The next query must prove the remaining
+            // history; malformed evidence and ordinary stream failures still stop immediately.
+            continue
+          }
+          isRecoveringRun = false
+          runState =
+            cancellationRequested
+            ? .cancelling : (pendingAuthorizations.isEmpty ? .running : .waitingForAuthorization)
+          activity =
+            cancellationRequested
+            ? "Waiting for the original task's cancellation result…"
+            : "Reconnected to the original task."
+          var terminal = false
+          for try await envelope in stream {
+            guard currentRunID == runID else { throw CancellationError() }
+            guard try await client.shouldApply(envelope) else { continue }
+            try reduceRunRecord(envelope.record)
+            terminal = isTerminalRunEvent(envelope.record.event)
+            try await client.acknowledge(envelope)
+          }
+          guard terminal else {
+            throw GatewayFailure(
+              code: .producerEndedWithoutTerminalEvent,
+              message: "The recovered stream ended before its outcome was known.", isRetryable: true
             )
           }
         }
-        currentInvocationID = snapshot.invocationID
-        currentRunGatewayInstanceID = response.gatewayInstanceID
-        updateHistoryOutcome(.inProgress)
-        if let journal {
-          // A commit can precede publication by one event. Stay at the resident's published prefix
-          // before attaching; its later stream delivers the committed-but-unpublished suffix.
-          try await recoverHistory(
-            journal, through: min(journal.latestSequence, snapshot.latestSequence),
-            gatewayInstanceID: response.gatewayInstanceID, runID: runID)
-        }
-        if isTerminalHistory(runID: runID) { return }
-        guard currentAppliedSequence >= minimumReplaySequence else {
-          throw GatewayFailure(
-            code: .invalidEventSequence,
-            message:
-              "The resident no longer retains the missing events and durable history is unavailable."
-          )
-        }
-        guard await saveCurrentRunCheckpoint() else { throw checkpointSaveFailure() }
-        try requireCurrentRecovery(runID: runID, gatewayInstanceID: response.gatewayInstanceID)
-        let stream = try await client.eventRecords(
-          for: runID, invocationID: snapshot.invocationID, afterSequence: currentAppliedSequence)
-        isRecoveringRun = false
-        runState = pendingAuthorizations.isEmpty ? .running : .waitingForAuthorization
-        activity = "Reconnected to the original task."
-        var terminal = false
-        for try await envelope in stream {
-          guard currentRunID == runID else { throw CancellationError() }
-          guard try await client.shouldApply(envelope) else { continue }
-          try reduceRunRecord(envelope.record)
-          terminal = isTerminalRunEvent(envelope.record.event)
-          try await client.acknowledge(envelope)
-        }
-        guard terminal else {
-          throw GatewayFailure(
-            code: .producerEndedWithoutTerminalEvent,
-            message: "The recovered stream ended before its outcome was known.", isRetryable: true)
-        }
+        return
       }
     } catch {
       guard currentRunID == runID, !isTerminalHistory(runID: runID) else { return }

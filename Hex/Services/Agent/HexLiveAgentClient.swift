@@ -524,12 +524,23 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     }
 
     if route.kind == .residentXPC {
+      let helperURL = Bundle.main.bundleURL.appendingPathComponent(
+        HexGatewayServiceIdentity.bundledExecutablePath)
+      guard let expectedExecutableID = try GatewayExecutableIdentity.executableID(at: helperURL)
+      else {
+        throw GatewayFailure(
+          code: .transportUnavailable,
+          message:
+            "The bundled Hex Agent build could not be verified. Rebuild this app and its helper together."
+        )
+      }
       let gatewayClient = HexGatewayClient(
         transport: XPCGatewayTransport(machServiceName: route.machServiceName)
       )
       let adapter = HexGatewayClientAdapter(
         client: gatewayClient,
-        authorizationTransport: residentAuthorizationTransportBuilder(gatewayClient)
+        authorizationTransport: residentAuthorizationTransportBuilder(gatewayClient),
+        expectedExecutableID: expectedExecutableID
       )
       self.adapter = adapter
       return adapter

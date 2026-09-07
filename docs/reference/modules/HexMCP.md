@@ -122,7 +122,7 @@ MCP protocol, transports, managed adapters and discovery.
 | Source file | Leading source documentation |
 | --- | --- |
 | [MCPExposedToolName.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPExposedToolName.swift) | — |
-| [MCPManagedToolExecutor.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutor.swift) | Keeps one MCP server optional at the runtime boundary.  The first discovery waits for a bounded cold start. Once a server is known to be unavailable, discovery returns without waiting and may start one cooldown-limited background retry. Hea… |
+| [MCPManagedToolExecutor.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutor.swift) | Keeps one MCP server optional at the runtime boundary.  Cold discovery may wait or return the current catalog while an owned startup runs. Once unavailable, discovery returns without waiting and may start one cooldown-limited background ret… |
 | [MCPManagedToolExecutorSnapshot.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutorSnapshot.swift) | Cached managed-server health, without starting a connection or reading remote state. |
 | [MCPManagedToolExecutorState.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutorState.swift) | — |
 | [MCPManagedToolFailure.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolFailure.swift) | A bounded, host-owned health category. Never carries server output or configuration values. |

@@ -8,6 +8,37 @@ import Testing
 @Suite("Workspace cancellation response ownership")
 struct AgentWorkspaceCancellationRaceTests {
   @Test @MainActor
+  func lateCancellationFailureCannotReplaceConfirmedCompletion() async throws {
+    let client = CancellationClient()
+    let model = AgentWorkspaceModel(client: client, conversationStore: nil)
+    await model.connect()
+    model.draft = "Finish or cancel once"
+    model.send()
+    do {
+      try await waitUntil { await client.streamCount == 1 && model.runState == .running }
+      let request = try #require(await client.requests.first)
+      model.cancel()
+      try await waitUntil { await client.isCancellationBlocked }
+      await client.finish(request.runID)
+      await model.runTask?.value
+      #expect(model.runState == .completed)
+      await client.failBlockedCancellation()
+      try await waitUntil { await client.cancellationFailureReturned }
+      try await Task.sleep(for: .milliseconds(20))
+      #expect(model.runState == .completed)
+      #expect(model.errorMessage == nil)
+      #expect(model.transcript.filter { $0.role == .assistant }.map(\.text) == ["Finished"])
+      #expect(await client.requests.count == 1)
+      #expect(await client.cancellationRequests.count == 1)
+    } catch {
+      await client.cleanup()
+      model.runTask?.cancel()
+      throw error
+    }
+    await client.cleanup()
+  }
+
+  @Test @MainActor
   func lateCancellationFailureCannotFailANewerRun() async throws {
     let client = CancellationClient()
     let model = AgentWorkspaceModel(client: client, conversationStore: nil)

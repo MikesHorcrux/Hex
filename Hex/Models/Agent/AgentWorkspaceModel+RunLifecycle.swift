@@ -129,6 +129,12 @@ extension AgentWorkspaceModel {
     isReducingRunEvent = true
     defer { isReducingRunEvent = false }
     try apply(record)
+    // A replayed token, approval or run-start event cannot undo the user's cancellation intent.
+    // Only the resident's terminal event establishes whether cancellation or completion won.
+    if cancellationRequested, !isTerminalRunEvent(record.event) {
+      runState = .cancelling
+      activity = "Waiting for the original task's cancellation result…"
+    }
     if record.sequence == 1 { currentFirstEventID = record.id }
     currentAppliedSequence = record.sequence
     updateHistorySequence(record.sequence)

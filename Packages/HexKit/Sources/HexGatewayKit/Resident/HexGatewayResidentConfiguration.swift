@@ -69,6 +69,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
   public let inferenceBackendSettings: HexInferenceBackendSettings
   public let inferenceProviderFactory: HexGatewayInferenceProviderFactory
   public let mcpClientSessions: [any MCPClientSession]
+  public let mcpServerSettings: [HexResidentMCPServerSettings]
   public let managedToolLayout: MCPManagedToolLayout?
 
   /// Parses the complete, explicit developer environment override. The API key remains in the
@@ -187,6 +188,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     inferenceSettingsFileURL: URL? = nil,
     personalMemoryScope: PersonalMemoryScope? = nil,
     mcpClientSessions: [any MCPClientSession] = [],
+    mcpServerSettings: [HexResidentMCPServerSettings] = [],
     managedToolLayout: MCPManagedToolLayout? = nil,
     authorizationMode: HexAuthorizationMode = .askEveryTime,
     connectionAdmissionPolicy: HexGatewayConnectionAdmissionPolicy = .production(),
@@ -280,6 +282,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     self.inferenceBackendSettings = resolvedInferenceBackendSettings
     self.inferenceProviderFactory = inferenceProviderFactory
     self.mcpClientSessions = mcpClientSessions.sorted { $0.serverID < $1.serverID }
+    self.mcpServerSettings = mcpServerSettings
     self.managedToolLayout = managedToolLayout
   }
 
@@ -459,6 +462,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       inferenceSettingsFileURL: inferenceBackendSettingsStore == nil
         ? resolvedPaths.directoryURL.appendingPathComponent("inference-backends.json") : nil,
       mcpClientSessions: mcpClientSessions,
+      mcpServerSettings: settings.mcpServers,
       managedToolLayout: managedToolLayout,
       authorizationMode: settings.authorizationMode,
       connectionAdmissionPolicy: connectionAdmissionPolicy,

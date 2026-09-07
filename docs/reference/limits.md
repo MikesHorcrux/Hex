@@ -39,6 +39,13 @@ currently requires **1.13**. Version 1.12 introduced acknowledged event admissio
 bounded tool-server health and targeted reconnect/maintenance admission. Rebuild app and helper
 together when changing wire contracts. Never bypass compatibility checks to connect stale code.
 
+Handshake metadata also includes the loaded helper executable's Mach-O build UUID. The production
+app compares it with the UUID in its bundled helper before admitting work. A missing/mismatched ID
+requires restarting the matching agent. This detects stale binaries even when the protocol version
+has not changed; it does not replace code-signing checks or attest a git commit. Current identity
+parsing supports the thin 64-bit Mach-O binaries produced by the canonical developer build;
+universal/distribution packaging needs separate qualification.
+
 ## Persistence
 
 The SQLite event journal's current schema version is 3. It separates run records, ordered events

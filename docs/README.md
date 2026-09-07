@@ -49,6 +49,7 @@ available for rationale and implementation history; dated plans are not promises
 - [Source layout](architecture/source-layout.md) and [file ownership](architecture/ownership.md)
 - [Completion ledger](architecture/agent-completion-plan-2026-09-04.md)
 - [Runtime repair record](architecture/runtime-repair-2026-09-04.md)
+- [Canonical chat reliability checkpoint](architecture/canonical-chat-reliability-2026-09-06.md)
 
 The separation of onboarding, concepts, capability guides, reference and troubleshooting is
 inspired by [OpenClaw's documentation](https://docs.openclaw.ai/). Hex's behavior and contracts

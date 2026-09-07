@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**44 Swift files.** Generated; do not edit by hand.
+**48 Swift files.** Generated; do not edit by hand.
 
 ## HexTests/Agent
 
@@ -18,6 +18,7 @@ Focused test target; consult suites for exercised boundaries.
 | [AgentConversationSearchTests.swift](../../../HexTests/Agent/AgentConversationSearchTests.swift) | — |
 | [AgentConversationTests.swift](../../../HexTests/Agent/AgentConversationTests.swift) | — |
 | [AgentPermissionInheritanceTests.swift](../../../HexTests/Agent/AgentPermissionInheritanceTests.swift) | — |
+| [AgentStreamingTextLayoutTests.swift](../../../HexTests/Agent/AgentStreamingTextLayoutTests.swift) | — |
 | [AgentStructuredConversationStoreTests.swift](../../../HexTests/Agent/AgentStructuredConversationStoreTests.swift) | — |
 | [AgentStructuredConversationTests.swift](../../../HexTests/Agent/AgentStructuredConversationTests.swift) | — |
 | [AgentWorkspaceAdmissionPersistenceTests.swift](../../../HexTests/Agent/AgentWorkspaceAdmissionPersistenceTests.swift) | — |
@@ -28,6 +29,7 @@ Focused test target; consult suites for exercised boundaries.
 | [AgentWorkspaceConversationOrganizationTests.swift](../../../HexTests/Agent/AgentWorkspaceConversationOrganizationTests.swift) | — |
 | [AgentWorkspaceDeliveryRecoveryTests.swift](../../../HexTests/Agent/AgentWorkspaceDeliveryRecoveryTests.swift) | — |
 | [AgentWorkspaceNonExecutionHistoryTests.swift](../../../HexTests/Agent/AgentWorkspaceNonExecutionHistoryTests.swift) | — |
+| [AgentWorkspacePresentationTests.swift](../../../HexTests/Agent/AgentWorkspacePresentationTests.swift) | — |
 | [AgentWorkspaceRestartRecoveryTests.swift](../../../HexTests/Agent/AgentWorkspaceRestartRecoveryTests.swift) | — |
 | [AgentWorkspaceRetryTests.swift](../../../HexTests/Agent/AgentWorkspaceRetryTests.swift) | — |
 | [HexApprovalModeRenderingTests.swift](../../../HexTests/Agent/HexApprovalModeRenderingTests.swift) | Opt-in component renders use only static data. They never start a resident or load user settings. |
@@ -70,6 +72,7 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [MarkdownLayoutTests.swift](../../../HexTests/Markdown/MarkdownLayoutTests.swift) | — |
 | [MarkdownParserTests.swift](../../../HexTests/Markdown/MarkdownParserTests.swift) | — |
 
 ## HexTests/Onboarding
@@ -98,4 +101,5 @@ Focused test target; consult suites for exercised boundaries.
 | [HexManagedToolProcessRunnerTests.swift](../../../HexTests/Resident/HexManagedToolProcessRunnerTests.swift) | — |
 | [HexResidentGatewayActivationCheckerTests.swift](../../../HexTests/Resident/HexResidentGatewayActivationCheckerTests.swift) | — |
 | [HexResidentSetupModelTests.swift](../../../HexTests/Resident/HexResidentSetupModelTests.swift) | — |
+| [HexToolConnectionPresentationTests.swift](../../../HexTests/Resident/HexToolConnectionPresentationTests.swift) | — |
 | [HexToolConnectionsModelTests.swift](../../../HexTests/Resident/HexToolConnectionsModelTests.swift) | — |

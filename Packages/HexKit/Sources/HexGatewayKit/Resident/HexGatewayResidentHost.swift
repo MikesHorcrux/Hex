@@ -65,9 +65,10 @@ public final class HexGatewayResidentHost {
       processExecutor: processExecutor
     )
     let mcpToolExecutors = try configuration.mcpClientSessions.map {
-      try MCPManagedToolExecutor(session: $0)
+      try MCPManagedToolExecutor(session: $0, waitsForInitialDiscovery: false)
     }
-    let toolServerController = try HexGatewayToolServerController(executors: mcpToolExecutors)
+    let toolServerController = try HexGatewayToolServerController(
+      executors: mcpToolExecutors, settings: configuration.mcpServerSettings)
     let routedToolExecutor = try CompositeToolExecutor(
       executors: [
         personalToolExecutor, personalMemoryToolExecutor,
@@ -324,6 +325,12 @@ public final class HexGatewayResidentHost {
       try await withTaskCancellationHandler(
         operation: {
           try Task.checkCancellation()
+          // Optional server acquisition must not delay listener readiness or the first chat.
+          // Executors retain their startup tasks and fence them during resident shutdown.
+          for executor in mcpToolExecutors {
+            try Task.checkCancellation()
+            await executor.warmUp()
+          }
           guard cancellationGate.activate({ listener.activate() }) else {
             throw CancellationError()
           }

@@ -105,6 +105,7 @@ struct HexApp: App {
       controller: lifecycleController,
       readinessChecker: setupDependencies.readinessChecker,
       connectionResetter: client as? any HexResidentGatewayConnectionResetting,
+      onConnectionReset: { [weak workspace] in workspace?.markGatewayDisconnected() },
       onBecameReady: { [weak workspace] in
         guard !isVerificationOnlyLaunch, route.isResident else { return }
         await workspace?.residentGatewayBecameReady()

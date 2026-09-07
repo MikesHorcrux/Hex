@@ -43,7 +43,8 @@ extension HexGatewayService {
         sessionID: sessionID,
         gatewayInstanceID: gatewayInstanceID,
         selectedVersion: upperBound,
-        activeRun: activeRunSnapshot()
+        activeRun: activeRunSnapshot(),
+        executableID: GatewayExecutableIdentity.runningExecutableID
       )
     )
     sessions[sessionID] = GatewaySessionState(

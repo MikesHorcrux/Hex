@@ -44,6 +44,7 @@ struct GatewayRunIdentityTests {
     }
     await driver.finish(1)
     await driver.waitUntilStopped(1)
+    try await GatewayTestValues.waitForDriverCleanup(in: service)
     let firstReplay = try await client.eventRecords(
       for: reusedRunID,
       invocationID: firstInvocationID
@@ -84,6 +85,7 @@ struct GatewayRunIdentityTests {
     )
     await driver.finish(2)
     await driver.waitUntilStopped(2)
+    try await GatewayTestValues.waitForDriverCleanup(in: service)
 
     let replacementStart = try await client.startRun(
       GatewayTestValues.request(runID: reusedRunID)
@@ -154,14 +156,16 @@ struct GatewayRunIdentityTests {
         maximumWireBytes: 32_768,
         maximumRetainedRecordsPerRun: 4,
         subscriberBufferCapacity: 4,
-        maximumRememberedRuns: 1
+        // One old driver remains in cleanup while another invocation can run. Exercise eviction
+        // with two intervening completed runs instead of exceeding the live-driver capacity.
+        maximumRememberedRuns: 2
       )
     )
     let driver = ABAGatewayRunDriver()
     let service = HexGatewayService(driver: driver, configuration: configuration)
     let handshake = try await service.handshake(GatewayTestValues.handshakeRequest(90))
     let reusedRunID = GatewayTestValues.runID(90)
-    let middleRunID = GatewayTestValues.runID(91)
+    let middleRunIDs = [GatewayTestValues.runID(91), GatewayTestValues.runID(93)]
     let probeRunID = GatewayTestValues.runID(92)
 
     _ = try await service.startRun(
@@ -180,23 +184,30 @@ struct GatewayRunIdentityTests {
       from: 1
     )
 
-    _ = try await service.startRun(
-      GatewayTestValues.request(runID: middleRunID),
-      sessionID: handshake.sessionID
-    )
-    await driver.waitUntilStarted(2)
-    let middleStates = await service.runs
-    let middleTask = try #require(middleStates[middleRunID]?.task)
-    await driver.yieldAndWait(
-      GatewayTestValues.record(runID: middleRunID, sequence: 1, event: .runStarted),
-      from: 2
-    )
-    await driver.yieldAndWait(
-      GatewayTestValues.record(runID: middleRunID, sequence: 2, event: .runCompleted),
-      from: 2
-    )
-    await driver.finish(2)
-    await middleTask.value
+    for (offset, middleRunID) in middleRunIDs.enumerated() {
+      let invocation = offset + 2
+      _ = try await service.startRun(
+        GatewayTestValues.request(runID: middleRunID),
+        sessionID: handshake.sessionID
+      )
+      await driver.waitUntilStarted(invocation)
+      let middleStates = await service.runs
+      let middleTask = try #require(middleStates[middleRunID]?.task)
+      await driver.yieldAndWait(
+        GatewayTestValues.record(runID: middleRunID, sequence: 1, event: .runStarted),
+        from: invocation
+      )
+      await driver.yieldAndWait(
+        GatewayTestValues.record(runID: middleRunID, sequence: 2, event: .runCompleted),
+        from: invocation
+      )
+      await driver.finish(invocation)
+      await middleTask.value
+      try await GatewayTestValues.waitForDriverCleanup(in: service, retaining: 1)
+    }
+    let evictedStates = await service.runs
+    #expect(evictedStates[reusedRunID] == nil)
+    #expect(await driver.isRunning(1))
 
     let newStart = try await service.startRun(
       GatewayTestValues.request(runID: reusedRunID),
@@ -207,7 +218,7 @@ struct GatewayRunIdentityTests {
       Issue.record("Expected the reused identifier to start a new invocation.")
       return
     }
-    await driver.waitUntilStarted(3)
+    await driver.waitUntilStarted(4)
     let newStates = await service.runs
     let newTask = try #require(newStates[reusedRunID]?.task)
     let newStartRecord = GatewayTestValues.record(
@@ -215,7 +226,7 @@ struct GatewayRunIdentityTests {
       sequence: 1,
       event: .runStarted
     )
-    await driver.yieldAndWait(newStartRecord, from: 3)
+    await driver.yieldAndWait(newStartRecord, from: 4)
 
     await driver.yieldAndWait(
       GatewayTestValues.record(
@@ -237,10 +248,10 @@ struct GatewayRunIdentityTests {
     )
     #expect(probeStart.disposition == .busy(activeRunID: reusedRunID))
     guard probeStart.disposition == .busy(activeRunID: reusedRunID) else {
-      await driver.finish(3)
+      await driver.finish(4)
       if case .started = probeStart.disposition {
-        await driver.waitUntilStarted(4)
-        await driver.finish(4)
+        await driver.waitUntilStarted(5)
+        await driver.finish(5)
       }
       return
     }
@@ -250,8 +261,8 @@ struct GatewayRunIdentityTests {
       sequence: 2,
       event: .runCompleted
     )
-    await driver.yieldAndWait(newTerminalRecord, from: 3)
-    await driver.finish(3)
+    await driver.yieldAndWait(newTerminalRecord, from: 4)
+    await driver.finish(4)
     await newTask.value
 
     let replay = try await service.eventRecords(

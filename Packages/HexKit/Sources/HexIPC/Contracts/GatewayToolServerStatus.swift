@@ -1,21 +1,32 @@
+import HexCore
+
 public struct GatewayToolServerStatus: Codable, Equatable, Sendable {
   public let serverID: String
   public let state: GatewayToolServerState
   public let failure: GatewayToolServerFailure?
   public let availableToolCount: Int?
+  /// Resident-owned configuration identity. Missing on older peers means unknown, not managed.
+  public let transport: HexResidentMCPTransport?
 
   public init(
     serverID: String, state: GatewayToolServerState, failure: GatewayToolServerFailure? = nil,
-    availableToolCount: Int? = nil
+    availableToolCount: Int? = nil, transport: HexResidentMCPTransport? = nil
   ) {
     self.serverID = serverID
     self.state = state
     self.failure = failure
     self.availableToolCount = availableToolCount
+    self.transport = transport
   }
 
   public func validated() throws -> Self {
     _ = try GatewayToolServerRequest(serverID: serverID).validated()
+    switch transport {
+    case .playwright: guard serverID == "playwright" else { throw invalidStatus() }
+    case .peekaboo: guard serverID == "peekaboo" else { throw invalidStatus() }
+    case .xcode: guard serverID == "xcode" else { throw invalidStatus() }
+    case .streamableHTTP, nil: break
+    }
     guard failure == nil || state == .unavailable else { throw invalidStatus() }
     if state == .ready {
       guard let availableToolCount, (0...4096).contains(availableToolCount), failure == nil else {

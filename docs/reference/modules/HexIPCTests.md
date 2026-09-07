@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**76 Swift files.** Generated; do not edit by hand.
+**77 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexIPCTests/Accessibility
 
@@ -76,6 +76,7 @@ Focused test target; consult suites for exercised boundaries.
 | [GatewayCapacityTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Service/GatewayCapacityTests.swift) | — |
 | [GatewayEventOrderingTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Service/GatewayEventOrderingTests.swift) | — |
 | [GatewayEventValidationTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Service/GatewayEventValidationTests.swift) | — |
+| [GatewayExecutableIdentityTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Service/GatewayExecutableIdentityTests.swift) | — |
 | [GatewayFailureBoundaryTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Service/GatewayFailureBoundaryTests.swift) | — |
 | [GatewayImmediateEmissionTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Service/GatewayImmediateEmissionTests.swift) | — |
 | [GatewayInvocationBindingRegressionTests.swift](../../../Packages/HexKit/Tests/HexIPCTests/Service/GatewayInvocationBindingRegressionTests.swift) | — |

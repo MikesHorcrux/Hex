@@ -8,7 +8,7 @@ not independently verified API documentation. A dash means no leading comment wa
 
 | Module / target | Swift files | Ownership |
 | --- | ---: | --- |
-| [Hex](Hex.md) | 208 | macOS app composition, observable models, services and SwiftUI views. |
+| [Hex](Hex.md) | 214 | macOS app composition, observable models, services and SwiftUI views. |
 | [HexCapabilities](HexCapabilities.md) | 119 | Native file, process, web, Mac and artifact capability execution. |
 | [HexCapabilitiesTests](HexCapabilitiesTests.md) | 20 | Focused test target; consult suites for exercised boundaries. |
 | [HexCore](HexCore.md) | 75 | Shared Sendable values and small inference, tool, event and authority contracts. |
@@ -16,8 +16,8 @@ not independently verified API documentation. A dash means no leading comment wa
 | [HexGatewayCommand](HexGatewayCommand.md) | 1 | HexGateway executable entry and concrete provider injection. |
 | [HexGatewayKit](HexGatewayKit.md) | 75 | Resident composition, lifecycle, heartbeats and self-knowledge. |
 | [HexGatewayTests](HexGatewayTests.md) | 33 | Focused test target; consult suites for exercised boundaries. |
-| [HexIPC](HexIPC.md) | 127 | Gateway wire contracts, clients, services, XPC and recovery. |
-| [HexIPCTests](HexIPCTests.md) | 76 | Focused test target; consult suites for exercised boundaries. |
+| [HexIPC](HexIPC.md) | 128 | Gateway wire contracts, clients, services, XPC and recovery. |
+| [HexIPCTests](HexIPCTests.md) | 77 | Focused test target; consult suites for exercised boundaries. |
 | [HexMCP](HexMCP.md) | 88 | MCP protocol, transports, managed adapters and discovery. |
 | [HexMCPTests](HexMCPTests.md) | 23 | Focused test target; consult suites for exercised boundaries. |
 | [HexMLXProvider](HexMLXProvider.md) | 15 | Concrete MLX model loading, mapping and generation. |
@@ -30,9 +30,9 @@ not independently verified API documentation. A dash means no leading comment wa
 | [HexProvidersTests](HexProvidersTests.md) | 28 | Focused test target; consult suites for exercised boundaries. |
 | [HexRuntime](HexRuntime.md) | 34 | Provider-independent agent loop, context planning and execution budgets. |
 | [HexRuntimeTests](HexRuntimeTests.md) | 32 | Focused test target; consult suites for exercised boundaries. |
-| [HexTests](HexTests.md) | 44 | Focused test target; consult suites for exercised boundaries. |
+| [HexTests](HexTests.md) | 48 | Focused test target; consult suites for exercised boundaries. |
 | [HexUITests](HexUITests.md) | 2 | Focused test target; consult suites for exercised boundaries. |
 
-Total: **1220 Swift files** in **24 targets/directories**.
+Total: **1232 Swift files** in **24 targets/directories**.
 
 Regenerate with `python3 docs/_tools/docs.py generate` from the repository root.

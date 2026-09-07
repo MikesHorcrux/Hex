@@ -8,6 +8,33 @@ import Testing
 @Suite("Live agent client connection reuse")
 struct HexLiveAgentClientTests {
   @Test
+  func rejectsAStaleOrUnidentifiedHelperBeforeAnyRunCanStart() async throws {
+    let expected = UUID()
+    for received in [UUID?.none, UUID?.some(UUID())] {
+      let transport = CountingTransport(executableID: received)
+      let adapter = HexGatewayClientAdapter(
+        client: HexGatewayClient(transport: transport),
+        authorizationTransport: NoopAuthorizationTransport(), expectedExecutableID: expected)
+      do {
+        _ = try await adapter.connect()
+        Issue.record("A stale or unknown helper build must not be accepted.")
+      } catch let failure as GatewayFailure {
+        #expect(failure.code == .transportUnavailable)
+        #expect(failure.message.contains("different or unverified build"))
+      }
+      #expect(await transport.disconnectCallCount == 1)
+      #expect(await transport.startCallCount == 0)
+    }
+    let transport = CountingTransport(executableID: expected)
+    let adapter = HexGatewayClientAdapter(
+      client: HexGatewayClient(transport: transport),
+      authorizationTransport: NoopAuthorizationTransport(), expectedExecutableID: expected)
+    #expect(try await adapter.connect().response.executableID == expected)
+    #expect(await transport.disconnectCallCount == 0)
+    try await adapter.disconnect()
+  }
+
+  @Test
   func toolHealthNeverEstablishesAConnectionImplicitly() async throws {
     let transport = CountingTransport()
     let adapter = HexGatewayClientAdapter(
@@ -220,15 +247,18 @@ struct HexLiveAgentClientTests {
     private let yieldsBeforeHandshakeResponse: Bool
     private let streamFailure: GatewayFailureCode?
     private let terminalRunFailure: Bool
+    private let executableID: UUID?
 
     init(
       yieldsBeforeHandshakeResponse: Bool = false,
       streamFailure: GatewayFailureCode? = nil,
-      terminalRunFailure: Bool = false
+      terminalRunFailure: Bool = false,
+      executableID: UUID? = nil
     ) {
       self.yieldsBeforeHandshakeResponse = yieldsBeforeHandshakeResponse
       self.streamFailure = streamFailure
       self.terminalRunFailure = terminalRunFailure
+      self.executableID = executableID
     }
 
     func handshake(
@@ -246,7 +276,7 @@ struct HexLiveAgentClientTests {
         sessionID: GatewaySessionID(),
         gatewayInstanceID: GatewayInstanceID(),
         selectedVersion: .current,
-        activeRun: nil
+        activeRun: nil, executableID: executableID
       )
     }
 

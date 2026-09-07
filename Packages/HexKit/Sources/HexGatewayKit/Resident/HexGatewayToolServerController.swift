@@ -1,3 +1,4 @@
+import HexCore
 import HexIPC
 import HexMCP
 
@@ -5,8 +6,11 @@ import HexMCP
 /// Installation, saved settings, Mac privacy grants and successful task execution are separate facts.
 public actor HexGatewayToolServerController {
   private let executors: [String: MCPManagedToolExecutor]
+  private let transports: [String: HexResidentMCPTransport]
 
-  public init(executors: [MCPManagedToolExecutor]) throws {
+  public init(
+    executors: [MCPManagedToolExecutor], settings: [HexResidentMCPServerSettings] = []
+  ) throws {
     guard executors.count <= 16,
       Set(executors.map(\.serverID)).count == executors.count
     else {
@@ -17,6 +21,15 @@ public actor HexGatewayToolServerController {
       _ = try GatewayToolServerRequest(serverID: executor.serverID).validated()
     }
     self.executors = Dictionary(uniqueKeysWithValues: executors.map { ($0.serverID, $0) })
+    let enabledSettings = settings.filter(\.isEnabled)
+    guard Set(enabledSettings.map(\.serverID)).count == enabledSettings.count,
+      Set(enabledSettings.map(\.serverID)).isSubset(of: Set(executors.map(\.serverID)))
+    else {
+      throw GatewayFailure(
+        code: .malformedPayload, message: "Tool configuration does not match the running servers.")
+    }
+    transports = Dictionary(
+      uniqueKeysWithValues: enabledSettings.map { ($0.serverID, $0.transport) })
   }
 
   /// Does not connect, refresh a catalog, request a permission, or execute any tool.
@@ -70,7 +83,7 @@ public actor HexGatewayToolServerController {
     }
     return try GatewayToolServerStatus(
       serverID: snapshot.serverID, state: state, failure: failure,
-      availableToolCount: snapshot.availableToolCount
+      availableToolCount: snapshot.availableToolCount, transport: transports[snapshot.serverID]
     ).validated()
   }
 }

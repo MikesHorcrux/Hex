@@ -7,6 +7,30 @@ import Testing
 
 @Suite("Automatic delivery recovery never readmits work")
 struct AgentWorkspaceDeliveryRecoveryTests {
+  @Test(arguments: [false, true]) @MainActor
+  func movingReplayWindowRefreshesOnlyWithinABoundedReadOnlyRecovery(keepsMoving: Bool) async throws
+  {
+    let client = DeliveryClient(
+      failureCode: .consumerTooSlow, mode: keepsMoving ? .windowKeepsMoving : .windowMoved)
+    let model = AgentWorkspaceModel(client: client)
+    await model.connect()
+    model.draft = "Say hello"
+    model.send()
+    try await waitUntil { model.runTask == nil }
+    #expect(await client.startRequests.count == 1)
+    #expect(await client.cancelCount == 0)
+    #expect(await client.recoveryRequests.count == (keepsMoving ? 3 : 2))
+    #expect(await client.reattachCount == (keepsMoving ? 3 : 1))
+    #expect(model.runState == (keepsMoving ? .failed : .completed))
+    if keepsMoving {
+      #expect(model.needsRunRecovery)
+      #expect(model.activity.contains("not been sent again"))
+    } else {
+      #expect(model.transcript.filter { $0.role == .assistant }.map(\.text) == ["Hello"])
+      #expect(model.errorMessage == nil)
+    }
+  }
+
   @Test(arguments: [GatewayFailureCode.consumerTooSlow, .disconnected]) @MainActor
   func deliveryFailureRecoversTheOriginalPartialReplyOnce(_ code: GatewayFailureCode) async throws {
     let client = DeliveryClient(failureCode: code)
@@ -232,7 +256,7 @@ struct AgentWorkspaceDeliveryRecoveryTests {
   }
 
   @Test @MainActor
-  func cancellationIntentAndChangedConversationPreventAutomaticRecovery() async throws {
+  func changedConversationPreventsAutomaticRecovery() async throws {
     let client = DeliveryClient(failureCode: .malformedPayload)
     let model = AgentWorkspaceModel(client: client)
     await model.connect()
@@ -240,15 +264,55 @@ struct AgentWorkspaceDeliveryRecoveryTests {
     model.send()
     try await waitUntil { model.runTask == nil }
     let request = try #require(model.currentRunRequest)
-    let conversationID = try #require(model.selectedConversationID)
-    model.cancellationRequested = true
-    model.scheduleAutomaticDeliveryRecovery(request, conversationID: conversationID)
-    #expect(model.runTask == nil)
-    model.cancellationRequested = false
     model.scheduleAutomaticDeliveryRecovery(request, conversationID: UUID())
     #expect(model.runTask == nil)
     #expect(await client.recoveryRequests.isEmpty)
     #expect(await client.startRequests.count == 1)
+  }
+
+  @Test(arguments: [false, true]) @MainActor
+  func lostDeliveryAfterCancelRecoversItsReceiptWithoutRepeatingWork(residentActive: Bool)
+    async throws
+  {
+    let client = DeliveryClient(
+      failureCode: .consumerTooSlow,
+      mode: residentActive ? .cancellingResident : .cancelledJournal)
+    let store = MemoryStore()
+    let model = AgentWorkspaceModel(client: client, conversationStore: store)
+    await model.restoreConversationHistory()
+    await model.connect()
+    model.draft = "Say hello"
+    model.send()
+    do {
+      try await waitUntil { model.currentAppliedSequence == 3 }
+      model.cancel()
+      if residentActive {
+        try await waitUntil { model.currentAppliedSequence == 4 }
+        #expect(model.runState == .cancelling)
+        #expect(!model.canCancelRun)
+        #expect(model.cancellationRequested)
+        await client.releaseCancellationTerminal()
+      }
+      try await waitUntil { model.runTask == nil }
+    } catch {
+      await client.releaseCancellationTerminal()
+      model.runTask?.cancel()
+      throw error
+    }
+    await model.conversationPersistenceTask?.value
+    #expect(model.runState == .cancelled)
+    #expect(model.transcript.filter { $0.role == .assistant }.map(\.text) == ["Hello"])
+    #expect(!model.transcript.contains { $0.isStreaming })
+    #expect(model.errorMessage == nil)
+    #expect(!model.needsRunRecovery)
+    #expect(await client.startRequests.count == 1)
+    #expect(await client.cancelCount == 1)
+    #expect(await client.recoveryRequests.map(\.runID) == client.startRequests.map(\.runID))
+    let saved = try #require(try await store.load()?.conversations.first)
+    #expect(saved.pendingRun == nil)
+    #expect(saved.history?.exchanges.count == 1)
+    #expect(saved.history?.exchanges.last?.outcome == .cancelled)
+    #expect(saved.history?.exchanges.last?.lastEventSequence == 5)
   }
 
   @MainActor
@@ -263,6 +327,8 @@ struct AgentWorkspaceDeliveryRecoveryTests {
   private enum FixtureError: Error { case timedOut, noRequest, saveFailed }
   private enum RecoveryMode: Sendable {
     case journaled, attachmentFails, heldQuery, heldReconnect, heldTerminalAcknowledgement
+    case cancelledJournal, cancellingResident
+    case windowMoved, windowKeepsMoving
   }
 
   private actor MemoryStore: AgentConversationStoring {
@@ -302,6 +368,8 @@ struct AgentWorkspaceDeliveryRecoveryTests {
     private var queryWaiter: CheckedContinuation<Void, Never>?
     private var connectionWaiter: CheckedContinuation<Void, Never>?
     private var terminalAcknowledgementWaiter: CheckedContinuation<Void, Never>?
+    private var cancellationStream:
+      AsyncThrowingStream<GatewayEventEnvelope, any Error>.Continuation?
     var isQueryHeld: Bool { queryWaiter != nil }
     var isConnectionHeld: Bool { connectionWaiter != nil }
     var isTerminalAcknowledgementHeld: Bool { terminalAcknowledgementWaiter != nil }
@@ -345,6 +413,11 @@ struct AgentWorkspaceDeliveryRecoveryTests {
             AgentFailure(
               code: .invalidState, message: "Retryable fixture failure.", isRetryable: true)),
         ]
+      } else if mode == .cancelledJournal || mode == .cancellingResident {
+        events = [
+          .runStarted, .messageAppended(user), .inferenceEvent(.textDelta("Hel")),
+          .inferenceEvent(.textDelta("lo")), .runCancelled,
+        ]
       } else {
         events = [
           .runStarted, .messageAppended(user), .inferenceEvent(.textDelta("Hel")),
@@ -357,7 +430,8 @@ struct AgentWorkspaceDeliveryRecoveryTests {
           id: AgentEventID(), runID: request.runID, sequence: UInt64($0.offset + 1),
           timestamp: Date(), event: $0.element)
       }
-      return GatewayStartRunResponse(runID: request.runID, disposition: .started(invocationID))
+      return GatewayStartRunResponse(
+        runID: request.runID, disposition: .started(invocationID: invocationID))
     }
     func eventRecords(for runID: AgentRunID, invocationID: GatewayRunInvocationID) async throws
       -> AsyncThrowingStream<GatewayEventEnvelope, any Error>
@@ -366,9 +440,13 @@ struct AgentWorkspaceDeliveryRecoveryTests {
       for record in records.prefix(3) {
         pair.continuation.yield(GatewayEventEnvelope(invocationID: invocationID, record: record))
       }
-      pair.continuation.finish(
-        throwing: GatewayFailure(
-          code: failureCode, message: "Delivery interrupted.", isRetryable: true))
+      if mode == .cancelledJournal || mode == .cancellingResident {
+        cancellationStream = pair.continuation
+      } else {
+        pair.continuation.finish(
+          throwing: GatewayFailure(
+            code: failureCode, message: "Delivery interrupted.", isRetryable: true))
+      }
       return pair.stream
     }
     func recoverRun(_ request: GatewayRunRecoveryRequest) async throws -> GatewayRunRecoveryResponse
@@ -377,15 +455,23 @@ struct AgentWorkspaceDeliveryRecoveryTests {
       if mode == .heldQuery { await withCheckedContinuation { queryWaiter = $0 } }
       let first = try #require(records.first)
       let disposition: GatewayRunRecoveryDisposition
-      if mode == .attachmentFails || mode == .heldTerminalAcknowledgement {
+      if mode == .attachmentFails || mode == .heldTerminalAcknowledgement
+        || mode == .cancellingResident
+        || mode == .windowKeepsMoving || mode == .windowMoved && recoveryRequests.count == 1
+      {
         disposition = .resident(
           snapshot: GatewayRunSnapshot(
             runID: request.runID, invocationID: invocationID, phase: .running, latestSequence: 3),
-          minimumReplaySequence: 0, journal: nil)
+          minimumReplaySequence: 0,
+          journal: mode == .windowMoved || mode == .windowKeepsMoving
+            ? GatewayJournalRunSnapshot(
+              runID: request.runID, firstEventID: first.id, latestSequence: 3, terminalRecord: nil)
+            : nil)
       } else {
         disposition = .journaled(
           GatewayJournalRunSnapshot(
-            runID: request.runID, firstEventID: first.id, latestSequence: 6,
+            runID: request.runID, firstEventID: first.id,
+            latestSequence: try #require(records.last?.sequence),
             terminalRecord: records.last))
       }
       return GatewayRunRecoveryResponse(
@@ -403,6 +489,17 @@ struct AgentWorkspaceDeliveryRecoveryTests {
       async throws -> AsyncThrowingStream<GatewayEventEnvelope, any Error>
     {
       reattachCount += 1
+      if mode == .windowMoved || mode == .windowKeepsMoving {
+        throw GatewayFailure(code: .invalidCursor, message: "Live replay advanced during catch-up.")
+      }
+      if mode == .cancellingResident {
+        let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream()
+        for record in records where record.sequence > afterSequence && record.sequence < 5 {
+          pair.continuation.yield(GatewayEventEnvelope(invocationID: invocationID, record: record))
+        }
+        cancellationStream = pair.continuation
+        return pair.stream
+      }
       if mode == .heldTerminalAcknowledgement {
         let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream()
         for record in records where record.sequence > afterSequence {
@@ -425,8 +522,21 @@ struct AgentWorkspaceDeliveryRecoveryTests {
     {}
     func cancelRun(_ request: GatewayCancelRunRequest) async throws -> GatewayCancelRunResponse {
       cancelCount += 1
+      cancellationStream?.finish(
+        throwing: GatewayFailure(
+          code: failureCode, message: "Delivery interrupted after cancellation.", isRetryable: true)
+      )
+      cancellationStream = nil
       return GatewayCancelRunResponse(
         runID: request.runID, invocationID: request.invocationID, disposition: .requested)
+    }
+    func releaseCancellationTerminal() {
+      if let terminal = records.last {
+        cancellationStream?.yield(
+          GatewayEventEnvelope(invocationID: invocationID, record: terminal))
+      }
+      cancellationStream?.finish()
+      cancellationStream = nil
     }
     func releaseQuery() {
       queryWaiter?.resume()

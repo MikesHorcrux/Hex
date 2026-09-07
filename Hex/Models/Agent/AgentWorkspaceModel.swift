@@ -6,7 +6,11 @@ import Observation
 @MainActor
 @Observable
 final class AgentWorkspaceModel {
-  var transcript: [ConversationItem] = []
+  @ObservationIgnored var transcript: [ConversationItem] = [] {
+    didSet { scheduleTranscriptPresentation() }
+  }
+  var presentedTranscript: [ConversationItem] = []
+  @ObservationIgnored var transcriptPresentationTask: Task<Void, Never>?
   var conversations: [AgentConversation] = [] {
     didSet { conversationSearchRevision &+= 1 }
   }
@@ -30,7 +34,8 @@ final class AgentWorkspaceModel {
   var runState: AgentRunState = .idle
   var pendingAuthorizations: [AuthorizationRequest] = []
   var pendingAuthorization: AuthorizationRequest? {
-    guard !isRecoveringRun, connectionState == .connected, isRunActive else { return nil }
+    guard !isRecoveringRun, !cancellationRequested, connectionState == .connected, isRunActive
+    else { return nil }
     return pendingAuthorizations.first { !submittedAuthorizationIDs.contains($0.id) }
   }
   var isSubmittingAuthorization = false
@@ -244,6 +249,9 @@ final class AgentWorkspaceModel {
       let sessionID = String(result.response.sessionID.rawValue.uuidString.prefix(8))
       gatewaySummary =
         "Session \(sessionID) · protocol \(result.response.selectedVersion.major).\(result.response.selectedVersion.minor)"
+      if let executableID = result.response.executableID {
+        gatewaySummary += " · agent build \(executableID.uuidString.prefix(8))"
+      }
       activity = "Ready for a prompt."
       await refreshAvailableModels()
       scheduleRestoredRunRecovery()
@@ -488,7 +496,9 @@ final class AgentWorkspaceModel {
       guard currentRunID == runID, currentInvocationID == invocationID else { return }
       do {
         let response = try await client.cancelRun(request)
-        guard currentRunID == runID, currentInvocationID == invocationID else { return }
+        guard currentRunID == runID, currentInvocationID == invocationID,
+          currentRunRequest?.runID == runID
+        else { return }
         switch response.disposition {
         case .requested:
           activity = "Cancellation requested."
@@ -501,7 +511,9 @@ final class AgentWorkspaceModel {
       } catch is CancellationError {
         return
       } catch {
-        guard currentRunID == runID, currentInvocationID == invocationID else { return }
+        guard currentRunID == runID, currentInvocationID == invocationID,
+          currentRunRequest?.runID == runID
+        else { return }
         runState = .failed
         errorMessage = actionableMessage(for: error, context: "Could not cancel the run")
       }

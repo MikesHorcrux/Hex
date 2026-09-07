@@ -2,8 +2,11 @@
 
 [Documentation home](README.md)
 
-Source review date: **2026-09-05**. This documentation work does not start Hex or certify the
-installed app. Hex remains an alpha, not a proven replacement for every OpenClaw workflow.
+Handbook baseline: **2026-09-05**. The
+[2026-09-06 chat reliability checkpoint](architecture/canonical-chat-reliability-2026-09-06.md)
+records source repairs and September 7 live qualification of canonical developer-build chat, file
+reading, cancellation, restart and original-run recovery. Hex remains an alpha, not a proven
+replacement for every OpenClaw workflow.
 
 ## Implemented foundations
 
@@ -14,8 +17,8 @@ SQLite heartbeat receipts; read-only self-inspection; app setup and conversation
 
 ## Gaps not erased by those foundations
 
-- Reliable packaged first-run, follow-up, streaming and recovery still need live qualification
-  together, not separate passing mocks.
+- The canonical developer-Mac chat/recovery journey is live-qualified; fresh first-run setup/TCC,
+  arbitrary large transcripts and distribution builds are separate remaining gates.
 - Persistent interactive coding processes, durable pause/resume/steering and Hex-owned delegation
   are not equivalent to a bounded serial tool loop.
 - Pre-run compaction does not solve every active-run or image-context pressure case.

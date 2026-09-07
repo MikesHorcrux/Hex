@@ -57,12 +57,13 @@ struct AgentRuntimeToolDiscoveryChoiceTests {
     #expect(await authorization.requests().isEmpty)
     #expect(await executor.calls().isEmpty)
     let events = await journal.events()
-    #expect(!events.contains {
-      switch $0 {
-      case .authorizationRequested, .authorizationDecided, .toolStarted, .toolFinished: true
-      default: false
-      }
-    })
+    #expect(
+      !events.contains {
+        switch $0 {
+        case .authorizationRequested, .authorizationDecided, .toolStarted, .toolFinished: true
+        default: false
+        }
+      })
     #expect(events.contains { if case .runFailed = $0 { true } else { false } })
   }
 
@@ -88,7 +89,10 @@ struct AgentRuntimeToolDiscoveryChoiceTests {
     #expect(await executor.authorizationCalls().isEmpty)
     #expect(await authorization.requests().isEmpty)
     #expect(await executor.calls().isEmpty)
-    #expect(!((await journal.events()).contains { if case .inferenceRequested = $0 { true } else { false } }))
+    #expect(
+      !((await journal.events()).contains {
+        if case .inferenceRequested = $0 { true } else { false }
+      }))
   }
 
   @Test
@@ -114,6 +118,7 @@ struct AgentRuntimeToolDiscoveryChoiceTests {
 
   private func provider(scripts: [InferenceScript]) -> ScriptedInferenceProvider {
     ScriptedInferenceProvider(
-      descriptor: RuntimeTestFixture.descriptor(), models: [RuntimeTestFixture.model()], scripts: scripts)
+      descriptor: RuntimeTestFixture.descriptor(), models: [RuntimeTestFixture.model()],
+      scripts: scripts)
   }
 }

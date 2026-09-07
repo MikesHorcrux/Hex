@@ -12,6 +12,7 @@ final class HexStartAtLoginModel: HexResidentConfigurationReloading {
   private let readinessChecker: any HexGatewayActivationReadinessChecking
   private let loginItemsSettingsOpener: any HexLoginItemsSettingsOpening
   private let connectionResetter: (any HexResidentGatewayConnectionResetting)?
+  private let onConnectionReset: (@MainActor @Sendable () -> Void)?
   private let onBecameReady: (@MainActor @Sendable () async -> Void)?
   private var hasReportedReady = false
   private var refreshID = UUID()
@@ -24,12 +25,14 @@ final class HexStartAtLoginModel: HexResidentConfigurationReloading {
     loginItemsSettingsOpener: any HexLoginItemsSettingsOpening =
       HexSMAppServiceLifecycleController(),
     connectionResetter: (any HexResidentGatewayConnectionResetting)? = nil,
+    onConnectionReset: (@MainActor @Sendable () -> Void)? = nil,
     onBecameReady: (@MainActor @Sendable () async -> Void)? = nil
   ) {
     self.controller = controller
     self.readinessChecker = readinessChecker
     self.loginItemsSettingsOpener = loginItemsSettingsOpener
     self.connectionResetter = connectionResetter
+    self.onConnectionReset = onConnectionReset
     self.onBecameReady = onBecameReady
     status = .unavailable
   }
@@ -181,6 +184,8 @@ final class HexStartAtLoginModel: HexResidentConfigurationReloading {
 
     do {
       await connectionResetter?.resetResidentGatewayConnection()
+      hasReportedReady = false
+      onConnectionReset?()
       try Task.checkCancellation()
       // SMAppService's async unregister completes only after the old job is safe to register again.
       // Once unregistered, finish the pair instead of stranding a previously enabled service.
@@ -193,6 +198,7 @@ final class HexStartAtLoginModel: HexResidentConfigurationReloading {
         throw HexResidentReloadError.unavailable(
           "Hex Agent did not become enabled after restarting.")
       }
+      await reportReadyTransition()
     } catch is CancellationError {
       status = await controller.status()
       throw CancellationError()

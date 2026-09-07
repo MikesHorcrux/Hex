@@ -8,6 +8,25 @@ import Testing
 @Suite("Workspace ordered approval queue")
 struct AgentWorkspaceApprovalQueueTests {
   @Test @MainActor
+  func cancellationKeepsReplayedApprovalsAsEvidenceWithoutOfferingAnotherDecision() async throws {
+    let (model, client, runID) = try await fixture()
+    defer { model.runTask?.cancel() }
+    let first = authorization(runID: runID, resource: "first.swift")
+    let second = authorization(runID: runID, resource: "second.swift")
+    try await emit([.authorizationRequested(first)], to: client)
+    model.cancel()
+    try await emit([.authorizationRequested(second)], to: client)
+    #expect(model.runState == .cancelling)
+    #expect(model.pendingAuthorizations == [first, second])
+    #expect(model.pendingAuthorization == nil)
+    model.decideAuthorization(.allowOnce)
+    #expect(await client.submissions.isEmpty)
+    await finish(model, client: client)
+    #expect(model.runState == .cancelled)
+    #expect(model.pendingAuthorizations.isEmpty)
+  }
+
+  @Test @MainActor
   func concurrentRequestsPresentTheOldestWithoutAutomaticallyDecidingEither() async throws {
     let (model, client, runID) = try await fixture()
     defer { model.runTask?.cancel() }
