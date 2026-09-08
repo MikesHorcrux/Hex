@@ -45,6 +45,7 @@ Base: `c04a91447a01b3ac35e2b4a9d0b8644a56aec8c1`; isolated branch
 - `Hex/Models/Agent/AgentMessagePresentation.swift`
 - `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityAction.swift`
 - `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityActionTool.swift`
+- `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshotTool.swift`
 - `Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController.swift`
 - `Packages/HexKit/Sources/HexCore/Tools/ToolCallValidationError.swift`
 - `Packages/HexKit/Sources/HexCore/Tools/ToolNonExecutionReason.swift`
@@ -92,3 +93,24 @@ Tests failed before both follow-up fixes (`/tmp/hex-safari-confirm-before.log`),
 passed 1,313 tests in 254 suites (`/tmp/hex-safari-confirm-package.log`). Lint and docs passed.
 The follow-up signed hosted suite also passed all 294 tests in 52 suites
 (`/tmp/hex-safari-confirm-hosted.log` and `/tmp/hex-safari-confirm-hosted.xcresult`).
+
+
+## Live Netflix profile handoff
+
+After canonical activation of `8d498058fbed355e582bd863d43af9e345fff0fa`, run
+`184D3C98-7E2B-4FF7-87DA-BB5CA8CEDF7A` set Safari's observed address field to Netflix,
+then used a separate fresh observation to dispatch native AXConfirm. A subsequent observation
+and independent CUA inspection verified Netflix's profile chooser. The user selected Mike.
+
+Follow-up run `6BF188A1-E188-492F-914D-AB1217324177` requested `max_depth: 12` and
+`max_elements: 600`; the advertised maximum is 512. Pure snapshot argument decoding still
+threw a generic authorization failure before dispatch. Snapshot validation now uses the same
+bounded correction receipt as action validation. The limit remains 512, and unknown authorization
+errors remain terminal. The exact 600-element regression failed before the fix
+(`/tmp/hex-safari-snapshot-before.log`); the corrected request is tested at 512, with zero controller
+snapshots before correction and exactly one afterward.
+
+Snapshot follow-up verification: 1,314 package tests in 254 suites passed
+(`/tmp/hex-safari-snapshot-package.log`); signed hosted tests passed
+(`/tmp/hex-safari-snapshot-hosted.log`, `/tmp/hex-safari-snapshot-hosted.xcresult`).
+Lint passed for 1,296 Swift files and documentation inventory validation passed.

@@ -50,7 +50,17 @@ public struct MacAccessibilitySnapshotTool: HostTool, Sendable {
     for call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> AuthorizationRequest {
-    let request = try validatedRequest(call)
+    let request: (bundleIdentifier: String, maximumDepth: Int, maximumElements: Int)
+    do {
+      request = try validatedRequest(call)
+    } catch {
+      // Pure decoding only: no authorization, ledger mutation, or controller work has occurred.
+      throw ToolCallValidationError(
+        recovery:
+          "Use only bundle_id, max_depth (integer 0 through 12), and max_elements "
+          + "(integer 1 through 512) for mac_accessibility_snapshot. Supply the exact running "
+          + "application bundle identifier. Correct the arguments and request a fresh observation.")
+    }
     try await authorizationLedger.record(call: call, runID: context.runID)
     return AuthorizationRequest(
       runID: context.runID,
