@@ -295,21 +295,16 @@ public actor MCPBoundedProcessRunner {
   /// Observes the leader without reaping it so its PID cannot be recycled before group cleanup.
   private static func observeExit(
     _ processID: pid_t,
-    leaderMayHaveBeenReaped: inout Bool
+    leaderMayHaveBeenReaped: inout Bool,
+    systemCalls: MCPProcessCleanupSystemCalls = .live
   ) throws -> Bool {
-    var information = siginfo_t()
-    let result = waitid(
-      P_PID,
-      id_t(processID),
-      &information,
-      WEXITED | WNOHANG | WNOWAIT
-    )
-    guard result == 0 else {
-      if errno == EINTR { return false }
-      if errno == ECHILD { leaderMayHaveBeenReaped = true }
+    let observation = systemCalls.observeExit(processID)
+    guard observation.result == 0 else {
+      if observation.error == EINTR { return false }
+      if observation.error == ECHILD { leaderMayHaveBeenReaped = true }
       throw MCPClientSessionError.connectionClosed
     }
-    return information.si_signo == SIGCHLD && information.si_pid == processID
+    return observation.signal == SIGCHLD && observation.processID == processID
   }
 
   private static func cleanupAfterFailure(
@@ -325,9 +320,10 @@ public actor MCPBoundedProcessRunner {
   }
 
   /// Signals the owned process group before reaping its leader, including after ordinary exit.
-  private static func terminateAndReap(
+  static func terminateAndReap(
     _ processID: pid_t,
-    leaderHasExited: Bool = false
+    leaderHasExited: Bool = false,
+    systemCalls: MCPProcessCleanupSystemCalls = .live
   ) throws -> Int32 {
     guard processID > 0 else {
       throw MCPClientSessionError.connectionClosed
@@ -335,8 +331,9 @@ public actor MCPBoundedProcessRunner {
 
     var cleanupFailed = false
     var observedLeaderExit = leaderHasExited
-    let groupSignalResult = Darwin.kill(-processID, SIGKILL)
-    let groupSignalError = groupSignalResult == 0 ? 0 : errno
+    let groupSignal = systemCalls.sendSignal(-processID, SIGKILL)
+    let groupSignalResult = groupSignal.result
+    let groupSignalError = groupSignal.error
     if groupSignalResult < 0,
       groupSignalError == EPERM,
       !observedLeaderExit
@@ -344,14 +341,16 @@ public actor MCPBoundedProcessRunner {
       var leaderMayHaveBeenReaped = false
       observedLeaderExit = try observeExit(
         processID,
-        leaderMayHaveBeenReaped: &leaderMayHaveBeenReaped
+        leaderMayHaveBeenReaped: &leaderMayHaveBeenReaped,
+        systemCalls: systemCalls
       )
       guard !leaderMayHaveBeenReaped else {
         throw MCPClientSessionError.connectionClosed
       }
     }
-    let groupSignalPermissionDenied =
-      observedLeaderExit && groupSignalResult < 0 && groupSignalError == EPERM
+    // An exiting leader can make group signaling return EPERM before waitid observes its exit.
+    // Defer that result until the owned leader is reaped and the group probe proves absence.
+    let groupSignalPermissionDenied = groupSignalResult < 0 && groupSignalError == EPERM
     if groupSignalResult < 0,
       groupSignalError != ESRCH,
       !groupSignalPermissionDenied
@@ -360,8 +359,9 @@ public actor MCPBoundedProcessRunner {
     }
 
     if !observedLeaderExit || groupSignalPermissionDenied {
-      let leaderSignalResult = Darwin.kill(processID, SIGKILL)
-      let leaderSignalError = leaderSignalResult == 0 ? 0 : errno
+      let leaderSignal = systemCalls.sendSignal(processID, SIGKILL)
+      let leaderSignalResult = leaderSignal.result
+      let leaderSignalError = leaderSignal.error
       if leaderSignalResult < 0, leaderSignalError != ESRCH {
         cleanupFailed = true
       }
@@ -370,19 +370,22 @@ public actor MCPBoundedProcessRunner {
     var status = Int32(0)
     var didReap = false
     while true {
-      let waitResult = waitpid(processID, &status, 0)
+      let wait = systemCalls.waitForLeader(processID)
+      let waitResult = wait.result
+      status = wait.status
       if waitResult == processID {
         didReap = true
         break
       }
-      if waitResult < 0, errno == EINTR { continue }
+      if waitResult < 0, wait.error == EINTR { continue }
       cleanupFailed = true
       break
     }
 
     if didReap, groupSignalPermissionDenied {
-      let groupProbeResult = Darwin.kill(-processID, 0)
-      let groupProbeError = groupProbeResult == 0 ? 0 : errno
+      let groupProbe = systemCalls.sendSignal(-processID, 0)
+      let groupProbeResult = groupProbe.result
+      let groupProbeError = groupProbe.error
       if !(groupProbeResult < 0 && groupProbeError == ESRCH) {
         cleanupFailed = true
       }
