@@ -186,6 +186,9 @@ extension SQLiteAgentEventJournal {
     }
 
     try recordTaskEffect(event, runID: runID, connection: connection)
+    try recordConversationEvent(
+      event, eventID: eventID.rawValue, runID: runID,
+      timestamp: timestamp, connection: connection)
 
     if event.terminatesRun {
       let markTerminal = try connection.prepare(

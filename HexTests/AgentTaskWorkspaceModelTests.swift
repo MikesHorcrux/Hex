@@ -25,6 +25,40 @@ struct AgentTaskWorkspaceModelTests {
     #expect(await transport.appliedCount == 1)
   }
 
+  @Test
+  func rejectedControlCanRetryUsingTheRefreshedRevision() async throws {
+    let transport = ConflictingTaskClient()
+    let record = await transport.record
+    let model = AgentTaskWorkspaceModel(client: PreviewHexAgentClient(), taskClient: transport)
+    model.tasks = [record]
+    model.selectedID = record.id
+    await model.control(.pause)
+    #expect(model.controlOperation == nil)
+    model.update(await transport.record)
+    await model.control(.pause)
+    #expect(model.error == nil)
+    #expect(Set(await transport.operationIDs).count == 2)
+  }
+
+  private actor ConflictingTaskClient: HexGatewayTaskClient {
+    var record = AgentTaskRecord(
+      id: UUID(), title: "fixture", request: Data(), admissionHash: Data())
+    var operationIDs: [UUID] = []
+    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskRequest.Response {
+      if case .control(_, let revision, let id, _) = request {
+        operationIDs.append(id)
+        if operationIDs.count == 1 {
+          record.revision += 1
+          throw GatewayFailure(code: .conversationChanged, message: "Changed before commit")
+        }
+        guard revision == record.revision else {
+          throw GatewayFailure(code: .conversationChanged, message: "Stale revision")
+        }
+      }
+      return .init(tasks: [record.summary])
+    }
+  }
+
   private actor LostReplyTaskClient: HexGatewayTaskClient {
     var record = AgentTaskRecord(
       id: UUID(), title: "fixture", request: Data(), admissionHash: Data())

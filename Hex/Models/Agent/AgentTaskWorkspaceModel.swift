@@ -109,6 +109,11 @@ final class AgentTaskWorkspaceModel {
       controlOperation = nil
       error = nil
     } catch {
+      if let code = (error as? GatewayFailure)?.code,
+        code == .conversationChanged || code == .taskRequestRejected
+      {
+        controlOperation = nil
+      }
       self.error =
         (error as? GatewayFailure)?.message
         ?? "The task changed. Refresh before trying this control again."

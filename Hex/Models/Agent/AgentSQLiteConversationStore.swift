@@ -70,7 +70,14 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
     guard let document = try await storage.conversationStorage(.read(id)).documents.first else {
       throw ConversationStorageRequest.Failure.invalidRequest
     }
-    var conversation = try JSONDecoder().decode(AgentConversation.self, from: document.state)
+    var conversation: AgentConversation
+    if document.state == Data("{\"durableConversation\":1}".utf8) {
+      conversation = AgentConversation(
+        id: document.id, title: document.title,
+        createdAt: document.createdAt, updatedAt: document.updatedAt, history: .init())
+    } else {
+      conversation = try JSONDecoder().decode(AgentConversation.self, from: document.state)
+    }
     guard conversation.id == id else { throw ConversationStorageRequest.Failure.invalidRequest }
     conversation.title = document.title
     conversation.updatedAt = document.updatedAt

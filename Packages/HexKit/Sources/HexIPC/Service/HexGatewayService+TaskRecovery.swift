@@ -30,11 +30,22 @@ extension HexGatewayService {
     }
     record.attemptPending = false
     if record.phase == .cancelling {
-      record.phase = checkpoint.hasUncertainEffects ? .blocked : .cancelled
-      record.explanation =
-        checkpoint.hasUncertainEffects
-        ? "Execution stopped. A dispatched tool has an uncertain outcome; inspect it before deciding what to do."
-        : "Cancelled; dispatched work has been recorded"
+      do {
+        try checkpoint.finish(reconciliation: nil)
+        if checkpoint.messages.isEmpty { checkpoint.messages = source.initialMessages }
+        var artifacts = source.availableArtifacts
+        for item in checkpoint.artifacts where !artifacts.contains(item) { artifacts.append(item) }
+        record.request = try codec.encode(
+          continuationRequest(
+            source,
+            messages: checkpoint.messages, artifacts: artifacts))
+        record.phase = .cancelled
+        record.explanation = "Cancelled; dispatched work has been recorded"
+      } catch AgentTaskStorageError.unavailable {
+        record.phase = .blocked
+        record.explanation =
+          "Execution stopped. A tool has an uncertain outcome; inspect it before deciding what to do."
+      }
     } else {
       do {
         try checkpoint.finish(reconciliation: record.reconciliation)
@@ -50,6 +61,9 @@ extension HexGatewayService {
         case .runCompleted where record.instructions.isEmpty:
           record.phase = .completed
           record.explanation = "Completed"
+        case _ where record.phase == .pausing:
+          record.phase = .paused
+          record.explanation = "Paused at a saved boundary"
         case .runFailed(let failure)
         where input.reconciliation == nil
           && !(failure.code == .invalidState

@@ -219,6 +219,7 @@ extension AgentWorkspaceModel {
   }
 
   func persistConversationArchive() {
+    guard chatWorkspace == nil else { return }
     guard !isReducingRunEvent, !isPreparingAdmission else { return }
     updateCurrentConversation()
     updatePendingRunCheckpoint()

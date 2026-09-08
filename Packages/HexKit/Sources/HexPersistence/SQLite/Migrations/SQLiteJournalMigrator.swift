@@ -1,7 +1,7 @@
 import Foundation
 
 enum SQLiteJournalMigrator {
-  static let currentSchemaVersion = 5
+  static let currentSchemaVersion = 6
   static let versionOneRunsTableSQL =
     """
     CREATE TABLE runs (
@@ -219,6 +219,7 @@ enum SQLiteJournalMigrator {
         try connection.execute("PRAGMA user_version = 3")
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
+        try createVersionSix(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -236,6 +237,7 @@ enum SQLiteJournalMigrator {
         try connection.execute("PRAGMA user_version = 3")
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
+        try createVersionSix(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -251,6 +253,7 @@ enum SQLiteJournalMigrator {
         try connection.execute("PRAGMA user_version = 3")
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
+        try createVersionSix(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -266,6 +269,7 @@ enum SQLiteJournalMigrator {
           maximumTextBytes: configuration.maximumTextBytes)
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
+        try createVersionSix(connection: connection)
         try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
         try validateMigratedData()
       }
@@ -277,6 +281,18 @@ enum SQLiteJournalMigrator {
           checkpointsSQL: checkpointsTableSQL, connection: connection,
           maximumTextBytes: configuration.maximumTextBytes)
         try createVersionFive(connection: connection)
+        try createVersionSix(connection: connection)
+        try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
+        try validateMigratedData()
+      }
+    case 5:
+      try connection.withImmediateTransaction(beforeCommit: beforeCommit, afterCommit: afterCommit)
+      {
+        try validateSchemaObjects(
+          runsSQL: runsTableSQL, eventRecordsSQL: eventRecordsTableSQL,
+          checkpointsSQL: checkpointsTableSQL, connection: connection,
+          maximumTextBytes: configuration.maximumTextBytes)
+        try createVersionSix(connection: connection)
         try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
         try validateMigratedData()
       }

@@ -1,7 +1,8 @@
 # Durable tasks
 
-A task is user work; a run is one execution attempt. New work enters the resident through
-`GatewayTaskRequest.submit`. The task UUID and canonical admission hash make an uncertain admission
+A conversation owns the user-visible history. A task is one request within it; a run is one
+execution attempt. The app admits new work through `GatewayTaskRequest.submitConversation`.
+The task UUID and canonical admission hash make an uncertain admission
 reply retryable without creating duplicate work. Each attempt has a fresh resident-issued run UUID.
 The low-level run API remains an execution primitive for existing integrations.
 
@@ -73,7 +74,9 @@ similar shell commands, infer remote transaction outcomes, or allow a prose reco
 bypass the duplicate-mutation guard. Deliberately repeating a previously dispatched mutation requires
 separately admitted user work and normal tool authorization.
 
-The Tasks workspace is the entry point for new work. Existing saved conversations remain available;
-sending from a saved conversation seeds a durable task with its validated context and artifacts.
-Task history and original conversations are retained independently, rather than making UI presence
-a prerequisite for durable task progress.
+The Conversations workspace is the entry point for new work. Schema 6 links requests to the existing
+conversation catalog and projects a paged timeline alongside the immutable run journals. Follow-ups
+keep the same conversation and acquire their predecessor's completed context at dispatch. Sending
+during active work saves steering; Send next explicitly queues a follow-up. Pause, resume, cancel,
+approvals and reconciliation appear in that chat. Attempt journals remain available in Execution
+history. See [Unified conversations](unified-conversations.md) for migration and ownership details.

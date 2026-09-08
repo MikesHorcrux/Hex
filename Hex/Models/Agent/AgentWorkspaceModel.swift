@@ -17,8 +17,7 @@ final class AgentWorkspaceModel {
   private(set) var conversationSearchRevision: UInt64 = 0
   var selectedConversationID: UUID?
   var isRestoringConversations = false
-  var showsTasks = false
-  var taskWorkspace: AgentTaskWorkspaceModel?
+  var chatWorkspace: AgentChatWorkspaceModel?
   var draft = ""
   var modelID: String {
     didSet {
@@ -101,9 +100,11 @@ final class AgentWorkspaceModel {
     defaultAuthorizationMode: HexAuthorizationMode = .askEveryTime
   ) {
     self.client = client
-    if let taskClient = client as? any HexGatewayTaskClient {
-      taskWorkspace = AgentTaskWorkspaceModel(client: client, taskClient: taskClient)
-      showsTasks = true
+    if let taskClient = client as? any HexGatewayTaskClient,
+      let storage = client as? any ConversationStorage
+    {
+      chatWorkspace = AgentChatWorkspaceModel(
+        client: client, taskClient: taskClient, storage: storage)
     }
     self.modelID = modelID
     self.conversationStore = conversationStore
@@ -268,7 +269,7 @@ final class AgentWorkspaceModel {
       }
       activity = "Ready for a prompt."
       await refreshAvailableModels()
-      if usesPagedConversations, conversationPersistenceState.restoreFailed {
+      if chatWorkspace == nil, usesPagedConversations, conversationPersistenceState.restoreFailed {
         didRestoreConversations = false
         await restoreConversationHistory()
       }
@@ -432,29 +433,6 @@ final class AgentWorkspaceModel {
   }
 
   func send() {
-    if let taskWorkspace, connectionState == .connected, !isRunActive, !isViewingEarlierTranscript {
-      let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !text.isEmpty, isComposerSelectionAvailable else { return }
-      let conversation = conversations.first { $0.id == selectedConversationID }
-      do {
-        let request = GatewayStartRunRequest(
-          runID: AgentRunID(),
-          modelID: ModelID(rawValue: resolvedComposerModelID),
-          initialMessages: (conversation?.contextMessages() ?? []) + [
-            Message(role: .user, content: [.text(text)])
-          ],
-          options: InferenceOptions(reasoningEffort: selectedComposerEffort.inferenceValue),
-          availableArtifacts: try conversation?.availableArtifacts() ?? [],
-          authorizationMode: selectedComposerAuthorizationMode)
-        taskWorkspace.draft = text
-        showsTasks = true
-        Task { await taskWorkspace.submit(request, title: String(text.prefix(160))) }
-        draft = ""
-      } catch {
-        errorMessage = "The saved context could not be validated. Your draft is unchanged."
-      }
-      return
-    }
     if isViewingEarlierTranscript, !isRunActive {
       Task { [weak self] in
         guard let self else { return }

@@ -4,8 +4,8 @@ import Testing
 @Suite("Gateway implemented version")
 struct GatewayImplementedVersionTests {
   @Test
-  func currentRequiresDurableTaskControls() {
-    let acknowledgedEventsVersion = GatewayProtocolVersion(major: 1, minor: 17)
+  func currentRequiresConversationOwnedExecution() {
+    let acknowledgedEventsVersion = GatewayProtocolVersion(major: 1, minor: 18)
 
     #expect(GatewayProtocolVersion.minimumSupported == acknowledgedEventsVersion)
     #expect(GatewayProtocolVersion.current == acknowledgedEventsVersion)

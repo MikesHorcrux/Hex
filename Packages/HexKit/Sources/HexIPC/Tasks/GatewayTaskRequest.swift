@@ -3,6 +3,12 @@ import HexCore
 
 public enum GatewayTaskRequest: Codable, Equatable, Sendable {
   case submit(id: UUID, title: String, request: GatewayStartRunRequest)
+  case submitConversation(
+    id: UUID, conversationID: UUID, predecessorID: UUID?, title: String,
+    request: GatewayStartRunRequest)
+  case adoptLegacyConversation(UUID)
+  case conversationTasks(UUID, before: UUID?, limit: Int)
+  case conversationHistory(UUID, before: Int64?, limit: Int)
   case list(after: UUID?, limit: Int)
   case read(UUID)
   case attempts(UUID, before: Int?, limit: Int)
@@ -15,6 +21,9 @@ public enum GatewayTaskRequest: Codable, Equatable, Sendable {
     case reconcile(String)
   }
   public struct Response: Codable, Equatable, Sendable {
+    public var activeTask: AgentTaskRecord?
+    public var timeline: [ConversationTimelineEntry] = []
+    public var before: Int64?
     public var attempts: [AgentTaskAttempt] = []
     public var tasks: [AgentTaskRecord]
     public var schedulerFailure: String?
