@@ -76,10 +76,18 @@ The integrated build passed with:
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project Hex.xcodeproj -scheme Hex -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/hex-context-derived -jobs 2 CC=/tmp/hex-context-clang build
 ```
 
-Integrated lint passed across 1,354 Swift files. Final activation, saved-attempt history navigation,
-and a fresh queued request on the integrated binary remain pending: computer use reported that
-the Mac was locked and automatic unlock could not unlock it. The preceding feature-build live
-qualification above is complete. The Relic ticket remains in progress until final activation checks.
+Integrated lint passed across 1,354 Swift files. Final activation passed after the Mac was unlocked.
+Computer use relaunched the integrated app and restarted its bundled resident: app build
+`65E80442-A338-3A31-91E3-E667AE53B877`, agent prefix `B8801EC2`, session prefix `1E128815`,
+protocol 1.17. Saved task results were restored. In Attempt 1 of the long task, Inspect saved history
+showed the original file-write receipt; Next page showed the marker readback and audit files 01 and 02.
+
+A fresh request queued through the UI completed in one attempt and displayed exactly
+`FINAL_DURABLE_BUILD_OK`. Task: `511772D6-7D90-4325-8BE9-84E55C37DBBC`;
+run: `2B4E3ECC-BDD7-4712-B0D3-E743D5870E47`. Read-only SQLite inspection confirmed completed state.
+The final data check again found integrity OK, all 1,934 original conversation entries unchanged,
+the cancelled follow-up file absent, and both mutation fixture hashes unchanged. No activation
+checks remain outstanding.
 
 ## Exact implementation file set
 
