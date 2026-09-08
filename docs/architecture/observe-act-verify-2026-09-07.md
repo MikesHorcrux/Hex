@@ -100,13 +100,73 @@ The session checker uses the public console/login flags and WindowServer's repor
 The lock field is a runtime signal rather than an SDK guarantee. Injected locked/unavailable states
 are tested; qualification does not lock the user's Mac or change TCC permissions.
 
-The signed hosted app suite passed **292 tests in 52 suites** using isolated DerivedData;
+The first signed hosted app suite passed **292 tests in 52 suites** using isolated DerivedData;
 `/tmp/hex-oav-hosted-verified.xcresult` records the run. The final hosted command used
 `xcodebuild test -project Hex.xcodeproj -scheme Hex -configuration Debug -destination
 platform=macOS -jobs 2 -parallel-testing-enabled NO -derivedDataPath
 .build/ObserveActVerifyDerivedData -only-testing:HexTests`.
 
-Canonical activation and resident workflow results are pending at this point in the work log.
+Implementation commit `e8faec6b90729656e0d3faad283019c3efd02226` was integrated into `dev` at
+`3138ccce6769eac93a346c07fc2e5735baa1884a`. Canonical `./script/build_and_run.sh` succeeded and
+refreshed the existing registered Hex Agent; `/tmp/hex-oav-canonical-build-run.log` records this.
+
+The first actual resident qualification exposed two gaps. Native snapshots returned only the
+application node, while the screenshot showed the synthetic controls. The agent declined to invent
+an action target. Browser snapshots advertised optional depth-limiting fields, which the configured
+model supplied; those partial snapshots correctly could not authorize navigation. No form request
+or native input was dispatched. The harness also misclassified an irrelevant empty tab-list URL as
+navigation; that diagnostic has been corrected.
+
+The follow-up changes constrain the published browser snapshot schema to full inline observations,
+preserve native child-read errors instead of reporting a complete empty tree, and show the fixture
+through the normal application delegate launch lifecycle. The browser schema regression failed
+before the fix and all 13 browser wrapper tests then passed. The fixture's local AppKit diagnostics
+report one application Accessibility child/window and seven window children; these in-process
+counts are diagnostic evidence, not proof of cross-process access.
+
+A subsequent resident read-only probe encountered an actual locked session and returned
+`mac_session_locked` before dispatch. Its evidence is in `canonical-native-probe3`. Qualification
+does not unlock the Mac or change privacy grants. Completion of the actual native/browser journeys
+after these follow-up fixes is still pending in this work log.
+
+## Current verification gate
+
+The follow-up native selector passed **18 tests in five suites**, including typed child-read
+failures, real empty arrays, leaf absence, invalid values, late API disablement, and absence of
+action authority on an incomplete observation. Independent review found no blocker in this delta.
+The browser selector passed **13 tests in one suite**. Lint passed for 1,292 Swift files and the
+documentation check passed for 44 checked files.
+
+The latest full package run completed **1,300 tests in 252 suites**, with two failures:
+`MCPBoundedProcessRunnerTests` stdout overflow and `MCPPeekabooPermissionControllerTests` oversized
+stdout returned `connectionClosed` where the tests expect `limitExceeded`. The focused retry
+reproduced both failures (24 of 26 tests passed). The process runner is unchanged by this ticket;
+an owned-child syscall probe did not reproduce the suspected cleanup error, so no speculative
+production fix was made. Logs: `/tmp/hex-oav-package-drainer-fixed.log` and
+`/tmp/hex-oav-output-limit-retry.log`. This latest package run is not green.
+
+The first follow-up package run also exposed a test-harness liveness flaw: a synthetic pipe reader
+stopped after 400 polling attempts even while its writer could still be progressing within its
+30-second deadline. The test now keeps draining until the writes finish and cleans up on failure.
+Its generation and queue assertions are unchanged; it passed alone and in the latest full run.
+
+Three attempts to rebuild the signed hosted suite stalled before compilation during Clang
+discovery. The owned compiler stack was blocked in a pipe write; the identical compiler invocation
+completed directly. A fresh build process, the supported per-invocation
+`XCBUILD_LAUNCH_IN_PROCESS=YES` mode, and bounded idle-sleep assertions did not resolve the stall.
+No preferences, toolchain files, privacy grants, or lock state were changed. Each owned stalled
+build was stopped. Logs: `/tmp/hex-oav-hosted-livefix.log`,
+`/tmp/hex-oav-hosted-livefix-retry.log`, `/tmp/hex-oav-hosted-livefix-inprocess.log`.
+
+The follow-up fixes are retained on the feature branch, pending a successful signed build and
+resident qualification. They have **not** been integrated or activated. The canonical app remains
+the build from `3138ccce6769eac93a346c07fc2e5735baa1884a`, whose first resident attempt is recorded
+above. The disposable fixture processes were stopped, and their evidence was preserved.
+
+Resume with an unlocked session, resolve the exact current verification failures, rebuild the
+signed host, and integrate/activate the reviewed follow-up commit. Launch fresh owned fixtures;
+use their newly recorded PID/window and loopback port. Require the complete ordered native and
+browser evidence before moving the ticket to Done.
 
 ## Exact changed files
 
@@ -118,6 +178,7 @@ Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityActionResult.swift
 Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityActionTool.swift
 Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityElementSnapshot.swift
 Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityObservationLedger.swift
+Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityReadError.swift
 Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshot.swift
 Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshotTool.swift
 Packages/HexKit/Sources/HexCapabilities/Mac/MacInteractionSessionState.swift
@@ -141,7 +202,9 @@ Packages/HexKit/Sources/HexMCP/Tools/MCPRemoteToolResult.swift
 Packages/HexKit/Sources/HexMCP/Tools/MCPRemoteToolResultDecoder.swift
 Packages/HexKit/Sources/HexMCP/Tools/MCPToolResultMapper.swift
 Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+Tools.swift
+Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityChildrenReadTests.swift
 Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityDispatchSafetyTests.swift
+Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityIncompleteObservationTests.swift
 Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityObservationLedgerTests.swift
 Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityToolTests.swift
 Packages/HexKit/Tests/HexCapabilitiesTests/Mac/SystemMacInteractionSessionCheckerTests.swift
@@ -150,6 +213,7 @@ Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPeekabooCallPolicy
 Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPeekabooToolExecutorTests.swift
 Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayScreenPermissionToolExecutorTests.swift
 Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayManagedBrowserIntegrationTests.swift
+Packages/HexKit/Tests/HexMCPTests/JSONRPC/MCPStdioJSONRPCConnectionTests.swift
 Packages/HexKit/Tests/HexMCPTests/Tools/MCPRemoteToolResultMetadataTests.swift
 docs/architecture/observe-act-verify-2026-09-07.md
 docs/qualification/observe-act-verify/HexObserveActVerifyFixture.swift

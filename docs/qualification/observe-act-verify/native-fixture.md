@@ -37,8 +37,11 @@ open -n -g --stdout "$fixture_directory/fixture.stdout" \
 cat "$fixture_directory/fixture.stdout"
 ```
 
-The log prints `FIXTURE_PID` and `FIXTURE_WINDOW_ID`. Use those current values, or the exact
-bundle ID, to select this window. Recheck a recorded PID's command path before stopping it;
+The delegate shows the window after application launch. The log prints `FIXTURE_PID` and
+`FIXTURE_WINDOW_ID`, followed by local AppKit Accessibility counts for diagnosis. These local
+counts do not prove that another process can read the tree. The log may contain prior launches;
+use the last PID/window pair, or the exact bundle ID, to select this window.
+Recheck a recorded PID's command path before stopping it;
 terminate only this owned fixture. A fresh instance restores `No action has been applied`.
 
 Observe the fixture through the actual signed Hex resident. The button has accessibility ID

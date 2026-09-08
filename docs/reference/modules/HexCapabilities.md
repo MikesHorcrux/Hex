@@ -4,7 +4,7 @@
 
 Native file, process, web, Mac and artifact capability execution.
 
-**123 Swift files.** Generated; do not edit by hand.
+**124 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexCapabilities/Artifacts
 
@@ -56,6 +56,7 @@ Native file, process, web, Mac and artifact capability execution.
 | [MacAccessibilityControlling.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityControlling.swift) | — |
 | [MacAccessibilityElementSnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityElementSnapshot.swift) | — |
 | [MacAccessibilityObservationLedger.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityObservationLedger.swift) | Binds a bounded, single-use observation to the run that obtained it. This is not an approval. |
+| [MacAccessibilityReadError.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityReadError.swift) | Structural AX failures contain only the requested attribute, generated path, and API status. |
 | [MacAccessibilitySelector.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySelector.swift) | — |
 | [MacAccessibilitySnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshot.swift) | — |
 | [MacAccessibilitySnapshotTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshotTool.swift) | — |

@@ -8,15 +8,12 @@ struct HexObserveActVerifyFixture {
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
     let controller = Controller()
-    controller.window.orderFrontRegardless()
-    print("FIXTURE_PID=\(ProcessInfo.processInfo.processIdentifier)")
-    print("FIXTURE_WINDOW_ID=\(controller.window.windowNumber)")
-    fflush(stdout)
+    application.delegate = controller
     withExtendedLifetime(controller) { application.run() }
   }
 
   @MainActor
-  private final class Controller: NSObject {
+  private final class Controller: NSObject, NSApplicationDelegate {
     let window: NSWindow
     let result = NSTextField(labelWithString: "No action has been applied")
     private var count = 0
@@ -42,6 +39,33 @@ struct HexObserveActVerifyFixture {
       window.contentView?.addSubview(field)
       window.contentView?.addSubview(button)
       window.contentView?.addSubview(result)
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+      window.orderFrontRegardless()
+      print("FIXTURE_PID=\(ProcessInfo.processInfo.processIdentifier)")
+      print("FIXTURE_WINDOW_ID=\(window.windowNumber)")
+      print("FIXTURE_APP_WINDOWS=\(NSApplication.shared.windows.count)")
+      print("FIXTURE_APP_AX_WINDOWS=\(NSApplication.shared.accessibilityWindows()?.count ?? -1)")
+      reportAccessibility(NSApplication.shared, label: "APP")
+      reportAccessibility(window, label: "WINDOW")
+      if let content = window.contentView {
+        print("FIXTURE_NATIVE_SUBVIEWS=\(content.subviews.count)")
+        reportAccessibility(content, label: "CONTENT")
+        for (index, view) in content.subviews.enumerated() {
+          reportAccessibility(view, label: "CONTROL_\(index)")
+        }
+      }
+      fflush(stdout)
+    }
+
+    private func reportAccessibility(_ object: NSObject, label: String) {
+      guard let element = object as? any NSAccessibilityProtocol else {
+        print("FIXTURE_\(label)_AX_PROTOCOL=false")
+        return
+      }
+      print("FIXTURE_\(label)_AX_ROLE=\(String(describing: element.accessibilityRole()))")
+      print("FIXTURE_\(label)_AX_CHILDREN=\(element.accessibilityChildren()?.count ?? -1)")
     }
 
     @objc private func apply() {

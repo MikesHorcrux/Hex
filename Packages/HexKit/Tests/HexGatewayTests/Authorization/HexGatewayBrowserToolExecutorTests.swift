@@ -27,6 +27,28 @@ struct HexGatewayBrowserToolExecutorTests {
   }
 
   @Test
+  func publishedSnapshotOptionsAlwaysDescribeAFullInlineObservation() async throws {
+    let base = Executor()
+    let browser = makeBrowser(base)
+    let definitions = try await browser.availableTools()
+    let definition = try #require(definitions.first { $0.name == name("browser_snapshot") })
+    guard case .object(let properties) = definition.inputSchema["properties"] else {
+      Issue.record("Expected snapshot properties")
+      return
+    }
+    #expect(Set(properties.keys) == ["boxes"])
+    #expect(definition.inputSchema["additionalProperties"] == .boolean(false))
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let result = try await browser.execute(
+      call("browser_snapshot", ["boxes": .boolean(true)]), in: context)
+    guard case .string = field(result, "hex_observation_id") else {
+      Issue.record("Every advertised snapshot shape must permit a full observation token")
+      return
+    }
+    #expect(await base.calls.last?.arguments == ["boxes": .boolean(true)])
+  }
+
+  @Test
   func refusesBlindActionAndPreservesAuthorizationAndDispatchCorrelation() async throws {
     let base = Executor()
     let browser = makeBrowser(base)
@@ -397,7 +419,13 @@ struct HexGatewayBrowserToolExecutorTests {
         ToolDefinition(
           name: "mcp_10_playwright_browser_snapshot", description: "Snapshot",
           inputSchema: [
-            "type": .string("object"), "properties": .object([:]),
+            "type": .string("object"),
+            "properties": .object([
+              "target": .object(["type": .string("string")]),
+              "filename": .object(["type": .string("string")]),
+              "depth": .object(["type": .string("number")]),
+              "boxes": .object(["type": .string("boolean")]),
+            ]),
           ]),
       ]
     }

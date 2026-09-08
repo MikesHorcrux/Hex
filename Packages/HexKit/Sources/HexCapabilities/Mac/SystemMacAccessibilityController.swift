@@ -32,6 +32,10 @@ public final class SystemMacAccessibilityController: MacAccessibilityControlling
     maximumDepth: Int,
     maximumElements: Int
   ) async throws -> MacAccessibilitySnapshot {
+    // A failed re-observation must not leave an older native action receipt usable for this app.
+    observations = observations.filter {
+      $0.value.bundleIdentifier != bundleIdentifier && isFresh($0.value.capturedAt)
+    }
     try requireAvailable()
     guard (0...12).contains(maximumDepth), (1...512).contains(maximumElements) else {
       throw MacToolError.invalidArguments
@@ -45,7 +49,7 @@ public final class SystemMacAccessibilityController: MacAccessibilityControlling
       throw MacToolError.accessibilityObservationFailed
     }
     let capturedAt = now()
-    let traversal = Self.traverse(
+    let traversal = try Self.traverse(
       root: root, maximumDepth: maximumDepth, maximumElements: maximumElements
     )
     try requireAvailable()
@@ -55,9 +59,6 @@ public final class SystemMacAccessibilityController: MacAccessibilityControlling
       processIdentifier: application.processIdentifier,
       elements: traversal.elements.map(\.value), isTruncated: traversal.isTruncated
     )
-    observations = observations.filter {
-      $0.value.bundleIdentifier != bundleIdentifier && isFresh($0.value.capturedAt)
-    }
     guard observations.count < 64 else { throw MacToolError.authorizationStateUnavailable }
     observations[snapshot.observationID] = Observation(
       bundleIdentifier: bundleIdentifier, processIdentifier: application.processIdentifier,
@@ -89,16 +90,19 @@ public final class SystemMacAccessibilityController: MacAccessibilityControlling
       match = try Self.resolveElement(root: root, selector: request.selector)
     } catch is CancellationError {
       throw CancellationError()
+    } catch let error as MacAccessibilityReadError {
+      throw error
     } catch {
       throw MacToolError.accessibilityObservationStale
     }
+    let currentChildren = try Self.children(of: match.element, path: match.path)
     guard CFEqual(captured.element, match.element),
       Self.sameWindow(captured.window, Self.observedWindow(of: match.element)),
       Self.sameMeaning(
         captured.value,
         Self.snapshot(
           element: match.element, path: match.path,
-          childCount: Self.children(of: match.element).count
+          childCount: currentChildren.count
         )
       )
     else { throw MacToolError.accessibilityObservationStale }

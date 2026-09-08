@@ -23,6 +23,45 @@ struct HexLiveObserveActVerifyTests: Sendable {
     "HEX_BROWSER_QUALIFICATION_RECEIPT\nlabel=Hex qualification draft\nsubmissions=1\n"
 
   @Test
+  func workflowSelectionIsValid() throws {
+    try Self.require(
+      ["all", "browser", "native"].contains(
+        ProcessInfo.processInfo.environment["HEX_OAV_WORKFLOW"] ?? "all"),
+      "HEX_OAV_WORKFLOW must be browser, native, or all.")
+  }
+
+  @Test
+  func skippedBatchReceiptKeepsAnnouncementWithoutInventingAStart() throws {
+    let call = ToolCall(
+      id: ToolCallID(rawValue: "qualification-skipped-call"),
+      name: "mac_accessibility_action", arguments: [:])
+    let announcement = AgentEvent.messageAppended(
+      Message(role: .assistant, content: [.toolCall(call)]))
+    let skipped = ToolResult(
+      toolCallID: call.id, status: .failure, output: .object(["error": .string("not_executed")]),
+      notExecutedReason: .runStopped)
+    let parsed = try Self.receipts([announcement, .toolFinished(skipped)])
+    let receipt = try #require(parsed.first)
+    #expect(receipt.call == call)
+    #expect(receipt.startIndex == nil)
+    #expect(!receipt.started(after: -1))
+    #expect(throws: QualificationError.self) {
+      try Self.receipts([.toolFinished(skipped)])
+    }
+    let uncorrelatedSuccess = ToolResult(toolCallID: call.id, status: .success, output: .null)
+    #expect(throws: QualificationError.self) {
+      try Self.receipts([announcement, .toolFinished(uncorrelatedSuccess)])
+    }
+    let unknown = ToolResult(toolCallID: call.id, status: .failure, output: .null)
+    #expect(throws: QualificationError.self) {
+      try Self.receipts([announcement, .toolFinished(unknown)])
+    }
+  }
+
+  @Test(
+    .enabled(
+      if: ["all", "native"].contains(
+        ProcessInfo.processInfo.environment["HEX_OAV_WORKFLOW"] ?? "all")))
   func nativeFixtureWorkflow() async throws {
     let environment = ProcessInfo.processInfo.environment
     guard environment["HEX_OAV_NATIVE_BUNDLE_ID"] == Self.nativeBundleID,
@@ -90,10 +129,13 @@ struct HexLiveObserveActVerifyTests: Sendable {
     try Self.verifyNative(receipts, events: events, pid: pid, window: window)
   }
 
-  @Test
+  @Test(
+    .enabled(
+      if: ["all", "browser"].contains(
+        ProcessInfo.processInfo.environment["HEX_OAV_WORKFLOW"] ?? "all")
+        && ProcessInfo.processInfo.environment["HEX_OAV_PROBE_ONLY"] != "1"))
   func browserFixtureWorkflow() async throws {
     let environment = ProcessInfo.processInfo.environment
-    guard environment["HEX_OAV_PROBE_ONLY"] != "1" else { return }
     let rawURL = try #require(environment["HEX_OAV_BROWSER_URL"])
     guard let url = URL(string: rawURL), url.scheme == "http", url.host == "127.0.0.1",
       let port = url.port, (1...65_535).contains(port), url.user == nil, url.password == nil,
@@ -116,8 +158,9 @@ struct HexLiveObserveActVerifyTests: Sendable {
     let startedAt = Date()
     let prompt = """
       Complete the harmless local browser fixture at \(url.absoluteString) using Hex's managed
-      Playwright tools. Take a full browser_snapshot first; use each fresh hex_observation_id for
-      one action. Open draft form, click Refresh form controls, re-observe the rerendered controls,
+      Playwright tools. Take a full inline browser_snapshot first, without target, filename, or
+      depth; use each fresh hex_observation_id for one action. Open draft form, click Refresh
+      form controls, re-observe the rerendered controls,
       and set Draft label to exactly Hex qualification draft. Submit Save local draft once.
       Re-observe and verify Draft saved, the exact label, and Total submissions: 1. Download
       Download draft receipt once. Require a completed download event, then read the actual file
@@ -143,13 +186,13 @@ struct HexLiveObserveActVerifyTests: Sendable {
       })
     let download = try #require(
       receipts.first {
-        $0.startIndex > confirmation.finishIndex && $0.result.status == .success
+        $0.started(after: confirmation.finishIndex) && $0.result.status == .success
           && $0.call.name.hasPrefix("mcp_10_playwright_")
           && Self.resultText($0.result).contains("Downloaded file \(Self.receiptName) to \"")
       })
     let reading = try #require(
       receipts.first {
-        $0.startIndex > download.finishIndex && $0.call.name == "process_run"
+        $0.started(after: download.finishIndex) && $0.call.name == "process_run"
           && $0.result.status == .success && Self.resultText($0.result).contains(Self.receiptText)
       })
     try Self.require(
@@ -381,13 +424,15 @@ struct HexLiveObserveActVerifyTests: Sendable {
     try require(actions.count == 2, "Expected exactly set_value and press receipts.")
     let setting = actions[0]
     let pressing = actions[1]
+    _ = try #require(setting.startIndex)
+    _ = try #require(pressing.startIndex)
     try require(
       setting.call.arguments["action"] == .string("set_value")
         && setting.call.arguments["value"] == .string(nativeValue),
       "First native action was not the exact field change.")
     try require(
       pressing.call.arguments["action"] == .string("press")
-        && setting.finishIndex < pressing.startIndex,
+        && pressing.started(after: setting.finishIndex),
       "Second native action was not a subsequent single press.")
     for action in actions {
       try require(
@@ -406,7 +451,7 @@ struct HexLiveObserveActVerifyTests: Sendable {
       "set_value targeted another element/window.")
     let between = try observationUsed(by: pressing, receipts: receipts, pid: pid)
     try require(
-      between.startIndex > setting.finishIndex, "No fresh snapshot between native actions.")
+      between.started(after: setting.finishIndex), "No fresh snapshot between native actions.")
     let changed = try element(between.result, identifier: "hex-fixture-text")
     try require(
       changed["value"] == .string(nativeValue), "Fresh observation did not verify the field change."
@@ -418,7 +463,7 @@ struct HexLiveObserveActVerifyTests: Sendable {
       "press targeted another element/window.")
     let post = try #require(
       receipts.first {
-        $0.startIndex > pressing.finishIndex && isNativeSnapshot($0, pid: pid)
+        $0.started(after: pressing.finishIndex) && isNativeSnapshot($0, pid: pid)
           && (try? element($0.result, identifier: "hex-fixture-result")["value"])
             == .string("Applied synthetic change 1")
       })
@@ -436,7 +481,7 @@ struct HexLiveObserveActVerifyTests: Sendable {
       }, "No matching fixture window in post-press semantic evidence.")
     let image = try #require(
       receipts.first {
-        $0.startIndex > post.finishIndex && $0.call.name == "mcp_8_peekaboo_see"
+        $0.started(after: post.finishIndex) && $0.call.name == "mcp_8_peekaboo_see"
           && $0.result.status == .success
           && $0.call.arguments["app_target"] == .string("PID:\(pid)")
           && $0.call.arguments["window_id"] == .integer(window)
@@ -468,8 +513,15 @@ struct HexLiveObserveActVerifyTests: Sendable {
         try require(
           call.name.hasPrefix(prefix) && tools.contains(String(call.name.dropFirst(prefix.count))),
           "Unexpected browser qualification tool: \(call.name).")
-        if case .string(let raw) = call.arguments["url"] {
-          guard let url = URL(string: raw), url.scheme == endpoint.scheme,
+        // The adapter ignores url for tab list/select/close. An empty optional URL on a
+        // tab-list call is not a navigation attempt and must not hide the actual run blocker.
+        let navigates =
+          call.name == prefix + "browser_navigate"
+          || (call.name == prefix + "browser_tabs" && call.arguments["action"] == .string("new")
+            && call.arguments["url"] != nil && call.arguments["url"] != .string(""))
+        if navigates {
+          guard case .string(let raw) = call.arguments["url"],
+            let url = URL(string: raw), url.scheme == endpoint.scheme,
             url.host == endpoint.host,
             url.port == endpoint.port, url.user == nil, url.password == nil
           else {
@@ -481,19 +533,43 @@ struct HexLiveObserveActVerifyTests: Sendable {
   }
 
   private static func receipts(_ events: [AgentEvent]) throws -> [Receipt] {
+    var announced: [ToolCallID: ToolCall] = [:]
     var starts: [ToolCallID: (ToolCall, Int)] = [:]
+    var completed: Set<ToolCallID> = []
     var result: [Receipt] = []
     for (index, event) in events.enumerated() {
       switch event {
+      case .messageAppended(let message) where message.role == .assistant:
+        for content in message.content {
+          guard case .toolCall(let call) = content else { continue }
+          try require(announced[call.id] == nil, "Duplicate announced call identity.")
+          announced[call.id] = call
+        }
       case .toolStarted(let call):
-        try require(starts[call.id] == nil, "Duplicate started call identity.")
+        try require(
+          starts[call.id] == nil && !completed.contains(call.id),
+          "Duplicate started call identity.")
+        if let original = announced[call.id] {
+          try require(original == call, "Started call differs from its announced arguments.")
+        }
         starts[call.id] = (call, index)
       case .toolFinished(let receipt):
-        guard let started = starts.removeValue(forKey: receipt.toolCallID) else {
-          throw QualificationError.missingEvidence("Finished receipt has no matching started call.")
+        try require(
+          completed.insert(receipt.toolCallID).inserted, "Duplicate finished call identity.")
+        if let started = starts.removeValue(forKey: receipt.toolCallID) {
+          result.append(
+            Receipt(call: started.0, result: receipt, startIndex: started.1, finishIndex: index))
+        } else {
+          // Runtime cleanup settles announced calls skipped after a blocker. Preserve their
+          // scope and receipt without inventing an execution start or dispatch evidence.
+          guard receipt.notExecutedReason != nil, receipt.hasValidNonExecutionMetadata,
+            let call = announced[receipt.toolCallID]
+          else {
+            throw QualificationError.missingEvidence(
+              "Finished receipt has neither a matching start nor a valid unexecuted announcement.")
+          }
+          result.append(Receipt(call: call, result: receipt, startIndex: nil, finishIndex: index))
         }
-        result.append(
-          Receipt(call: started.0, result: receipt, startIndex: started.1, finishIndex: index))
       default: break
       }
     }
@@ -503,9 +579,10 @@ struct HexLiveObserveActVerifyTests: Sendable {
   private static func observationUsed(by action: Receipt, receipts: [Receipt], pid: Int64) throws
     -> Receipt
   {
-    try #require(
+    let actionStart = try #require(action.startIndex)
+    return try #require(
       receipts.last {
-        $0.finishIndex < action.startIndex && isNativeSnapshot($0, pid: pid)
+        $0.startIndex != nil && $0.finishIndex < actionStart && isNativeSnapshot($0, pid: pid)
           && field($0.result, "observation_id") == action.call.arguments["observation_id"]
       })
   }
@@ -570,8 +647,13 @@ struct HexLiveObserveActVerifyTests: Sendable {
   private struct Receipt: Sendable {
     let call: ToolCall
     let result: ToolResult
-    let startIndex: Int
+    let startIndex: Int?
     let finishIndex: Int
+
+    func started(after index: Int) -> Bool {
+      guard let startIndex else { return false }
+      return startIndex > index
+    }
   }
 
   private enum QualificationError: Error {
