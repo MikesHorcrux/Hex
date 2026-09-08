@@ -215,6 +215,36 @@ and linking in 4.098 seconds with no warnings or fallback notes. Canonical activ
 config; evidence is under `compiler-relay-explicit-modules-qualification`. The earlier hosted
 build used the same real compiler with implicit modules for the third-party C target.
 
+## Live receipt boundary follow-up
+
+Commit `724c396` was integrated at `9c24fc25259e4533d132d38dc987d3c98a771c76`.
+Canonical activation succeeded using the explicit-module-compatible temporary config;
+`/tmp/hex-oav-canonical-final-build-run.log` records the build, strict signing checks, and refresh
+of the existing registered agent. Resident settings retained their initial digest.
+
+The `canonical-final-run` native attempt incorrectly claimed the native tool was unavailable.
+The owned journal proves both native tools were among the 68 offered definitions; it made no
+native input. The browser attempt navigated, rerendered and filled the fixture but stopped before
+submission: its successful Playwright receipt contained empty rich text, which the Responses
+request builder rejected locally. The provider now omits empty rich-text blocks while preserving
+the structured status/output and verification requirement. Both routes and mixed text/image
+content are covered. The regression failed before the fix; the related 30 tests then passed.
+
+The `canonical-native-retry` run made exactly one field update and one button press, with correlated
+fresh observations. The final semantic snapshot contained `Hex native workflow verified` and
+`Applied synthetic change 1`. The following screenshot attempt supplied an unsupported
+`capture_focus` argument and failed; this is not complete image qualification. The pinned `see`
+schema is background-only by default and does not accept that field. The observation wrapper now
+refuses unsupported top-level keys against the advertised closed schema before calling the helper,
+clears old action authority, and returns a correction instruction without repeating earlier input.
+A regression proved the old dispatch and the corrected refusal/recovery boundary; all 25 combined
+native/provider checks passed. The actual native and browser workflows will be repeated only with
+fresh fixtures after these final boundaries are built and activated. The final package suite
+passed **1,309 tests in 253 suites** in 43.649 seconds; the signed hosted suite passed
+**294 tests in 52 suites** in 2.157 seconds. Lint passed for 1,294 Swift files and documentation
+passed for 44 checked files. Logs: `/tmp/hex-oav-package-final-boundaries.log`,
+`/tmp/hex-oav-hosted-final-boundaries.log`, `/tmp/hex-oav-final-boundaries-lint.log`.
+
 ## Exact changed files
 
 ```text

@@ -262,7 +262,6 @@ struct OpenAIResponsesRequestBuilder {
             switch richContent {
             case .text(let text):
               guard
-                !text.isEmpty,
                 text.utf8.count <= configuration.maximumInputValueBytes
               else {
                 throw OpenAIResponsesProviderError.invalidRequest
@@ -997,8 +996,10 @@ struct OpenAIResponsesRequestBuilder {
       for richContent in result.content {
         switch richContent {
         case .text(let text):
+          // MCP may return empty text after a successful action. The structured receipt above
+          // still carries its status and verification requirement; omit only this empty block.
+          guard !text.isEmpty else { continue }
           guard
-            !text.isEmpty,
             text.utf8.count <= configuration.maximumInputValueBytes
           else {
             throw OpenAIResponsesProviderError.invalidRequest
