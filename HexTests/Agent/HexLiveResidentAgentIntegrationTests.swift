@@ -21,7 +21,7 @@ struct HexLiveResidentAgentIntegrationTests {
   private static let secondTurnReply = "HEX_LIVE_SECOND_TURN_OK"
   private static let browserTurnReply = "HEX_LIVE_BROWSER_TURN_OK"
   private static let playwrightServerID = "playwright"
-  private static let playwrightNavigateToolName = "mcp_10_playwright_browser_navigate"
+  private static let playwrightSnapshotToolName = "mcp_10_playwright_browser_snapshot"
 
   @Test
   func completesConversationHistoryAndAnInferenceDrivenBrowserTurn() async throws {
@@ -120,7 +120,7 @@ struct HexLiveResidentAgentIntegrationTests {
         stage: "second turn"
       )
 
-      // A named choice allows only this navigation in the first inference turn. Hex changes it
+      // A named choice allows only this observation in the first inference turn. Hex changes it
       // to .none after the tool result, so the replay round cannot choose another capability.
       let browserRun = try await Self.performRun(
         client: client,
@@ -130,14 +130,14 @@ struct HexLiveResidentAgentIntegrationTests {
             role: .user,
             content: [
               .text(
-                "Use \(Self.playwrightNavigateToolName) to open https://example.com. "
-                  + "After its result confirms the page title is Example Domain, "
+                "Use \(Self.playwrightSnapshotToolName) to inspect the current Hex browser tab. "
+                  + "After its result contains a Page URL and current snapshot, "
                   + "reply with exactly: \(Self.browserTurnReply)"
               )
             ]
           )
         ],
-        toolChoice: .named(Self.playwrightNavigateToolName),
+        toolChoice: .named(Self.playwrightSnapshotToolName),
         timeoutSeconds: 90,
         stage: "model-browser-model round trip"
       )
@@ -293,8 +293,8 @@ struct HexLiveResidentAgentIntegrationTests {
       }
       guard calls.count == 1,
         let call = calls.first,
-        call.name == HexLiveResidentAgentIntegrationTests.playwrightNavigateToolName,
-        call.arguments == ["url": .string("https://example.com")]
+        call.name == HexLiveResidentAgentIntegrationTests.playwrightSnapshotToolName,
+        call.arguments.isEmpty
       else {
         throw LiveIntegrationError.unexpectedBrowserToolCall
       }
@@ -312,7 +312,7 @@ struct HexLiveResidentAgentIntegrationTests {
       guard
         result.content.contains(where: { content in
           guard case .text(let text) = content else { return false }
-          return text.contains("Example Domain")
+          return text.contains("Page URL:")
         })
       else {
         throw LiveIntegrationError.pageTitleMissingFromToolResult
@@ -444,7 +444,7 @@ struct HexLiveResidentAgentIntegrationTests {
       case .modelSelectionNotApplied:
         "The resident inference request did not use the selected model and reasoning effort."
       case .pageTitleMissingFromToolResult:
-        "The successful Playwright result did not contain the Example Domain page title."
+        "The successful Playwright observation did not contain its page URL."
       case .playwrightToolDidNotSucceed:
         "The explicitly scoped Playwright navigation call did not report success."
       case .playwrightUnavailable:
@@ -462,7 +462,7 @@ struct HexLiveResidentAgentIntegrationTests {
       case .unexpectedAssistantReply(let stage):
         "The \(stage) assistant reply did not match the required deterministic text."
       case .unexpectedBrowserToolCall:
-        "The live run did not execute exactly the selected Example Domain navigation."
+        "The live run did not execute exactly the selected browser observation."
       }
     }
   }

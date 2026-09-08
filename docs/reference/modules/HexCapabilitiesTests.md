@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**20 Swift files.** Generated; do not edit by hand.
+**23 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexCapabilitiesTests/Artifacts
 
@@ -30,8 +30,11 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [MacAccessibilityDispatchSafetyTests.swift](../../../Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityDispatchSafetyTests.swift) | — |
+| [MacAccessibilityObservationLedgerTests.swift](../../../Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityObservationLedgerTests.swift) | — |
 | [MacAccessibilityToolTests.swift](../../../Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityToolTests.swift) | — |
 | [MacApplicationToolTests.swift](../../../Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacApplicationToolTests.swift) | — |
+| [SystemMacInteractionSessionCheckerTests.swift](../../../Packages/HexKit/Tests/HexCapabilitiesTests/Mac/SystemMacInteractionSessionCheckerTests.swift) | — |
 
 ## Packages/HexKit/Tests/HexCapabilitiesTests/Process
 

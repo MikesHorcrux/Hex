@@ -10,6 +10,8 @@ public struct MacAccessibilityElementSnapshot: Equatable, Sendable {
   public let isFocused: Bool?
   public let actions: [String]
   public let childCount: Int
+  /// An opaque reference to an AX window actually observed with this element; never a screenshot.
+  public let windowReference: String?
 
   public init(
     path: String,
@@ -22,7 +24,8 @@ public struct MacAccessibilityElementSnapshot: Equatable, Sendable {
     isEnabled: Bool? = nil,
     isFocused: Bool? = nil,
     actions: [String] = [],
-    childCount: Int = 0
+    childCount: Int = 0,
+    windowReference: String? = nil
   ) {
     self.path = path
     self.role = role
@@ -35,5 +38,6 @@ public struct MacAccessibilityElementSnapshot: Equatable, Sendable {
     self.isFocused = isFocused
     self.actions = actions
     self.childCount = childCount
+    self.windowReference = windowReference
   }
 }

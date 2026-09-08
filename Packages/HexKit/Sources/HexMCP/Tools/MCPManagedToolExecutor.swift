@@ -139,6 +139,12 @@ public actor MCPManagedToolExecutor: ToolExecutor {
     }
   }
 
+  /// Identity of the live connection, unchanged by a catalog-only refresh. Observation-bound
+  /// adapters must invalidate their references whenever this identity changes or is unavailable.
+  public func connectionIdentity() -> UUID? {
+    state == .ready ? catalogID : nil
+  }
+
   public func authorizationRequest(
     for call: ToolCall,
     in context: ToolExecutionContext

@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**26 Swift files.** Generated; do not edit by hand.
+**27 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexMCPTests/Client
 
@@ -69,5 +69,6 @@ Focused test target; consult suites for exercised boundaries.
 | [MCPManagedToolExecutorRefreshTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Tools/MCPManagedToolExecutorRefreshTests.swift) | — |
 | [MCPManagedToolExecutorRoutingRefusalTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Tools/MCPManagedToolExecutorRoutingRefusalTests.swift) | — |
 | [MCPManagedToolExecutorTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Tools/MCPManagedToolExecutorTests.swift) | — |
+| [MCPRemoteToolResultMetadataTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Tools/MCPRemoteToolResultMetadataTests.swift) | — |
 | [MCPToolExecutorDispatchOwnershipTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Tools/MCPToolExecutorDispatchOwnershipTests.swift) | — |
 | [MCPToolExecutorTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Tools/MCPToolExecutorTests.swift) | — |

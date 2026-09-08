@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**52 Swift files.** Generated; do not edit by hand.
+**53 Swift files.** Generated; do not edit by hand.
 
 ## HexTests/Agent
 
@@ -35,6 +35,7 @@ Focused test target; consult suites for exercised boundaries.
 | [HexApprovalModeRenderingTests.swift](../../../HexTests/Agent/HexApprovalModeRenderingTests.swift) | Opt-in component renders use only static data. They never start a resident or load user settings. |
 | [HexInProcessInferenceConfigurationResolverTests.swift](../../../HexTests/Agent/HexInProcessInferenceConfigurationResolverTests.swift) | — |
 | [HexLiveAgentClientTests.swift](../../../HexTests/Agent/HexLiveAgentClientTests.swift) | — |
+| [HexLiveObserveActVerifyTests.swift](../../../HexTests/Agent/HexLiveObserveActVerifyTests.swift) | The signed test host connects to an explicitly selected canonical resident build. It never activates its isolated helper or changes settings/privacy grants. |
 | [HexLiveResidentAgentIntegrationTests.swift](../../../HexTests/Agent/HexLiveResidentAgentIntegrationTests.swift) | — |
 | [HexTests.swift](../../../HexTests/Agent/HexTests.swift) | — |
 

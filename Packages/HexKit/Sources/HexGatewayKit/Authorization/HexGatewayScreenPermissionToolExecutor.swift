@@ -1,3 +1,4 @@
+import HexCapabilities
 import HexCore
 import HexIPC
 
@@ -6,13 +7,18 @@ import HexIPC
 public struct HexGatewayScreenPermissionToolExecutor: ToolExecutor {
   private let base: any ToolExecutor
   private let status: @Sendable () async throws -> GatewayScreenControlPermissionStatus
+  private let sessionState: @Sendable () -> MacInteractionSessionState
 
   public init(
     base: any ToolExecutor,
+    sessionState: @escaping @Sendable () -> MacInteractionSessionState = {
+      SystemMacInteractionSessionChecker().status()
+    },
     status: @escaping @Sendable () async throws -> GatewayScreenControlPermissionStatus
   ) {
     self.base = base
     self.status = status
+    self.sessionState = sessionState
   }
 
   public func availableTools() async throws -> [ToolDefinition] { try await base.availableTools() }
@@ -26,6 +32,12 @@ public struct HexGatewayScreenPermissionToolExecutor: ToolExecutor {
 
   public func execute(_ call: ToolCall, in context: ToolExecutionContext) async throws -> ToolResult
   {
+    try Task.checkCancellation()
+    switch sessionState() {
+    case .locked: return blocked(call, code: "mac_session_locked")
+    case .unavailable: return blocked(call, code: "mac_session_unavailable")
+    case .available: break
+    }
     let permissions: GatewayScreenControlPermissionStatus
     do {
       permissions = try await status()
@@ -35,6 +47,11 @@ public struct HexGatewayScreenPermissionToolExecutor: ToolExecutor {
     }
     guard permissions.isGranted else {
       return blocked(call, code: "screen_permissions_required")
+    }
+    switch sessionState() {
+    case .locked: return blocked(call, code: "mac_session_locked")
+    case .unavailable: return blocked(call, code: "mac_session_unavailable")
+    case .available: break
     }
     return try await base.execute(call, in: context)
   }

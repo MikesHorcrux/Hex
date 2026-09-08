@@ -7,11 +7,18 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
     name: "mac_accessibility_action",
     description:
       "Press, focus, or set the value of one exact element in a running macOS application's "
-      + "Accessibility tree. Use a path or exact attributes from mac_accessibility_snapshot. "
+      + "Accessibility tree. Use observation_id and a path or exact attributes from a fresh "
+      + "mac_accessibility_snapshot in this run. Each observation permits only one action and "
+      + "expires after 60 seconds. Success acknowledges dispatch, not visible completion: observe "
+      + "again to verify the result before continuing. Never blindly repeat an uncertain action. "
       + "Secure text fields are not writable because tool arguments may be journaled. macOS "
       + "Accessibility permission is required.",
     inputSchema: HostToolSchema.object(
       properties: [
+        "observation_id": HostToolSchema.string(
+          "The single-use observation_id from a fresh mac_accessibility_snapshot in this run.",
+          maximumLength: 36
+        ),
         "bundle_id": HostToolSchema.string(
           "The exact bundle identifier of a running application.",
           maximumLength: 255
@@ -47,16 +54,26 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
           maximumLength: 16_384
         ),
       ],
-      required: ["bundle_id", "action"]
+      required: ["bundle_id", "action", "observation_id"]
     )
   )
 
   private let controller: any MacAccessibilityControlling
+  private let observationLedger: MacAccessibilityObservationLedger
+  private let sessionState: @Sendable () -> MacInteractionSessionState
   private let authorizationLedger = ToolAuthorizationLedger()
   private let authorizationKey = SymmetricKey(size: .bits256)
 
-  public init(controller: any MacAccessibilityControlling) {
+  public init(
+    controller: any MacAccessibilityControlling,
+    observationLedger: MacAccessibilityObservationLedger,
+    sessionState: @escaping @Sendable () -> MacInteractionSessionState = {
+      SystemMacInteractionSessionChecker().status()
+    }
+  ) {
     self.controller = controller
+    self.observationLedger = observationLedger
+    self.sessionState = sessionState
   }
 
   public func authorizationRequest(
@@ -69,6 +86,7 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
     var details: [String: JSONValue] = [
       "bundle_id": .string(request.bundleIdentifier),
       "action": .string(request.action.rawValue),
+      "observation_id": .string(request.observationID),
     ]
     if let path = request.selector.path { details["path"] = .string(path) }
     if let identifier = request.selector.identifier {
@@ -100,10 +118,23 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
     do {
       let request = try validatedRequest(call)
       try await authorizationLedger.take(call: call, runID: context.runID)
-      guard await controller.isTrusted(promptIfNeeded: true) else {
+      let observed = try await observationLedger.take(
+        observationID: request.observationID, bundleIdentifier: request.bundleIdentifier,
+        selector: request.selector, runID: context.runID
+      )
+      try Task.checkCancellation()
+      try sessionState().requireAvailable()
+      guard await controller.isTrusted(promptIfNeeded: false) else {
         throw MacToolError.accessibilityPermissionRequired
       }
-      let result = try await controller.perform(request)
+      try Task.checkCancellation()
+      try sessionState().requireAvailable()
+      let exactRequest = MacAccessibilityActionRequest(
+        bundleIdentifier: request.bundleIdentifier,
+        selector: MacAccessibilitySelector(path: observed.path), action: request.action,
+        value: request.value, observationID: request.observationID
+      )
+      let result = try await controller.perform(exactRequest)
       return MacToolResult.accessibilityAction(result, callID: call.id)
     } catch {
       await authorizationLedger.remove(callID: call.id, runID: context.runID)
@@ -119,9 +150,11 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
       call.arguments,
       allowedNames: [
         "bundle_id", "action", "path", "identifier", "role", "title", "occurrence",
-        "value",
+        "value", "observation_id",
       ]
     )
+    let observationID = try arguments.requiredString(named: "observation_id", maximumBytes: 36)
+    guard UUID(uuidString: observationID) != nil else { throw MacToolError.invalidArguments }
     let bundleIdentifier = try MacTargetValidator.validateBundleIdentifier(
       arguments.requiredString(named: "bundle_id", maximumBytes: 255)
     )
@@ -165,7 +198,8 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
         occurrence: occurrence
       ),
       action: action,
-      value: value
+      value: value,
+      observationID: observationID
     )
   }
 

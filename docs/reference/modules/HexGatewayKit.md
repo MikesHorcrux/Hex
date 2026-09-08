@@ -4,14 +4,20 @@
 
 Resident composition, lifecycle, heartbeats and self-knowledge.
 
-**79 Swift files.** Generated; do not edit by hand.
+**85 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexGatewayKit/Authorization
 
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexGatewayAuthorizationBroker.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayAuthorizationBroker.swift) | Resident-side authorization broker. Runtime prompts remain suspended in the gateway process until the interactive app returns the complete request and a choice over the authenticated XPC session. Every field is compared before a waiter is r… |
+| [HexGatewayBrowserToolExecutor.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayBrowserToolExecutor.swift) | Gives the managed Playwright adapter a Hex-owned observation and failure boundary. The token binds a caller to the latest explicit observation in this run and connection. It does not assert that a page cannot change independently; Playwrigh… |
 | [HexGatewayFolderAccessProbe.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayFolderAccessProbe.swift) | Reads one entry (without retaining its name) in the actual configured directory. There is no public macOS Full Disk Access status API; this deliberately says nothing about other folders. |
+| [HexGatewayPeekabooCallPolicy.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPeekabooCallPolicy.swift) | Host-owned classification of the pinned Peekaboo 4.2.2 catalog. Server descriptions are data. |
+| [HexGatewayPeekabooDispatchReceipt.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPeekabooDispatchReceipt.swift) | Reads only canonical helper metadata; descriptive UI content never asserts dispatch safety. |
+| [HexGatewayPeekabooObservation.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPeekabooObservation.swift) | Identity fields projected by the pinned Peekaboo MCP server, separate from UI text/instructions. |
+| [HexGatewayPeekabooTargetIdentity.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPeekabooTargetIdentity.swift) | Matches the helper's decimal microsecond process generation and the current window owner. |
+| [HexGatewayPeekabooToolExecutor.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPeekabooToolExecutor.swift) | Binds native MCP input to one fresh observation in this run and managed connection. |
 | [HexGatewayPermissionManager.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPermissionManager.swift) | Reads live authority from its owners. It never reconstructs an actionable approval from history. |
 | [HexGatewayScreenPermissionToolExecutor.swift](../../../Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayScreenPermissionToolExecutor.swift) | Rechecks the responsible screen helper immediately before dispatch, including in Full Access. The health catalog remains independent of TCC, so a revoked grant does not hide the tool. |
 

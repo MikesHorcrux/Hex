@@ -1,3 +1,4 @@
+import Foundation
 import HexCapabilities
 import HexCore
 import Testing
@@ -7,8 +8,11 @@ struct MacAccessibilityToolTests {
   @Test
   func snapshotAndActionUseExactApplicationAndSelector() async throws {
     let controller = AccessibilityController()
-    let snapshotTool = MacAccessibilitySnapshotTool(controller: controller)
-    let actionTool = MacAccessibilityActionTool(controller: controller)
+    let observations = MacAccessibilityObservationLedger()
+    let snapshotTool = MacAccessibilitySnapshotTool(
+      controller: controller, observationLedger: observations, sessionState: { .available })
+    let actionTool = MacAccessibilityActionTool(
+      controller: controller, observationLedger: observations, sessionState: { .available })
     let context = ToolExecutionContext(runID: AgentRunID())
     let snapshotCall = ToolCall(
       id: ToolCallID(rawValue: "ax-snapshot"),
@@ -25,6 +29,12 @@ struct MacAccessibilityToolTests {
     #expect(request.resource == "bundle:com.apple.Safari")
     let snapshot = try await snapshotTool.execute(snapshotCall, in: context)
     #expect(snapshot.status == .success)
+    guard case .object(let output) = snapshot.output,
+      case .string(let observationID) = output["observation_id"]
+    else {
+      Issue.record("Snapshot requires a receipt")
+      return
+    }
 
     let actionCall = ToolCall(
       id: ToolCallID(rawValue: "ax-action"),
@@ -32,6 +42,7 @@ struct MacAccessibilityToolTests {
       arguments: [
         "bundle_id": .string("com.apple.Safari"),
         "action": .string("press"),
+        "observation_id": .string(observationID),
         "path": .string("0.1"),
       ]
     )
@@ -46,14 +57,22 @@ struct MacAccessibilityToolTests {
   @Test
   func reportsPermissionRequirementWithoutCallingTheControllerAction() async throws {
     let controller = AccessibilityController(isTrusted: false)
-    let tool = MacAccessibilityActionTool(controller: controller)
+    let observations = MacAccessibilityObservationLedger()
+    let tool = MacAccessibilityActionTool(
+      controller: controller, observationLedger: observations, sessionState: { .available })
     let context = ToolExecutionContext(runID: AgentRunID())
+    let receipt = MacAccessibilitySnapshot(
+      bundleIdentifier: "com.apple.Safari", applicationName: "Safari", processIdentifier: 42,
+      elements: [.init(path: "0.1", role: "AXTextField", identifier: "AddressField")],
+      isTruncated: false)
+    try await observations.record(receipt, runID: context.runID)
     let call = ToolCall(
       id: ToolCallID(rawValue: "ax-permission"),
       name: "mac_accessibility_action",
       arguments: [
         "bundle_id": .string("com.apple.Safari"),
         "action": .string("focus"),
+        "observation_id": .string(receipt.observationID),
         "identifier": .string("AddressField"),
       ]
     )
@@ -64,7 +83,11 @@ struct MacAccessibilityToolTests {
     #expect(result.status == .failure)
     #expect(result.requiresUserAttention)
     #expect(
-      result.output == .object(["error": .string("accessibility_permission_required")])
+      result.output
+        == .object([
+          "error": .string("accessibility_permission_required"),
+          "dispatched": .boolean(false), "outcome_verified": .boolean(false),
+        ])
     )
     #expect(await controller.lastAction == nil)
   }
@@ -109,7 +132,7 @@ struct MacAccessibilityToolTests {
       return MacAccessibilityActionResult(
         bundleIdentifier: request.bundleIdentifier,
         path: request.selector.path ?? "unknown",
-        action: request.action
+        action: request.action, observationID: request.observationID
       )
     }
   }

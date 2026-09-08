@@ -58,6 +58,7 @@ enum MacToolResult {
       toolCallID: callID,
       status: .success,
       output: .object([
+        "observation_id": .string(snapshot.observationID),
         "application": .object([
           "bundle_id": .string(snapshot.bundleIdentifier),
           "name": .string(snapshot.applicationName),
@@ -80,7 +81,11 @@ enum MacToolResult {
         "bundle_id": .string(result.bundleIdentifier),
         "path": .string(result.path),
         "action": .string(result.action.rawValue),
-        "performed": .boolean(true),
+        "observation_id": .string(result.observationID),
+        "window_reference": result.windowReference.map(JSONValue.string) ?? .null,
+        "dispatched": .boolean(true),
+        "outcome_verified": .boolean(false),
+        "next_step": .string("Observe the application again to verify the visible outcome."),
       ])
     )
   }
@@ -110,22 +115,47 @@ enum MacToolResult {
       code = "accessibility_permission_required"
     case MacToolError.accessibilityObservationFailed:
       code = "accessibility_observation_failed"
+    case MacToolError.accessibilityObservationStale:
+      code = "accessibility_observation_stale"
+    case MacToolError.interactionSessionLocked:
+      code = "mac_session_locked"
+    case MacToolError.interactionSessionUnavailable:
+      code = "mac_session_unavailable"
     case MacToolError.accessibilityElementNotFound:
       code = "accessibility_element_not_found"
     case MacToolError.accessibilityElementAmbiguous:
       code = "accessibility_element_ambiguous"
     case MacToolError.accessibilityActionUnsupported:
       code = "accessibility_action_unsupported"
-    case MacToolError.accessibilityActionFailed:
-      code = "accessibility_action_failed"
+    case MacToolError.accessibilityActionFailed, MacToolError.accessibilityActionOutcomeUnknown:
+      code = "accessibility_action_outcome_unknown"
     default:
       throw error
+    }
+    let outcomeUnknown = code == "accessibility_action_outcome_unknown"
+    let requiresAttention =
+      outcomeUnknown
+      || [
+        "accessibility_permission_required",
+        "mac_session_locked", "mac_session_unavailable",
+      ].contains(code)
+    var output: [String: JSONValue] = ["error": .string(code)]
+    if code.hasPrefix("accessibility_") || code.hasPrefix("mac_session_") {
+      output["dispatched"] = .boolean(outcomeUnknown)
+      output["outcome_verified"] = .boolean(false)
+    }
+    if outcomeUnknown {
+      output["outcome_unknown"] = .boolean(true)
+      output["next_step"] = .string(
+        "The action may have taken effect. Observe the application before considering any retry.")
+    } else if code == "accessibility_observation_stale" {
+      output["next_step"] = .string("Obtain a fresh observation before planning another action.")
     }
     return ToolResult(
       toolCallID: callID,
       status: .failure,
-      output: .object(["error": .string(code)]),
-      requiresUserAttention: code == "accessibility_permission_required"
+      output: .object(output),
+      requiresUserAttention: requiresAttention
     )
   }
 
@@ -143,6 +173,9 @@ enum MacToolResult {
     if let identifier = element.identifier { value["identifier"] = .string(identifier) }
     if let isEnabled = element.isEnabled { value["is_enabled"] = .boolean(isEnabled) }
     if let isFocused = element.isFocused { value["is_focused"] = .boolean(isFocused) }
+    if let windowReference = element.windowReference {
+      value["window_reference"] = .string(windowReference)
+    }
     return .object(value)
   }
 }
