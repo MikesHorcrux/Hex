@@ -56,7 +56,12 @@ struct AgentWorkspaceView: View {
               model.draft = prompt
               isComposerFocused = true
             },
-            onOpenArtifact: { selectedArtifact = $0 }
+            onOpenArtifact: { selectedArtifact = $0 },
+            hasEarlierMessages: model.hasEarlierTranscript,
+            showsLatestButton: model.isViewingEarlierTranscript,
+            isLoadingHistory: model.isRunActive,
+            onEarlierMessages: { Task { await model.loadEarlierTranscript() } },
+            onLatestMessages: { Task { await model.loadLatestTranscript() } }
           )
 
           if let request = model.pendingAuthorization {

@@ -7,8 +7,10 @@ nonisolated enum AgentConversationHistoryValidator {
   static func validate(
     _ history: AgentConversationHistory, runIDs: inout Set<AgentRunID>
   ) throws {
-    guard history.exchanges.count <= maximumExchanges,
-      history.legacyMessages.count <= maximumMessages
+    guard
+      history.contextBase != nil
+        || (history.exchanges.count <= maximumExchanges
+          && history.legacyMessages.count <= maximumMessages)
     else { throw invalid("Structured conversation history exceeds its record limits.") }
     var messageCount = history.legacyMessages.count
     var messagesByID: [MessageID: Message] = [:]
@@ -25,12 +27,36 @@ nonisolated enum AgentConversationHistoryValidator {
       try AgentConversationPayloadValidator.validate(message)
     }
 
+    var baseCalls = Set<ToolCallID>()
+    for message in history.contextBase ?? [] {
+      guard message.role == .user || message.role == .assistant || message.role == .tool,
+        messagesByID.updateValue(message, forKey: message.id) == nil
+      else {
+        throw invalid("The context checkpoint contains an invalid or repeated message.")
+      }
+      try AgentConversationPayloadValidator.validate(message)
+      for content in message.content {
+        switch content {
+        case .toolCall(let call):
+          guard baseCalls.insert(call.id).inserted else {
+            throw invalid("Repeated context tool call.")
+          }
+        case .toolResult(let result):
+          guard baseCalls.remove(result.toolCallID) != nil else {
+            throw invalid("Unpaired context result.")
+          }
+        case .text, .image: break
+        }
+      }
+    }
+    guard baseCalls.isEmpty else { throw invalid("Unresolved context checkpoint tools.") }
+
     var priorExchanges: [AgentRunID: AgentConversationExchange] = [:]
     var retriedRunIDs = Set<AgentRunID>()
     for exchange in history.exchanges {
       guard runIDs.insert(exchange.runID).inserted,
         !exchange.messages.isEmpty,
-        exchange.messages.count <= maximumMessages - messageCount,
+        history.contextBase != nil || exchange.messages.count <= maximumMessages - messageCount,
         exchange.messages.first?.role == .user,
         exchange.lastEventSequence.map({ $0 > 0 }) ?? true
       else { throw invalid("A native exchange has invalid identity, messages, or event sequence.") }
@@ -42,7 +68,16 @@ nonisolated enum AgentConversationHistoryValidator {
 
       for (index, message) in exchange.messages.enumerated() {
         if index > 0 {
-          guard message.role == .assistant || message.role == .tool else {
+          let isSummary =
+            index == 1 && message.id == exchange.projectionSummaryID
+            && message.role == .user && message.content.count == 1
+            && message.content.allSatisfy {
+              if case .text(let text) = $0 {
+                return AgentContextCompaction.hasSummaryLabel(text)
+              }
+              return false
+            }
+          guard message.role == .assistant || message.role == .tool || isSummary else {
             throw invalid("A native exchange contains repeated request context or an invalid role.")
           }
         }

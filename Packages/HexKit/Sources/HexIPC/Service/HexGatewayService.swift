@@ -12,6 +12,7 @@ public actor HexGatewayService {
   let codec: GatewayWireCodec
   let gatewayInstanceID: GatewayInstanceID
   let historyReader: (any HexGatewayRunHistoryReading)?
+  let conversationStore: (any ConversationStorage)?
   let artifactReader: (any ArtifactReading)?
   var sessions: [GatewaySessionID: GatewaySessionState] = [:]
   var runs: [AgentRunID: GatewayRunState] = [:]
@@ -30,7 +31,8 @@ public actor HexGatewayService {
     configuration: GatewayConfiguration = .standard,
     gatewayInstanceID: GatewayInstanceID = GatewayInstanceID(),
     historyReader: (any HexGatewayRunHistoryReading)? = nil,
-    artifactReader: (any ArtifactReading)? = nil
+    artifactReader: (any ArtifactReading)? = nil,
+    conversationStore: (any ConversationStorage)? = nil
   ) {
     self.driver = driver
     self.configuration = configuration
@@ -38,6 +40,7 @@ public actor HexGatewayService {
     self.gatewayInstanceID = gatewayInstanceID
     self.historyReader = historyReader
     self.artifactReader = artifactReader
+    self.conversationStore = conversationStore
   }
 
   func requireValidGatewayIdentity(

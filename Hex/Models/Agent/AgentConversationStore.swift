@@ -3,7 +3,9 @@ import Foundation
 import HexCore
 
 actor AgentConversationStore: AgentConversationStoring {
-  static let defaultMaximumBytes = 4 * 1_024 * 1_024
+  // Active compaction preserves original tool evidence locally. Use the supported archive
+  // capacity so a completed long run still has room for subsequent prompts.
+  static let defaultMaximumBytes = 16 * 1_024 * 1_024
   private static let maximumConversations = 64
   private static let maximumTranscriptItems = 512
   private static let maximumArchiveBytes = 16 * 1_024 * 1_024

@@ -30,6 +30,15 @@ extension AgentWorkspaceModel {
   }
 
   func setConversationArchived(_ id: UUID, archived: Bool) async -> Bool {
+    if let repository = conversationStore as? any AgentPagedConversationStoring,
+      let index = conversations.firstIndex(where: { $0.id == id }),
+      conversations[index].history == nil
+    {
+      do { conversations[index] = try await repository.readConversation(id) } catch {
+        conversationPersistenceDidFail()
+        return false
+      }
+    }
     guard let conversation = conversations.first(where: { $0.id == id }) else {
       errorMessage = "That conversation is no longer available."
       return false
@@ -132,6 +141,7 @@ extension AgentWorkspaceModel {
         : "Some conversation output is still only in memory. Keep Hex open and copy that output before quitting."
     }
     activity = saved
+    conversationListRevision &+= 1
     return true
   }
 

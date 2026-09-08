@@ -28,6 +28,42 @@ struct AgentContextCompactionTests {
   }
 
   @Test
+  func activeProgressNamesItsTaskWithoutChangingLegacyCheckpointProjection() throws {
+    var object = try encodedObject(make())
+    object["boundary"] = "completedToolBatch"
+    let legacy = try JSONDecoder().decode(
+      AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(legacy.taskMessageID == nil)
+    #expect(
+      legacy.summaryMessage.content == [
+        .text(AgentContextCompaction.summaryLabel + legacy.summaryText)
+      ])
+    let goal = MessageID()
+    object["taskMessageID"] = goal.rawValue.uuidString
+    let current = try JSONDecoder().decode(
+      AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(current.taskMessageID == goal)
+    #expect(
+      current.summaryMessage.content == [
+        .text(AgentContextCompaction.activeSummaryLabel + current.summaryText)
+      ])
+    #expect(
+      try JSONDecoder().decode(AgentContextCompaction.self, from: JSONEncoder().encode(current))
+        == current)
+    object.removeValue(forKey: "boundary")
+    #expect(throws: (any Error).self) {
+      try JSONDecoder().decode(
+        AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+    object["boundary"] = "completedToolBatch"
+    object["taskMessageID"] = legacy.sourceMessageIDs[0].rawValue.uuidString
+    #expect(throws: (any Error).self) {
+      try JSONDecoder().decode(
+        AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+  }
+
+  @Test
   func repeatedCompactionCanNameThePriorSummaryWithoutReusingItsIdentity() throws {
     let previous = try make()
     let next = try make(sources: [previous.summaryMessage.id, MessageID()])

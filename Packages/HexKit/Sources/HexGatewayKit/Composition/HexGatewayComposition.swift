@@ -100,7 +100,8 @@ public struct HexGatewayComposition: Sendable {
       driver: runDriver,
       configuration: configuration.gatewayConfiguration,
       historyReader: historyReader,
-      artifactReader: configuration.artifactReader
+      artifactReader: configuration.artifactReader,
+      conversationStore: journal as? any ConversationStorage
     )
     let transport = InProcessHexGatewayTransport(
       service: service,

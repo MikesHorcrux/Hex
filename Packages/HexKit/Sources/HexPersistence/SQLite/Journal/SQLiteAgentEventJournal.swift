@@ -85,11 +85,14 @@ public actor SQLiteAgentEventJournal: AgentEventJournal {
         },
         validateMigratedData: {
           try self.validateWholeJournalIntegrity(connection: openedConnection)
+          try self.seedRunValidation(connection: openedConnection)
         }
       )
       try secureDirectory.hardenSQLiteFiles()
       try fileLock.validateIdentities(in: secureDirectory)
-      recoveredRuns = try recoverInterruptedRuns()
+      recoveredRuns =
+        try configuration.integrityPolicy == .incremental
+        ? recoverIncrementally() : recoverInterruptedRuns()
       try secureDirectory.hardenSQLiteFiles()
       try fileLock.validateIdentities(in: secureDirectory)
     } catch {

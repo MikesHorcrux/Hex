@@ -2,7 +2,7 @@ import HexCore
 
 /// New host-issued non-execution facts require native declaration proof. Legacy lifecycle events
 /// remain valid without declarations; initial messages are deliberately excluded by the caller.
-struct SQLiteToolNonExecutionState {
+struct SQLiteToolNonExecutionState: Codable {
   private var declarations: [ToolCallID] = []
   private var declarationCounts: [ToolCallID: Int] = [:]
   private var markedResults: [ToolCallID: ToolResult] = [:]

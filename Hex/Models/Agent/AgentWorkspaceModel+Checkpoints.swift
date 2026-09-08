@@ -23,7 +23,24 @@ extension AgentWorkspaceModel {
         let pending = archiveWriteQueue.removeFirst()
         let saved: Bool
         do {
-          try await conversationStore.save(pending.archive)
+          if let repository = conversationStore as? any AgentPagedConversationStoring {
+            let changed = pending.archive.conversations.filter {
+              savedConversationSnapshots[$0.id] != $0
+            }
+            let metadataChanged = changed.contains {
+              savedConversationSnapshots[$0.id]?.title != $0.title
+                || savedConversationSnapshots[$0.id]?.archivedAt != $0.archivedAt
+            }
+            try await repository.saveChanges(
+              changed, selected: pending.archive.selectedConversationID)
+            for conversation in pending.archive.conversations {
+              savedConversationSnapshots[conversation.id] = conversation
+            }
+            adoptSavedWorkingSet(pending.archive)
+            if metadataChanged { conversationListRevision &+= 1 }
+          } else {
+            try await conversationStore.save(pending.archive)
+          }
           savedArchiveRevision = pending.revision
           conversationSaveError = nil
           saved = true

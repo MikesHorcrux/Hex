@@ -22,7 +22,7 @@ extension SQLiteAgentEventJournal {
       LIMIT ?
       """
     )
-    try runStatement.bind(Int64(configuration.maximumRecoveryRunCount + 1), at: 1)
+    try runStatement.bind(Int64(configuration.auditRunLimit + 1), at: 1)
     var runCount = 0
     var recordCount = 0
     var byteCount = 0
@@ -37,9 +37,9 @@ extension SQLiteAgentEventJournal {
       guard stepResult == .row else {
         break
       }
-      guard runCount < configuration.maximumRecoveryRunCount else {
+      guard runCount < configuration.auditRunLimit else {
         throw SQLiteAgentEventJournalError.integrityRunLimitExceeded(
-          maximum: configuration.maximumRecoveryRunCount
+          maximum: configuration.auditRunLimit
         )
       }
       let runIDText = try runStatement.columnText(
@@ -58,8 +58,8 @@ extension SQLiteAgentEventJournal {
         nextSequence: try runStatement.columnInt64(at: 1),
         terminalSequence: terminalSequence,
         connection: connection,
-        maximumRecordCount: configuration.maximumRecoveryRecordCount,
-        maximumBytes: configuration.maximumRecoveryBytes,
+        maximumRecordCount: configuration.auditRecordLimit,
+        maximumBytes: configuration.auditByteLimit,
         checksCancellation: checksCancellation,
         recordCount: &recordCount,
         byteCount: &byteCount
@@ -220,7 +220,7 @@ extension SQLiteAgentEventJournal {
       LIMIT ?
       """
     )
-    let remainingRecordCount = configuration.maximumRecoveryRecordCount - recordCount
+    let remainingRecordCount = configuration.auditRecordLimit - recordCount
     try statement.bind(Int64(remainingRecordCount + 1), at: 1)
     while true {
       if checksCancellation {
@@ -233,9 +233,9 @@ extension SQLiteAgentEventJournal {
       guard stepResult == .row else {
         break
       }
-      guard recordCount < configuration.maximumRecoveryRecordCount else {
+      guard recordCount < configuration.auditRecordLimit else {
         throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
-          maximum: configuration.maximumRecoveryRecordCount
+          maximum: configuration.auditRecordLimit
         )
       }
       let runIDText = try statement.columnText(
@@ -253,7 +253,7 @@ extension SQLiteAgentEventJournal {
       )
       try addIntegrityBytes(
         decoded.byteCount,
-        maximum: configuration.maximumRecoveryBytes,
+        maximum: configuration.auditByteLimit,
         to: &byteCount
       )
       guard
@@ -274,7 +274,7 @@ extension SQLiteAgentEventJournal {
     maximum: Int = -1,
     to byteCount: inout Int
   ) throws {
-    let effectiveMaximum = maximum < 0 ? configuration.maximumRecoveryBytes : maximum
+    let effectiveMaximum = maximum < 0 ? configuration.auditByteLimit : maximum
     let (nextByteCount, overflowed) = byteCount.addingReportingOverflow(additionalBytes)
     guard !overflowed, nextByteCount <= effectiveMaximum else {
       throw SQLiteAgentEventJournalError.integrityByteLimitExceeded(
@@ -290,9 +290,9 @@ extension SQLiteAgentEventJournal {
     recordCount: inout Int,
     byteCount: inout Int
   ) throws {
-    guard recordCount < configuration.maximumRecoveryRecordCount else {
+    guard recordCount < configuration.auditRecordLimit else {
       throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
-        maximum: configuration.maximumRecoveryRecordCount
+        maximum: configuration.auditRecordLimit
       )
     }
     let terminalByteCount = try SQLiteInterruptedRunTerminal.encodedRecordByteCount(

@@ -128,7 +128,7 @@ public final class HexGatewayResidentHost {
     )
     let compositionConfiguration = HexGatewayCompositionConfiguration(
       journalConfiguration: SQLiteAgentEventJournalConfiguration(
-        databaseURL: configuration.databaseURL
+        databaseURL: configuration.databaseURL, integrityPolicy: .incremental
       ),
       inferenceProvider: inferenceProvider,
       toolExecutor: routedToolExecutor,

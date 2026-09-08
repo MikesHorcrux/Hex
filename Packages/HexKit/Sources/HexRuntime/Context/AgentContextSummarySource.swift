@@ -6,8 +6,14 @@ import HexCore
 struct AgentContextSummarySource: Sendable {
   let exchanges: [[Message]]
 
-  init(messages: [Message], estimator: any AgentContextTokenEstimating) throws {
-    guard !messages.isEmpty, messages.count <= 4_096, messages.first?.role == .user else {
+  init(
+    messages: [Message], estimator: any AgentContextTokenEstimating,
+    allowsToolBatchBoundaries: Bool = false
+  ) throws {
+    guard !messages.isEmpty, messages.count <= 4_096,
+      messages.first?.role == .user
+        || (allowsToolBatchBoundaries && messages.first?.role == .assistant)
+    else {
       throw AgentContextSummarizationError.invalidHistory
     }
     let data: Data
@@ -74,6 +80,10 @@ struct AgentContextSummarySource: Sendable {
         }
       }
       current.append(message)
+      if allowsToolBatchBoundaries && message.role == .tool && outstanding.isEmpty {
+        groups.append(current)
+        current = []
+      }
     }
     guard outstanding.isEmpty else { throw AgentContextSummarizationError.invalidHistory }
     if !current.isEmpty { groups.append(current) }

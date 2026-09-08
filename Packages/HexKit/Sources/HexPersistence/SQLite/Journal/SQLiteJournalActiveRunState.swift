@@ -2,7 +2,7 @@ import HexCore
 
 /// Actor-owned append validation for a run created after whole-journal admission.
 /// Recovered runs are terminal before admission returns and do not need a retained state.
-struct SQLiteJournalActiveRunState {
+struct SQLiteJournalActiveRunState: Codable {
   private let runID: AgentRunID
   private let terminalReservationBytes: Int
   private var nextSequence: UInt64 = 1
@@ -19,6 +19,12 @@ struct SQLiteJournalActiveRunState {
       runIDTextByteCount: runID.description.utf8.count,
       configuration: configuration
     )
+  }
+
+  var unresolvedToolCallIDs: [ToolCallID] { lifecycle.unresolvedToolCallIDs }
+  var interruptedNonExecutionEvents: [AgentEvent] { lifecycle.interruptedNonExecutionEvents }
+  func matches(runID: AgentRunID, nextSequence: UInt64) -> Bool {
+    self.runID == runID && self.nextSequence == nextSequence
   }
 
   func appending(

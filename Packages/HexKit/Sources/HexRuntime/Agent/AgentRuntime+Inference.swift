@@ -13,6 +13,7 @@ extension AgentRuntime {
     let prepared = try await prepareInitialContext(request, model: model, tools: tools)
     var conversation = prepared.messages
     var turns: [InferenceTurn] = []
+    var previousProviderResponseID: String?
     var seenToolCallIDs = try initialToolCallIDs(in: conversation)
     var seenAuthorizationRequestIDs = Set<AuthorizationRequestID>()
     var totalToolCalls = 0
@@ -34,7 +35,20 @@ extension AgentRuntime {
       }
       try validateConversationSize(conversation)
       if !turns.isEmpty {
-        try validateContinuingContext(conversation, request: request, model: model, tools: tools)
+        let compacted = try await prepareActiveContext(
+          conversation, protectedCount: prepared.messages.count, request: request,
+          model: model, tools: tools,
+          remainingReportedTokens: configuration.budget.maxReportedTokens - totalReportedTokens)
+        if let compacted {
+          conversation = compacted.messages
+          totalReportedTokens = try addReportedTokens(
+            compacted.reportedTokens, to: totalReportedTokens)
+          previousProviderResponseID = nil
+          guard totalReportedTokens < configuration.budget.maxReportedTokens else {
+            throw AgentRuntimeError.budgetExceeded(
+              "Summary consumed the remaining reported token budget.")
+          }
+        }
       }
       let allowedToolNames: Set<String>
       switch effectiveToolChoice {
@@ -49,7 +63,7 @@ extension AgentRuntime {
       let inferenceRequest = InferenceRequest(
         providerID: inferenceProvider.descriptor.id,
         modelID: request.modelID,
-        previousProviderResponseID: turns.last?.providerResponseID,
+        previousProviderResponseID: previousProviderResponseID,
         messages: conversation,
         tools: tools,
         toolChoice: effectiveToolChoice,
@@ -122,6 +136,7 @@ extension AgentRuntime {
       }
 
       let output = try accumulator.finish()
+      previousProviderResponseID = output.providerResponseID
       switch effectiveToolChoice {
       case .required, .named:
         guard output.stopReason == .toolCalls else {

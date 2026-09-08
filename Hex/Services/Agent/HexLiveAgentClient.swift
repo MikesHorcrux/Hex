@@ -219,6 +219,12 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     }
   }
 
+  func conversationStorage(_ request: ConversationStorageRequest) async throws
+    -> ConversationStorageRequest.Response
+  {
+    try await connectedGatewayAdapter().client.conversationStorage(request)
+  }
+
   func readRunHistory(_ request: GatewayRunHistoryRequest) async throws -> GatewayRunHistoryPage {
     do {
       return try await connectedGatewayAdapter().readRunHistory(request)
@@ -626,7 +632,8 @@ actor HexLiveAgentClient: HexAgentClient, HexResidentGatewayControlling, HexHear
     )
     let journalURL = try journalDatabaseURL()
     let compositionConfiguration = HexGatewayCompositionConfiguration(
-      journalConfiguration: SQLiteAgentEventJournalConfiguration(databaseURL: journalURL),
+      journalConfiguration: SQLiteAgentEventJournalConfiguration(
+        databaseURL: journalURL, integrityPolicy: .incremental),
       inferenceProvider: provider,
       toolExecutor: toolExecutor,
       authorizationProvider: authorizationProvider,

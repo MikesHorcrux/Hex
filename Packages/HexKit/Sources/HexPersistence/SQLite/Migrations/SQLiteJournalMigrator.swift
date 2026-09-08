@@ -1,7 +1,7 @@
 import Foundation
 
 enum SQLiteJournalMigrator {
-  static let currentSchemaVersion = 3
+  static let currentSchemaVersion = 4
   static let versionOneRunsTableSQL =
     """
     CREATE TABLE runs (
@@ -217,6 +217,7 @@ enum SQLiteJournalMigrator {
         try connection.execute("PRAGMA user_version = 2")
         try createVersionThree(connection: connection, configuration: configuration)
         try connection.execute("PRAGMA user_version = 3")
+        try createVersionFour(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -232,6 +233,7 @@ enum SQLiteJournalMigrator {
         try connection.execute("PRAGMA user_version = 2")
         try createVersionThree(connection: connection, configuration: configuration)
         try connection.execute("PRAGMA user_version = 3")
+        try createVersionFour(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -245,10 +247,22 @@ enum SQLiteJournalMigrator {
       ) {
         try createVersionThree(connection: connection, configuration: configuration)
         try connection.execute("PRAGMA user_version = 3")
+        try createVersionFour(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
         )
+        try validateMigratedData()
+      }
+    case 3:
+      try connection.withImmediateTransaction(beforeCommit: beforeCommit, afterCommit: afterCommit)
+      {
+        try validateSchemaObjects(
+          runsSQL: runsTableSQL, eventRecordsSQL: eventRecordsTableSQL,
+          checkpointsSQL: checkpointsTableSQL, connection: connection,
+          maximumTextBytes: configuration.maximumTextBytes)
+        try createVersionFour(connection: connection)
+        try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
         try validateMigratedData()
       }
     default:

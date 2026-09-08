@@ -216,6 +216,13 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         _ = try currentSession(for: envelope)
         return try successResponse(operation: .recoverRun, value: response)
 
+      case .conversationStorage:
+        let sessionID = try currentSession(for: envelope)
+        let request = try codec.decode(ConversationStorageRequest.self, from: envelope.body)
+        let response = try await service.conversationStorage(request, sessionID: sessionID)
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .conversationStorage, value: response)
+
       case .readRunHistory:
         let sessionID = try currentSession(for: envelope)
         let request = try codec.decode(GatewayRunHistoryRequest.self, from: envelope.body)
@@ -527,7 +534,8 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
             message: "The XPC handshake envelope contains connection-only fields."
           )
         }
-      case .startRun, .cancelRun, .recoverRun, .readRunHistory, .readArtifact, .availableModels,
+      case .startRun, .cancelRun, .recoverRun, .conversationStorage, .readRunHistory, .readArtifact,
+        .availableModels,
         .toolServerHealth, .refreshToolServer,
         .submitAuthorizationDecision, .approvalInbox, .revokeSessionGrant, .folderAccessStatus,
         .accessibilityPermissionStatus,

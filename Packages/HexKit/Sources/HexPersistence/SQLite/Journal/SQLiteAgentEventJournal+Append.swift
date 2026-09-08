@@ -36,6 +36,7 @@ extension SQLiteAgentEventJournal {
         with: updatedState.usage,
         configuration: configuration
       )
+      try saveRunValidation(updatedState, record: record, connection: connection)
       try validatePhysicalDatabaseSize(connection: connection)
       return (record: record, integrityUsage: updatedUsage, state: updatedState)
     }
@@ -45,7 +46,7 @@ extension SQLiteAgentEventJournal {
     return appended.record
   }
 
-  private func validateAppendedRecord(
+  func validateAppendedRecord(
     _ expectedRecord: AgentEventRecord,
     connection: SQLiteConnection
   ) throws -> (record: AgentEventRecord, byteCount: Int) {
