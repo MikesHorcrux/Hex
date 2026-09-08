@@ -10,7 +10,9 @@ extension HexGatewayService {
     try Task.checkCancellation()
     if let sessionID { try requireSession(sessionID) }
     try requireAcceptingAdmissions()
-    guard activeRunID == nil, liveDriverTasks.isEmpty, toolMaintenance == nil else {
+    guard activeRunID == nil, liveDriverTasks.isEmpty, toolMaintenance == nil,
+      taskDispatchReservation == nil
+    else {
       throw toolMaintenanceFailure()
     }
     let id = UUID()
@@ -20,6 +22,7 @@ extension HexGatewayService {
       if toolMaintenance?.id == id {
         toolMaintenance = nil
         resumeDrainWaitersIfIdle()
+        wakeTaskScheduler()
       }
     }
     return try await withTaskCancellationHandler {

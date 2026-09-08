@@ -8,6 +8,14 @@ extension HexGatewayService {
     let sessionID = try codec.roundTrip(untrustedSessionID)
     let request = try codec.roundTrip(untrustedRequest)
     try requireSession(sessionID)
+    if let reserved = taskDispatchReservation {
+      return GatewayStartRunResponse(
+        runID: request.runID, disposition: .busy(activeRunID: reserved))
+    }
+    return try startAdmittedRun(request)
+  }
+
+  func startAdmittedRun(_ request: GatewayStartRunRequest) throws -> GatewayStartRunResponse {
     try requireAcceptingAdmissions()
     try requireValidGatewayIdentity(
       request.runID.rawValue,

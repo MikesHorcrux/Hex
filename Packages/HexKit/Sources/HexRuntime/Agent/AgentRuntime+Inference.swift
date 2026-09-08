@@ -25,7 +25,7 @@ extension AgentRuntime {
       && model.capabilities.contains(.parallelToolCalling)
 
     while true {
-      try Task.checkCancellation()
+      try checkBoundaryStop(request.runID)
       guard totalReportedTokens < configuration.budget.maxReportedTokens else {
         throw AgentRuntimeError.budgetExceeded(
           "Reported token budget exhausted before the next inference request.")
@@ -193,6 +193,7 @@ extension AgentRuntime {
         for call in output.toolCalls {
           seenToolCallIDs.insert(call.id)
         }
+        try checkBoundaryStop(request.runID)
         let toolOutput = try await processToolBatch(
           output.toolCalls,
           runID: request.runID,

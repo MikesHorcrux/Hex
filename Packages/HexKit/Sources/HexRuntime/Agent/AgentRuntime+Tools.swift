@@ -93,7 +93,7 @@ extension AgentRuntime {
       }
       let decision: AuthorizationDecision
       do {
-        decision = try await authorizationProvider.authorize(request)
+        decision = try await authorizeAtBoundary(request)
       } catch is CancellationError {
         throw CancellationError()
       } catch {
@@ -127,6 +127,7 @@ extension AgentRuntime {
     messages.reserveCapacity(calls.count)
 
     for index in calls.indices {
+      try checkBoundaryStop(runID)
       let call = calls[index]
       let decision = decisions[index]
       let context = executionContexts[index]

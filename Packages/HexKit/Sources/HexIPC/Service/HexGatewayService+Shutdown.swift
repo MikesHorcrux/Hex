@@ -6,6 +6,9 @@ extension HexGatewayService {
   /// inspect and preserve the durable outcomes of cancelled work.
   public func beginShutdown() {
     admissionsClosed = true
+    taskWake?.cancel()
+    taskWake = nil
+    taskPump?.cancel()
     for runID in Array(runs.keys) {
       guard var state = runs[runID], state.phase != .terminal else { continue }
       state.phase = .cancelling
@@ -20,7 +23,7 @@ extension HexGatewayService {
   /// and sessions intact; the owner must keep shared storage/resources open and retry this drain.
   public func drainRuns(timeout: Duration = .seconds(10)) async throws {
     beginShutdown()
-    guard !liveDriverTasks.isEmpty || toolMaintenance != nil else { return }
+    guard !liveDriverTasks.isEmpty || toolMaintenance != nil || taskPump != nil else { return }
     guard timeout > .zero else { throw drainTimeoutFailure() }
 
     let waiterID = UUID()
@@ -70,10 +73,11 @@ extension HexGatewayService {
   func driverTaskExited(_ invocationID: GatewayRunInvocationID) {
     guard liveDriverTasks.removeValue(forKey: invocationID) != nil else { return }
     resumeDrainWaitersIfIdle()
+    wakeTaskScheduler()
   }
 
   func resumeDrainWaitersIfIdle() {
-    guard liveDriverTasks.isEmpty, toolMaintenance == nil else { return }
+    guard liveDriverTasks.isEmpty, toolMaintenance == nil, taskPump == nil else { return }
     let completed = drainWaiters
     drainWaiters.removeAll()
     for waiter in completed.values {

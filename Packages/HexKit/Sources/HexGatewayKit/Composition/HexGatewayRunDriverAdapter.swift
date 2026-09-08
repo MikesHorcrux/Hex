@@ -9,6 +9,7 @@ import HexRuntime
 public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
   public let runtime: AgentRuntime
 
+  private let taskToolExecutor: HexTaskGuardedToolExecutor
   private let journal: HexGatewayEventJournal
   private let operatingContractMessage: Message
   private let personalityMessages: [Message]
@@ -38,10 +39,14 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       knowledge: selfKnowledge, provider: inferenceProvider.descriptor
     )
     self.selfKnowledgeService = selfKnowledgeService
+    let taskToolExecutor = HexTaskGuardedToolExecutor(
+      base: toolExecutor, effects: journal as? any AgentTaskEffectReading)
+    self.taskToolExecutor = taskToolExecutor
     self.runtime = AgentRuntime(
       inferenceProvider: inferenceProvider,
       toolExecutor: HexSelfInspectionToolExecutor(
-        service: selfKnowledgeService, base: toolExecutor),
+        service: selfKnowledgeService,
+        base: taskToolExecutor),
       authorizationProvider: authorizationProvider,
       journal: eventJournal,
       configuration: runtimeConfiguration,
@@ -103,13 +108,16 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
         authorizationMode: request.authorizationMode
       )
       _ = try await runtime.run(agentRequest)
+      await taskToolExecutor.finishRun(request.runID)
       await selfKnowledgeService.endRun(request.runID)
       await journal.removeEmitter(for: request.runID)
     } catch let error as AgentRuntimeError {
+      await taskToolExecutor.finishRun(request.runID)
       await selfKnowledgeService.endRun(request.runID)
       await journal.removeEmitter(for: request.runID)
       throw HexGatewayRunFailureMapper.map(error)
     } catch {
+      await taskToolExecutor.finishRun(request.runID)
       await selfKnowledgeService.endRun(request.runID)
       await journal.removeEmitter(for: request.runID)
       throw error
