@@ -50,7 +50,7 @@ an actionable limit. Compaction does not reset run turn, tool, output-byte, or r
 
 ## App archive
 
-The conversation store defaults to a 4-MiB archive budget with a 16-MiB hard maximum, up to 64
+The conversation store defaults to a 16-MiB archive budget and hard maximum, up to 64
 conversations and bounded transcript items. It is separate from the resident journal. Retained
 history, model context and visible transcript are not the same budget.
 

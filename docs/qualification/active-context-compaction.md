@@ -85,8 +85,39 @@ After the provider fix, the Debug build passed with the same probe wrapper
 (`/tmp/hex-context-live-build.log`), and the existing package suite passed all 1,325 tests
 (`/tmp/hex-context-live-package.log`). No additional tests were written during live qualification.
 
+## Archive-capacity correction and live continuation
+
+The store's live default now uses its already supported 16-MiB archive capacity, up from
+4 MiB. This is a bounded capacity increase, not unlimited history or automatic evidence eviction.
+The JSON format, atomic replacement, validation, and original records are unchanged.
+
+Rebuilt and reopened the same Debug app. In the existing 28-file conversation, the previously
+rejected prompt completed at 09:12 America/Chicago (run `71F1CB70`). Without any tools,
+Hex returned the exact markers and units for files 01, 09, 18, 27, and 28 and total 6,986.
+Switched conversations, quit, reopened, and selected the audit conversation: that new exchange
+was restored. A second no-tools prompt at 09:13 (run `DB22294B`) correctly returned the
+file 28 and 01 markers and their units difference, 459. Both runs displayed Completed successfully
+with no archive-capacity banner. This resolves the reproduced 4-MiB admission failure.
+No conversation was deleted and no archive was manually edited.
+
+Verification commands from the feature worktree:
+
+```sh
+./script/lint.sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path Packages/HexKit --no-parallel
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project Hex.xcodeproj -scheme Hex -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/hex-context-derived -jobs 2 CC=/tmp/hex-context-clang build
+```
+
+All passed (1,325 package tests). An initial concurrent package run had timing/XPC failures;
+the serial rerun passed. Logs: `/tmp/hex-archive-lint.log`,
+`/tmp/hex-archive-package-serial.log`, `/tmp/hex-archive-build.log`.
+This follow-up changes `AgentConversationStore.swift`, this report, and `docs/reference/limits.md`.
+The 16-MiB limit still applies to total saved history; indefinite retention requires a different
+storage design. Integration and the other model/media qualification limitations above remain.
+
 ## Exact changed files
 
+- `Hex/Models/Agent/AgentConversationStore.swift`
 - `Hex/Models/Agent/AgentConversationContextProjection.swift`
 - `Hex/Models/Agent/AgentWorkspaceModel+History.swift`
 - `HexTests/Agent/AgentConversationActiveCompactionTests.swift`
