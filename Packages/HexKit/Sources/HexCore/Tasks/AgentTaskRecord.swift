@@ -15,6 +15,10 @@ public struct AgentTaskRecord: Codable, Equatable, Sendable, Identifiable {
     }
   }
   public let id: UUID
+  /// Stable parent conversation; nil is decoded only from pre-conversation task records.
+  public var conversationID: UUID?
+  public var predecessorID: UUID?
+  public var userMessage: Message?
   public let title: String
   public let createdAt: Date
   public var updatedAt: Date
@@ -53,6 +57,7 @@ public struct AgentTaskRecord: Codable, Equatable, Sendable, Identifiable {
   public var summary: Self {
     var copy = self
     copy.request = Data()
+    copy.userMessage = nil
     copy.instructions = []
     copy.reconciliation = nil
     return copy

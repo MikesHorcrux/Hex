@@ -6,6 +6,8 @@ struct AgentConversationRowView: View {
   var bubbleWidth: CGFloat?
   var onOpenArtifact: (ArtifactReference) -> Void = { _ in }
 
+  var collapsesTools = false
+
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
       if item.role == .user {
@@ -36,9 +38,13 @@ struct AgentConversationRowView: View {
             .foregroundStyle(HexBrandPalette.mutedInk)
             .textSelection(.enabled)
         } else if item.role == .tool {
-          Text(item.text)
-            .font(.system(.callout, design: .monospaced))
-            .textSelection(.enabled)
+          if collapsesTools {
+            DisclosureGroup(item.text.hasPrefix("Started ") ? item.text : "Tool result") {
+              Text(item.text).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+            }
+          } else {
+            Text(item.text).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+          }
         } else if item.isStreaming {
           AgentStreamingTextView(text: item.text.isEmpty ? "…" : item.text)
             .equatable()

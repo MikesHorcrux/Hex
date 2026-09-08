@@ -55,6 +55,11 @@ extension HexGatewayService {
           continue
         }
         guard summary.phase == .queued || summary.phase == .waiting else { continue }
+        if let previous = summary.predecessorID {
+          guard let prior = try await taskStore.readTask(previous), prior.phase.isTerminal else {
+            continue
+          }
+        }
         if let date = summary.notBefore, date > Date() {
           wakeDate = min(wakeDate ?? date, date)
         } else if candidate == nil || summary.createdAt < (candidate?.createdAt ?? .distantFuture) {
@@ -71,6 +76,18 @@ extension HexGatewayService {
       record.phase == .queued || record.phase == .waiting
     {
       var request = try codec.decode(GatewayStartRunRequest.self, from: record.request)
+      if record.attemptCount == 0, let previous = record.predecessorID {
+        guard let prior = try await taskStore.readTask(previous), prior.phase.isTerminal,
+          prior.conversationID == record.conversationID
+        else {
+          throw taskFailure("The preceding conversation work has not reached a safe boundary.")
+        }
+        let context = try await conversationContext(after: prior)
+        request = continuationRequest(
+          request,
+          messages: context.initialMessages + request.initialMessages,
+          artifacts: context.availableArtifacts)
+      }
       if !record.instructions.isEmpty {
         request = continuationRequest(
           request,

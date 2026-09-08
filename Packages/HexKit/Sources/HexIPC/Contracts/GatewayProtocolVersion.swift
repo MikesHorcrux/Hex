@@ -8,8 +8,9 @@ public struct GatewayProtocolVersion: Codable, Comparable, Sendable {
   /// Version 1.15 requires custom stdio identity and actionable MCP authentication status.
   /// Version 1.16 requires resident conversation storage and revision-checked paged history.
   /// Version 1.17 requires durable task admission, recovery and ordered controls.
-  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 17)
-  public static let current = GatewayProtocolVersion(major: 1, minor: 17)
+  /// Version 1.18 links durable execution to stable conversations and a resident-owned timeline.
+  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 18)
+  public static let current = GatewayProtocolVersion(major: 1, minor: 18)
 
   public let major: UInt16
   public let minor: UInt16

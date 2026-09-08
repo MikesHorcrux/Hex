@@ -13,6 +13,18 @@ extension HexGatewayService {
     }
     var response = GatewayTaskRequest.Response()
     switch request {
+    case .adoptLegacyConversation(let id):
+      try requireAcceptingAdmissions()
+      response.tasks = try await adoptLegacyConversation(id)
+      wakeTaskScheduler()
+    case .conversationTasks(let id, let before, let limit):
+      response.tasks = try await taskStore.conversationTasks(id, before: before, limit: limit)
+      response.activeTask = try await taskStore.activeConversationTask(id)
+      if response.tasks.count == limit { response.next = response.tasks.last?.id }
+    case .conversationHistory(let id, let before, let limit):
+      let page = try await taskStore.conversationTimeline(id, before: before, limit: limit)
+      response.timeline = page.entries
+      response.before = page.before
     case .list(let after, let limit):
       guard (1...20).contains(limit) else { throw taskFailure("Invalid task page size.") }
       response.tasks = try await taskStore.listTasks(
@@ -22,7 +34,18 @@ extension HexGatewayService {
       response.attempts = try await taskStore.taskAttempts(id, before: before, limit: limit)
     case .read(let id):
       if let record = try await taskStore.readTask(id) { response.tasks = [record.summary] }
-    case .submit(let id, let title, let run):
+    case .submit(let id, let title, let run),
+      .submitConversation(let id, _, _, let title, let run):
+      let conversationID: UUID
+      let predecessorID: UUID?
+      if case .submitConversation(_, let parent, let previous, _, _) = request {
+        conversationID = parent
+        predecessorID = previous
+      } else {
+        conversationID = id
+        predecessorID = nil
+      }
+      try requireValidGatewayIdentity(conversationID, message: "Invalid conversation identity.")
       try requireAcceptingAdmissions()
       try requireValidGatewayIdentity(id, message: "Invalid task identity.")
       try requireValidGatewayIdentity(run.runID.rawValue, message: "Invalid attempt identity.")
@@ -38,7 +61,9 @@ extension HexGatewayService {
       }
       let hash = Data(SHA256.hash(data: payload))
       if let old = try await taskStore.readTask(id) {
-        guard old.admissionHash == hash, old.title == title else {
+        guard old.admissionHash == hash, old.title == title,
+          (old.conversationID ?? old.id) == conversationID, old.predecessorID == predecessorID
+        else {
           throw taskFailure("That task identity already belongs to different work.")
         }
         response.tasks = [old.summary]
@@ -48,10 +73,27 @@ extension HexGatewayService {
           initialMessages: run.initialMessages, options: run.options, toolChoice: run.toolChoice,
           workingDirectory: run.workingDirectory, availableArtifacts: run.availableArtifacts,
           authorizationMode: run.authorizationMode)
-        let record = AgentTaskRecord(
+        var record = AgentTaskRecord(
           id: id, title: title,
           request: try encoder.encode(ownedRequest), admissionHash: hash)
-        response.tasks = [try await taskStore.saveTask(record).summary]
+        record.conversationID = conversationID
+        record.predecessorID = predecessorID
+        record.userMessage = run.initialMessages.last
+        guard record.userMessage?.role == .user else {
+          throw taskFailure("A user message is required.")
+        }
+        if predecessorID != nil, run.initialMessages.count != 1 {
+          throw taskFailure("Follow-up context is assembled by the resident.")
+        }
+        do {
+          response.tasks = [try await taskStore.saveTask(record).summary]
+        } catch AgentTaskStorageError.revisionConflict {
+          throw GatewayFailure(
+            code: .conversationChanged,
+            message:
+              "Another message changed this conversation. Your draft was retained; send it again with the latest context."
+          )
+        }
       }
       wakeTaskScheduler()
     case .control(let id, let revision, let operationID, let action):
@@ -70,8 +112,11 @@ extension HexGatewayService {
         break
       }
       guard record.revision == revision, !record.phase.isTerminal else {
-        throw taskFailure(
-          "The task changed. Refresh its current state before applying this control.")
+        throw GatewayFailure(
+          code: .conversationChanged,
+          message:
+            "The work changed before this message was applied. Your draft was retained; send it again."
+        )
       }
       switch action {
       case .pause:
@@ -97,9 +142,13 @@ extension HexGatewayService {
             "Reconcile the blocked task or wait for pending steering to be applied.")
         }
         record.instructions.append(.init(id: operationID, text: text))
-        record.phase = record.attemptPending ? .waiting : .queued
+        record.phase =
+          record.phase == .paused ? .paused : (record.attemptPending ? .waiting : .queued)
         record.explanation =
-          record.attemptPending ? "Steering saved; waiting for dispatched work" : "Steering queued"
+          record.phase == .paused
+          ? "Message saved; resume when ready"
+          : (record.attemptPending
+            ? "Steering saved; waiting for dispatched work" : "Steering queued")
       case .reconcile(let text):
         try validateTaskInstruction(text)
         guard record.phase == .blocked, !record.attemptPending else {
@@ -114,7 +163,14 @@ extension HexGatewayService {
       }
       record.lastControlID = operationID
       record.lastControlHash = hash
-      let saved = try await taskStore.saveTask(record)
+      let saved: AgentTaskRecord
+      do { saved = try await taskStore.saveTask(record) } catch AgentTaskStorageError
+        .revisionConflict
+      {
+        throw GatewayFailure(
+          code: .conversationChanged,
+          message: "The work changed before this control was applied. Refresh and try again.")
+      }
       response.tasks = [saved.summary]
       if saved.attemptPending, let runID = saved.runID,
         activeRunID == runID || taskDispatchReservation == runID,
@@ -131,7 +187,7 @@ extension HexGatewayService {
   }
 
   func taskFailure(_ message: String) -> GatewayFailure {
-    GatewayFailure(code: .recoveryUnavailable, message: message)
+    GatewayFailure(code: .taskRequestRejected, message: message)
   }
 
   private func validateTaskInstruction(_ text: String) throws {

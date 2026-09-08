@@ -1,0 +1,307 @@
+{
+  "checked_at": "2026-09-08T17:15:55.054762-05:00",
+  "database_open_mode": "read-only",
+  "schema_version": 6,
+  "integrity": "ok",
+  "foreign_key_violations": [],
+  "original_conversation_entries": {
+    "original_count": 1934,
+    "preserved_count": 1934,
+    "mismatched_ids": []
+  },
+  "original_conversation_document_states": {
+    "original_count": 19,
+    "preserved_count": 19,
+    "mismatched_ids": []
+  },
+  "original_journal_events": {
+    "original_count": 44212,
+    "preserved_count": 44212,
+    "mismatched_ids": []
+  },
+  "original_standalone_tasks": [
+    {
+      "task_id": "24E2D17C-8122-4548-9306-0E05D6D36AA6",
+      "conversation_id": "24E2D17C-8122-4548-9306-0E05D6D36AA6"
+    },
+    {
+      "task_id": "511772D6-7D90-4325-8BE9-84E55C37DBBC",
+      "conversation_id": "511772D6-7D90-4325-8BE9-84E55C37DBBC"
+    },
+    {
+      "task_id": "7BB185A1-CA53-4827-91B1-83A98810B909",
+      "conversation_id": "7BB185A1-CA53-4827-91B1-83A98810B909"
+    },
+    {
+      "task_id": "8F07369E-9B5E-4B02-B61D-AEE14228863E",
+      "conversation_id": "8F07369E-9B5E-4B02-B61D-AEE14228863E"
+    },
+    {
+      "task_id": "92935D1C-7653-4A92-BF69-72010519D394",
+      "conversation_id": "92935D1C-7653-4A92-BF69-72010519D394"
+    },
+    {
+      "task_id": "A378A803-E13B-42B3-8073-5B005537702D",
+      "conversation_id": "A378A803-E13B-42B3-8073-5B005537702D"
+    }
+  ],
+  "conversation_checks": [
+    {
+      "conversation_id": "A1A131D9-3261-41DC-80D1-7970F00F6CAF",
+      "tasks": [
+        {
+          "task_id": "4CA0009C-096F-4F31-A601-A26CE9A4576C",
+          "phase": "completed",
+          "attempt_count": 1,
+          "predecessor_id": null,
+          "event_counts": {
+            "inference_event": 7,
+            "inference_requested": 1,
+            "message_appended": 2,
+            "run_completed": 1,
+            "run_started": 1
+          }
+        },
+        {
+          "task_id": "DEABB826-9A74-440D-988E-59E4C76817C8",
+          "phase": "completed",
+          "attempt_count": 1,
+          "predecessor_id": "4CA0009C-096F-4F31-A601-A26CE9A4576C",
+          "event_counts": {
+            "inference_event": 14,
+            "inference_requested": 1,
+            "message_appended": 4,
+            "run_completed": 1,
+            "run_started": 1
+          }
+        },
+        {
+          "task_id": "4E4CEE02-EC7D-491D-9CD6-B44B100C12E9",
+          "phase": "completed",
+          "attempt_count": 2,
+          "predecessor_id": "DEABB826-9A74-440D-988E-59E4C76817C8",
+          "event_counts": {
+            "authorization_decided": 1,
+            "authorization_requested": 1,
+            "inference_event": 24,
+            "inference_requested": 2,
+            "message_appended": 16,
+            "run_cancelled": 1,
+            "run_completed": 1,
+            "run_started": 2,
+            "tool_finished": 1,
+            "tool_started": 1
+          }
+        },
+        {
+          "task_id": "C9E2313B-9AD3-4F09-983F-6CD14C426C16",
+          "phase": "completed",
+          "attempt_count": 1,
+          "predecessor_id": "4E4CEE02-EC7D-491D-9CD6-B44B100C12E9",
+          "event_counts": {
+            "inference_event": 25,
+            "inference_requested": 1,
+            "message_appended": 11,
+            "run_completed": 1,
+            "run_started": 1
+          }
+        }
+      ]
+    },
+    {
+      "conversation_id": "3D457A28-49D6-42F0-9E9F-C1F4BF810D29",
+      "tasks": [
+        {
+          "task_id": "2CD66EE1-C843-4AAA-96C2-2EFE1383EE64",
+          "phase": "completed",
+          "attempt_count": 1,
+          "predecessor_id": null,
+          "event_counts": {
+            "inference_event": 29,
+            "inference_requested": 1,
+            "message_appended": 4,
+            "run_completed": 1,
+            "run_started": 1
+          }
+        },
+        {
+          "task_id": "0817FC3F-9C7E-4801-8A5B-ED1995D5D8F8",
+          "phase": "completed",
+          "attempt_count": 1,
+          "predecessor_id": "2CD66EE1-C843-4AAA-96C2-2EFE1383EE64",
+          "event_counts": {
+            "inference_event": 29,
+            "inference_requested": 1,
+            "message_appended": 6,
+            "run_completed": 1,
+            "run_started": 1
+          }
+        }
+      ]
+    }
+  ],
+  "changed_files": [
+    "Hex/Models/Agent/AgentChatWorkspaceModel+Sending.swift",
+    "Hex/Models/Agent/AgentChatWorkspaceModel+Timeline.swift",
+    "Hex/Models/Agent/AgentChatWorkspaceModel.swift",
+    "Hex/Models/Agent/AgentSQLiteConversationStore.swift",
+    "Hex/Models/Agent/AgentTaskWorkspaceModel.swift",
+    "Hex/Models/Agent/AgentWorkspaceModel+Conversations.swift",
+    "Hex/Models/Agent/AgentWorkspaceModel.swift",
+    "Hex/Views/Agent/AgentChatComposerView.swift",
+    "Hex/Views/Agent/AgentChatSidebarView.swift",
+    "Hex/Views/Agent/AgentChatStatusView.swift",
+    "Hex/Views/Agent/AgentChatWorkspaceView.swift",
+    "Hex/Views/Agent/AgentConversationRowView.swift",
+    "Hex/Views/Agent/AgentConversationView.swift",
+    "Hex/Views/Agent/AgentExecutionDetailsView.swift",
+    "Hex/Views/Agent/AgentLegacyWorkspaceView.swift",
+    "Hex/Views/Agent/AgentTaskComposerView.swift",
+    "Hex/Views/Agent/AgentTaskListView.swift",
+    "Hex/Views/Agent/AgentTasksView.swift",
+    "Hex/Views/Agent/AgentWorkspaceView.swift",
+    "HexTests/AgentChatWorkspaceModelTests.swift",
+    "HexTests/AgentTaskWorkspaceModelTests.swift",
+    "Packages/HexKit/Sources/HexCore/Conversations/ConversationTimelineEntry.swift",
+    "Packages/HexKit/Sources/HexCore/Conversations/ConversationTimelinePage.swift",
+    "Packages/HexKit/Sources/HexCore/Tasks/AgentTaskRecord.swift",
+    "Packages/HexKit/Sources/HexCore/Tasks/AgentTaskStorage.swift",
+    "Packages/HexKit/Sources/HexIPC/Contracts/GatewayFailureCode.swift",
+    "Packages/HexKit/Sources/HexIPC/Contracts/GatewayProtocolVersion.swift",
+    "Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+ConversationContext.swift",
+    "Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+LegacyConversation.swift",
+    "Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+TaskRecovery.swift",
+    "Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+TaskScheduler.swift",
+    "Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+Tasks.swift",
+    "Packages/HexKit/Sources/HexIPC/Tasks/GatewayTaskRequest.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteAgentEventJournal+Append.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteAgentEventJournal+ConversationTasks.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteAgentEventJournal+ConversationTimeline.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteAgentEventJournal+Tasks.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteConversationTimeline.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Migrations/SQLiteJournalMigrator+ConversationTasks.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Migrations/SQLiteJournalMigrator+Validation.swift",
+    "Packages/HexKit/Sources/HexPersistence/SQLite/Migrations/SQLiteJournalMigrator.swift",
+    "Packages/HexKit/Tests/HexGatewayTests/Composition/HexConversationTurnTests.swift",
+    "Packages/HexKit/Tests/HexIPCTests/Wire/GatewayImplementedVersionTests.swift",
+    "Packages/HexKit/Tests/HexPersistenceTests/SQLite/Journal/SQLiteConversationTaskTests.swift",
+    "Packages/HexKit/Tests/HexPersistenceTests/SQLite/Journal/SQLiteTaskStorageTests.swift",
+    "Packages/HexKit/Tests/HexPersistenceTests/SQLite/Migrations/SQLiteConversationTaskMigrationTests.swift",
+    "Packages/HexKit/Tests/HexPersistenceTests/SQLite/Migrations/SQLiteJournalMigrationTests.swift",
+    "docs/architecture/durable-tasks.md",
+    "docs/architecture/unified-conversations.md",
+    "docs/verification/unified-conversations-2026-09-08.md",
+    "docs/verification/unified-conversations-2026-09-08.json"
+  ],
+  "live_checks": [
+    {
+      "check": "contextual_follow_up",
+      "result": "passed",
+      "conversation_id": "A1A131D9-3261-41DC-80D1-7970F00F6CAF",
+      "observed_answer": "COBALT-42-UNIFIED-0908"
+    },
+    {
+      "check": "pause_during_tool",
+      "result": "passed",
+      "observed_states": [
+        "Pausing after dispatched work is recorded",
+        "Paused at a saved boundary"
+      ]
+    },
+    {
+      "check": "steer_while_paused",
+      "result": "passed",
+      "observed_state": "Message saved; resume when ready"
+    },
+    {
+      "check": "queued_follow_up_survives_ui_and_resident_restart",
+      "result": "passed",
+      "observed_answer": "\u201cCOBALT-42-UNIFIED-0908 STEERING_ACCEPTED\u201d FOLLOWUP_CONTEXT_OK"
+    },
+    {
+      "check": "no_tool_repetition_across_pause_resume",
+      "result": "passed",
+      "task_id": "4E4CEE02-EC7D-491D-9CD6-B44B100C12E9",
+      "attempt_count": 2,
+      "tool_started_count": 1
+    },
+    {
+      "check": "per_conversation_draft_isolation",
+      "result": "passed",
+      "observed_draft": "UNSENT_COBALT_DRAFT",
+      "cleanup": "Cleared through the composer without sending"
+    },
+    {
+      "check": "legacy_checkpoint_adoption_and_context",
+      "result": "passed",
+      "conversation_id": "3D457A28-49D6-42F0-9E9F-C1F4BF810D29",
+      "adopted_original_run_id": "2CD66EE1-C843-4AAA-96C2-2EFE1383EE64",
+      "observed_answer": "You asked for a live check greeting, and I replied \u201cHello!\u201d Now you want a two-sentence summary without tools."
+    },
+    {
+      "check": "execution_inspector_keeps_selected_request",
+      "result": "passed",
+      "observed_request_time": "4:45:34 PM",
+      "observed_attempt": "Attempt 1",
+      "receipt": {
+        "exit_code": 0,
+        "duration_milliseconds": 20183
+      }
+    },
+    {
+      "check": "long_legacy_history_earlier_and_latest_pages",
+      "result": "passed",
+      "observed_earlier_time": "12:55 PM",
+      "observed_latest_time": "1:56 PM",
+      "refresh_fix": "Visible page is replaced only after legacy rows finish loading"
+    },
+    {
+      "check": "rename_archive_and_restore",
+      "result": "passed",
+      "title": "Unified conversation verification",
+      "archived_composer_disabled": true,
+      "restored_composer_enabled": true
+    },
+    {
+      "check": "final_built_app_context",
+      "result": "passed",
+      "observed_answer": "COBALT-42-UNIFIED-0908 UNIFIED_FINAL_OK"
+    }
+  ],
+  "verification": {
+    "package": {
+      "tests": 1347,
+      "suites": 263,
+      "clean_build": true,
+      "passed": true,
+      "log": "/tmp/hex-unified-clean-package-tests.log",
+      "log_sha256": "5f7e24303c45d163c7dd4ce9e2b01d1be6b32260c8bcca7cd728645057cf6fd9"
+    },
+    "hosted": {
+      "unique_cases": 7,
+      "passed": true,
+      "log": "/tmp/hex-unified-final-hosted-tests.log",
+      "log_sha256": "4316fd4cbd73205da252c5f81e4fd980c81bc8a37edae2885dad3af094da0177"
+    },
+    "lint": {
+      "swift_files": 1372,
+      "passed": true,
+      "log": "/tmp/hex-unified-lint.log",
+      "log_sha256": "fd61d10315d12da7f765c0f0564b848ae9f7865a83b912e16655db1ec92894ad"
+    }
+  },
+  "source_commit": "b080aba4d498ec8eacc5fa30a03c61ae2c2a3966",
+  "source_subtrees": {
+    "Hex": "49f3a0ec82e48bb99ca7e6fc0c11e9d6c1471da2",
+    "HexTests": "3856ad825f1c1c99d56348badcab1e4896e56451",
+    "Packages/HexKit": "1802dfa88081999443b2f1f06623127d0509fa24"
+  },
+  "build": {
+    "app_path": "/private/tmp/hex-context-derived/Build/Products/Debug/Hex.app",
+    "app_debug_dylib_uuid": "28821A43-992D-3B91-BF3D-A89E0ABBFA0C",
+    "resident_build_prefix": "C4FA785E",
+    "protocol": "1.18",
+    "observed_session_prefix": "7EAF32B7"
+  },
+  "remaining_acceptance_blockers": []
+}

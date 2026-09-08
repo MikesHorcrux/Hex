@@ -197,6 +197,7 @@ extension SQLiteJournalMigrator {
     let additions =
       (version >= 4 ? conversationSchemaObjects : [])
       + (version >= 5 ? taskSchemaObjects : [])
+      + (version >= 6 ? conversationTaskSchemaObjects : [])
     let count = 8 + additions.count
     let statement = try connection.prepare(
       "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master LIMIT \(count + 1)"
@@ -327,6 +328,8 @@ extension SQLiteJournalMigrator {
       "agent_task_effects": 4,
       "agent_tasks": 4,
       "agent_task_attempts": 3,
+      "conversation_tasks": 3,
+      "conversation_timeline": 4,
     ]
     let statement = try connection.prepare("PRAGMA table_list")
     var validatedNames: Set<String> = []

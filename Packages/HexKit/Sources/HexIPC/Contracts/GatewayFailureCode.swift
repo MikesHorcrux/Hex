@@ -1,4 +1,7 @@
 public enum GatewayFailureCode: String, Codable, Equatable, Sendable {
+  case conversationChanged
+  case taskRequestRejected
+
   case incompatibleProtocolVersion
   case malformedVersionRange
   case notConnected

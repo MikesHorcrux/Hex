@@ -10,6 +10,7 @@ struct AgentConversationView: View {
   var isLoadingHistory = false
   var onEarlierMessages: () -> Void = {}
   var onLatestMessages: () -> Void = {}
+  var collapsesTools = false
   @State private var followsLatest = true
 
   var body: some View {
@@ -39,7 +40,7 @@ struct AgentConversationView: View {
               ForEach(items) { item in
                 AgentConversationRowView(
                   item: item, bubbleWidth: max(1, contentWidth - 130),
-                  onOpenArtifact: onOpenArtifact
+                  onOpenArtifact: onOpenArtifact, collapsesTools: collapsesTools
                 )
                 .id(item.id)
               }

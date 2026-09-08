@@ -15,7 +15,7 @@ struct SQLiteJournalMigrationTests {
     let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
     try await journal.close()
 
-    #expect(try JournalTestSupport.userVersion(at: configuration.databaseURL) == 5)
+    #expect(try JournalTestSupport.userVersion(at: configuration.databaseURL) == 6)
     #expect(
       try JournalTestSupport.tableExists(
         "journal_checkpoints",
@@ -37,7 +37,7 @@ struct SQLiteJournalMigrationTests {
     #expect(records.map(\.event) == fixture.events)
     try await journal.close()
 
-    #expect(try JournalTestSupport.userVersion(at: databaseURL) == 5)
+    #expect(try JournalTestSupport.userVersion(at: databaseURL) == 6)
     #expect(try JournalTestSupport.tableExists("journal_checkpoints", at: databaseURL))
   }
 
@@ -74,7 +74,7 @@ struct SQLiteJournalMigrationTests {
       """
       CREATE TABLE future_marker (value TEXT NOT NULL);
       INSERT INTO future_marker (value) VALUES ('untouched');
-      PRAGMA user_version = 6;
+      PRAGMA user_version = 7;
       """,
       at: databaseURL
     )
@@ -85,10 +85,10 @@ struct SQLiteJournalMigrationTests {
       )
       Issue.record("Expected future schema to fail.")
     } catch let error as SQLiteAgentEventJournalError {
-      #expect(error == .futureSchemaVersion(found: 6, supported: 5))
+      #expect(error == .futureSchemaVersion(found: 7, supported: 6))
     }
 
-    #expect(try JournalTestSupport.userVersion(at: databaseURL) == 6)
+    #expect(try JournalTestSupport.userVersion(at: databaseURL) == 7)
     let marker = try JournalTestSupport.withConnection(at: databaseURL) { connection in
       try connection.scalarText("SELECT value FROM future_marker", maximumBytes: 64)
     }
@@ -198,7 +198,7 @@ struct SQLiteJournalMigrationTests {
     #expect(records.map(\.event) == fixture.events)
     try await journal.close()
 
-    #expect(try JournalTestSupport.userVersion(at: databaseURL) == 5)
+    #expect(try JournalTestSupport.userVersion(at: databaseURL) == 6)
     #expect(
       try JournalTestSupport.scalarInt64(
         """

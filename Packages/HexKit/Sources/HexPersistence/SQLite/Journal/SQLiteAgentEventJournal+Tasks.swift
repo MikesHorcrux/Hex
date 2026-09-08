@@ -22,11 +22,11 @@ extension SQLiteAgentEventJournal: AgentTaskStorage {
     try statement.bind(Int64(limit), at: 4)
     var result: [AgentTaskRecord] = []
     while try statement.step() == .row {
-      result.append(
-        try JSONDecoder().decode(
-          AgentTaskRecord.self,
-          from: statement.columnBlob(at: 0, maximumBytes: 6 * 1_024 * 1_024)
-        ).summary)
+      var record = try JSONDecoder().decode(
+        AgentTaskRecord.self,
+        from: statement.columnBlob(at: 0, maximumBytes: 6 * 1_024 * 1_024))
+      try hydrateConversationLink(&record, connection: connection)
+      result.append(record.summary)
     }
     return result
   }
@@ -74,6 +74,15 @@ extension SQLiteAgentEventJournal: AgentTaskStorage {
           || (old?.admissionHash == input.admissionHash && old?.createdAt == input.createdAt)
       else { throw AgentTaskStorageError.invalidRecord }
       var record = input
+      record.conversationID = input.conversationID ?? input.id
+      if let old {
+        guard record.conversationID == old.conversationID, record.predecessorID == old.predecessorID
+        else {
+          throw AgentTaskStorageError.invalidRecord
+        }
+      } else {
+        try validateConversationTaskAdmission(record, connection: connection)
+      }
       record.revision += 1
       record.updatedAt = Date()
       let payload = try JSONEncoder().encode(record)
@@ -99,17 +108,18 @@ extension SQLiteAgentEventJournal: AgentTaskStorage {
         try attempt.bind(Int64(record.attemptCount), at: 3)
         _ = try attempt.step()
       }
+      try saveConversationTaskLink(record, previous: old, connection: connection)
       try validatePhysicalDatabaseSize(connection: connection)
       return record
     }
   }
 
-  private func taskRecord(_ id: UUID, connection: SQLiteConnection) throws -> AgentTaskRecord? {
+  func taskRecord(_ id: UUID, connection: SQLiteConnection) throws -> AgentTaskRecord? {
     let statement = try connection.prepare(
       "SELECT payload, phase, revision FROM agent_tasks WHERE id = ?")
     try statement.bind(id.uuidString, at: 1)
     guard try statement.step() == .row else { return nil }
-    let record = try JSONDecoder().decode(
+    var record = try JSONDecoder().decode(
       AgentTaskRecord.self,
       from: statement.columnBlob(at: 0, maximumBytes: 6 * 1_024 * 1_024))
     guard record.id == id,
@@ -118,6 +128,7 @@ extension SQLiteAgentEventJournal: AgentTaskStorage {
     else {
       throw AgentTaskStorageError.invalidRecord
     }
+    try hydrateConversationLink(&record, connection: connection)
     return record
   }
 }
