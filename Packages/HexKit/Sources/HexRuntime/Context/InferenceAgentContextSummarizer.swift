@@ -31,7 +31,9 @@ public struct InferenceAgentContextSummarizer: AgentContextSummarizing, Sendable
     try Task.checkCancellation()
     let inputLimit = try maximumInputTokens(for: request)
     let source = try AgentContextSummarySource(
-      messages: request.sourceMessages, estimator: estimator)
+      messages: request.sourceMessages,
+      estimator: ModelBoundAgentContextTokenEstimator(base: estimator, model: request.model),
+      allowsToolBatchBoundaries: request.allowsToolBatchBoundaries)
     var nextExchange = 0
     var previousSummary: String?
     var calls = 0
@@ -44,9 +46,9 @@ public struct InferenceAgentContextSummarizer: AgentContextSummarizing, Sendable
         request: request, inputLimit: inputLimit)
       let messages = try inferenceMessages(
         Array(source.exchanges[nextExchange..<end]), previousSummary: previousSummary,
-        maximumSummaryTokens: request.maximumSummaryTokens)
+        maximumSummaryTokens: request.maximumSummaryTokens, model: request.model)
       // Recheck the actual physical prompt, not merely the batch-selection probe.
-      guard try estimatedInputTokens(messages) <= inputLimit else {
+      guard try estimatedInputTokens(messages, model: request.model) <= inputLimit else {
         throw AgentContextSummarizationError.inputDoesNotFit
       }
       let result = try await infer(
@@ -99,8 +101,8 @@ public struct InferenceAgentContextSummarizer: AgentContextSummarizing, Sendable
       let middle = lower + (upper - lower) / 2
       let messages = try inferenceMessages(
         Array(exchanges[start..<middle]), previousSummary: previousSummary,
-        maximumSummaryTokens: request.maximumSummaryTokens)
-      if try estimatedInputTokens(messages) <= inputLimit {
+        maximumSummaryTokens: request.maximumSummaryTokens, model: request.model)
+      if try estimatedInputTokens(messages, model: request.model) <= inputLimit {
         selected = middle
         lower = middle + 1
       } else {
@@ -112,7 +114,8 @@ public struct InferenceAgentContextSummarizer: AgentContextSummarizing, Sendable
   }
 
   private func inferenceMessages(
-    _ exchanges: [[Message]], previousSummary: String?, maximumSummaryTokens: Int
+    _ exchanges: [[Message]], previousSummary: String?, maximumSummaryTokens: Int,
+    model: ModelDescriptor
   ) throws -> [Message] {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
@@ -124,7 +127,8 @@ public struct InferenceAgentContextSummarizer: AgentContextSummarizing, Sendable
     guard let quoted = String(data: data, encoding: .utf8) else {
       throw AgentContextSummarizationError.invalidHistory
     }
-    let envelope = try estimatedInputTokens([Message(role: .user, content: [.text("")])])
+    let envelope = try estimatedInputTokens(
+      [Message(role: .user, content: [.text("")])], model: model)
     guard maximumSummaryTokens > envelope else {
       throw AgentContextSummarizationError.inputDoesNotFit
     }
@@ -149,11 +153,13 @@ public struct InferenceAgentContextSummarizer: AgentContextSummarizing, Sendable
     ]
   }
 
-  func estimatedInputTokens(_ messages: [Message]) throws -> Int {
+  func estimatedInputTokens(_ messages: [Message], model: ModelDescriptor) throws -> Int {
     var total = 0
     for message in messages {
       let tokens: Int
-      do { tokens = try estimator.estimateTokens(in: message) } catch is CancellationError {
+      do {
+        tokens = try estimator.estimateTokens(in: message, model: model)
+      } catch is CancellationError {
         throw CancellationError()
       } catch {
         throw AgentContextSummarizationError.invalidRequest

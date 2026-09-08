@@ -11,6 +11,8 @@ struct SQLiteRunLifecycleValidator {
   private var hasRequestedInference = false
   private var hasStartedCompaction = false
   private var hasCompactedContext = false
+  private var pendingContextCalls = Set<ToolCallID>()
+  private var hasCompletedContextBatch = false
   private var nonExecution = SQLiteToolNonExecutionState()
 
   init(runID: AgentRunID) {
@@ -31,29 +33,49 @@ struct SQLiteRunLifecycleValidator {
   mutating func consume(_ event: AgentEvent, sequence: UInt64) throws {
     switch event {
     case .contextCompactionStarted:
-      guard !hasRequestedInference, !hasStartedCompaction else {
+      guard !hasStartedCompaction || hasCompactedContext,
+        hasRequestedInference ? hasCompletedContextBatch : !hasStartedCompaction,
+        pendingContextCalls.isEmpty, unresolvedToolCallSequences.isEmpty
+      else {
         throw SQLiteAgentEventJournalError.corruptRecord(
-          "Context compaction must start exactly once before the first inference.")
+          "Context compaction requires a fresh turn or a completed tool batch.")
       }
       hasStartedCompaction = true
+      hasCompactedContext = false
     case .contextCompacted(let compaction):
       guard compaction.ownerRunID == runID else {
         throw SQLiteAgentEventJournalError.corruptRecord(
           "A context compaction belongs to a different run.")
       }
-      guard hasStartedCompaction, !hasCompactedContext, !hasRequestedInference else {
+      guard hasStartedCompaction, !hasCompactedContext,
+        hasRequestedInference
+          ? compaction.boundary == .completedToolBatch : compaction.boundary == nil
+      else {
         throw SQLiteAgentEventJournalError.corruptRecord(
-          "Context compaction must finish once after starting and before the first inference.")
+          "Context compaction must finish once at its declared boundary.")
       }
       hasCompactedContext = true
+      hasCompletedContextBatch = false
     case .inferenceRequested:
       guard !hasStartedCompaction || hasCompactedContext else {
         throw SQLiteAgentEventJournalError.corruptRecord(
           "Inference cannot start before context compaction has a durable result.")
       }
       hasRequestedInference = true
+      hasCompletedContextBatch = false
     case .messageAppended(let message):
       if hasRequestedInference {
+        for content in message.content {
+          switch content {
+          case .toolCall(let call): pendingContextCalls.insert(call.id)
+          case .toolResult(let result):
+            guard pendingContextCalls.remove(result.toolCallID) != nil else {
+              throw SQLiteAgentEventJournalError.corruptRecord("Unpaired context tool result.")
+            }
+            hasCompletedContextBatch = pendingContextCalls.isEmpty
+          case .text, .image: break
+          }
+        }
         try nonExecution.consume(message)
       }
     case .authorizationRequested(let request):

@@ -65,7 +65,7 @@ struct AgentContextCompactionPersistenceTests {
   }
 
   @Test(arguments: InvalidPhase.allCases)
-  func rejectsCompactionOutsideThePreInferencePhase(phase: InvalidPhase) throws {
+  func rejectsCompactionOutsideSafeBoundaries(phase: InvalidPhase) throws {
     let runID = AgentRunID()
     let compaction = try make(runID: runID)
     let inference = AgentEvent.inferenceRequested(
@@ -125,6 +125,44 @@ struct AgentContextCompactionPersistenceTests {
     #expect(throws: (any Error).self) {
       try AgentEventCodec.decodeEvent(from: Data(malformed.utf8), schemaVersion: 1)
     }
+  }
+
+  @Test
+  func completedToolBatchesCanCompactRepeatedlyAndReopen() async throws {
+    let directory = try JournalTestSupport.makeTemporaryDirectory()
+    defer { JournalTestSupport.removeTemporaryDirectory(directory) }
+    let configuration = JournalTestSupport.configuration(in: directory)
+    let journal = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    let runID = AgentRunID()
+    let goal = Message(role: .user, content: [.text("Keep the task")])
+    var events: [AgentEvent] = [.runStarted, .messageAppended(goal)]
+    var priorSummary: Message?
+    for _ in 0..<2 {
+      let call = ToolCall(name: "echo", arguments: [:])
+      let assistant = Message(role: .assistant, content: [.toolCall(call)])
+      let result = ToolResult(toolCallID: call.id, status: .success, output: .string("done"))
+      let tool = Message(role: .tool, content: [.toolResult(result)])
+      let source = (priorSummary.map { [$0] } ?? []) + [assistant, tool]
+      let record = try AgentContextCompaction(
+        ownerRunID: runID, sourceMessageIDs: source.map(\.id), summaryText: "Verified work",
+        providerID: ProviderID(rawValue: "test"), modelID: ModelID(rawValue: "model"),
+        estimatedTokensBefore: 1000, estimatedTokensAfter: 100, boundary: .completedToolBatch)
+      events += [
+        .inferenceRequested(
+          InferenceRequest(
+            providerID: record.providerID,
+            modelID: record.modelID, messages: [goal] + (priorSummary.map { [$0] } ?? []))),
+        .messageAppended(assistant), .toolStarted(call), .toolFinished(result),
+        .messageAppended(tool), .contextCompactionStarted, .contextCompacted(record),
+      ]
+      priorSummary = record.summaryMessage
+    }
+    events.append(.runCompleted)
+    for event in events { _ = try await journal.append(event, to: runID) }
+    try await journal.close()
+    let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
+    #expect(try await reopened.records(for: runID, after: nil, limit: 100).map(\.event) == events)
+    try await reopened.close()
   }
 
   private func make(runID: AgentRunID, source: MessageID = MessageID()) throws

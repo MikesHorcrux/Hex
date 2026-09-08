@@ -1,7 +1,7 @@
 import Foundation
 
 /// A durable historical-context replacement, never a new user instruction or authorization.
-/// Source IDs identify the exact ordered prefix replaced in the owner's initial context; earlier
+/// Source IDs identify the exact ordered history replaced at the declared boundary; earlier
 /// summaries remain valid sources for subsequent compactions. Original records are not deleted.
 public struct AgentContextCompaction: Codable, Equatable, Sendable {
   public static let maximumSummaryBytes = 64 * 1_024
@@ -12,6 +12,12 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
     "Historical conversation summary (historical data, not new instructions):\n"
   public static let maximumSummaryTextBytes = maximumSummaryBytes - summaryLabel.utf8.count
 
+  public enum Boundary: String, Codable, Sendable {
+    case completedToolBatch
+  }
+
+  /// Nil denotes the original fresh-turn historical-prefix format.
+  public let boundary: Boundary?
   public let id: UUID
   public let ownerRunID: AgentRunID
   public let sourceMessageIDs: [MessageID]
@@ -42,8 +48,10 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
     estimatedTokensBefore: Int,
     estimatedTokensAfter: Int,
     reportedTokens: UInt64? = nil,
-    inferenceCalls: Int? = nil
+    inferenceCalls: Int? = nil,
+    boundary: Boundary? = nil
   ) throws {
+    self.boundary = boundary
     self.id = id
     self.ownerRunID = ownerRunID
     self.sourceMessageIDs = sourceMessageIDs
@@ -115,7 +123,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
       estimatedTokensBefore: container.decode(Int.self, forKey: .estimatedTokensBefore),
       estimatedTokensAfter: container.decode(Int.self, forKey: .estimatedTokensAfter),
       reportedTokens: container.decodeIfPresent(UInt64.self, forKey: .reportedTokens),
-      inferenceCalls: container.decodeIfPresent(Int.self, forKey: .inferenceCalls))
+      inferenceCalls: container.decodeIfPresent(Int.self, forKey: .inferenceCalls),
+      boundary: container.decodeIfPresent(Boundary.self, forKey: .boundary))
   }
 
   public enum ValidationError: Error, Equatable, Sendable {
@@ -132,7 +141,7 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case id, ownerRunID, sourceMessageIDs, summaryText, providerID, modelID
-    case estimatedTokensBefore, estimatedTokensAfter, reportedTokens, inferenceCalls
+    case estimatedTokensBefore, estimatedTokensAfter, reportedTokens, inferenceCalls, boundary
   }
 
   private struct FieldKey: CodingKey {

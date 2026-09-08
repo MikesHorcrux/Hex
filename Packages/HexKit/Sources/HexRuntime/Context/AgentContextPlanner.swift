@@ -38,13 +38,15 @@ public struct AgentContextPlanner: Sendable {
     else { throw AgentContextPlanningError.invalidModelMetadata }
     guard outputReserveTokens > 0 else { throw AgentContextPlanningError.invalidOutputReserve }
     let layout = try exchangeLayout(pinnedMessages: pinnedMessages, messages: messages)
+    let estimator = ModelBoundAgentContextTokenEstimator(base: self.estimator, model: model)
     let window = model.contextWindow ?? fallbackContextWindow
     let pinnedTokens: Int
     let messageCosts: [Int]
     let toolTokens: Int
     do {
-      pinnedTokens = try sum(pinnedMessages.map { try estimatedTokens($0) })
-      messageCosts = try messages.map { try estimatedTokens($0) }
+      pinnedTokens = try sum(
+        pinnedMessages.map { try validatedEstimate(estimator.estimateTokens(in: $0)) })
+      messageCosts = try messages.map { try validatedEstimate(estimator.estimateTokens(in: $0)) }
       toolTokens = try sum(tools.map { try validatedEstimate(estimator.estimateTokens(in: $0)) })
     } catch AgentContextPlanningError.imageCostUnavailable {
       return .unestimated(.imageCostUnavailable)
@@ -193,10 +195,6 @@ public struct AgentContextPlanner: Sendable {
         break
       }
     }
-  }
-
-  private func estimatedTokens(_ message: Message) throws -> Int {
-    try validatedEstimate(estimator.estimateTokens(in: message))
   }
 
   private func validatedEstimate(_ estimate: Int) throws -> Int {

@@ -25,6 +25,38 @@ struct AgentWorkspaceCompactionCaptureTests {
   }
 
   @Test @MainActor
+  func activeSummaryIsCapturedAgainstGeneratedEvidenceAndCanBeReplayed() throws {
+    let fixture = fixture()
+    let request = try #require(fixture.model.currentRunRequest)
+    let call = ToolCall(name: "inspect", arguments: [:])
+    let assistant = Message(role: .assistant, content: [.toolCall(call)])
+    let tool = Message(
+      role: .tool,
+      content: [
+        .toolResult(
+          ToolResult(
+            toolCallID: call.id,
+            status: .success, output: .string("Observed evidence")))
+      ])
+    #expect(try fixture.model.captureHistoryMessage(assistant))
+    #expect(try fixture.model.captureHistoryMessage(tool))
+    let record = try AgentContextCompaction(
+      ownerRunID: request.runID,
+      sourceMessageIDs: [assistant.id, tool.id], summaryText: "Observed evidence; continue task.",
+      providerID: ProviderID(rawValue: "fixture"), modelID: request.modelID,
+      estimatedTokensBefore: 1000, estimatedTokensAfter: 100, boundary: .completedToolBatch)
+    try fixture.model.captureHistoryCompaction(record)
+    try fixture.model.captureHistoryCompaction(record)
+    let history = try #require(fixture.model.conversations.first?.history)
+    #expect(history.compactions == [record])
+    #expect(
+      try AgentConversationContextProjection.messages(in: history)
+        == request.initialMessages + [record.summaryMessage])
+    #expect(history.exchanges.last?.messages.suffix(2) == [assistant, tool])
+    #expect(fixture.model.currentRunRequest == request)
+  }
+
+  @Test @MainActor
   func alteredReplayMetadataCannotReplaceTheAcceptedSummary() throws {
     let fixture = fixture()
     let request = try #require(fixture.model.currentRunRequest)

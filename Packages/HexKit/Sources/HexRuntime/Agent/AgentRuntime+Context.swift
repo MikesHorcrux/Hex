@@ -42,10 +42,10 @@ extension AgentRuntime {
         "The conversation context could not be planned safely.")
     }
     switch plan {
-    case .fits, .unestimated:
-      // No tokenizer/image-cost evidence is invented. Unestimated multimodal requests retain their
-      // existing provider validation; model-specific image estimators can be injected at this seam.
+    case .fits:
       return (original, 0)
+    case .unestimated:
+      throw unknownContextCost()
     case .protectedOverflow:
       throw contextOverflow()
     case .requiresCompaction(let before, let prefix, let retained, _):
@@ -98,7 +98,8 @@ extension AgentRuntime {
         )
       }
       guard
-        try contextEstimator.estimateTokens(in: provisional.summaryMessage) <= summaryLimit + 256
+        try contextEstimator.estimateTokens(in: provisional.summaryMessage, model: model)
+          <= summaryLimit + 256
       else {
         throw AgentRuntimeError.protocolViolation("The context summary exceeded its reserved size.")
       }
@@ -118,8 +119,8 @@ extension AgentRuntime {
     }
   }
 
-  /// Never rewrite an active provider continuation (including local opaque reasoning replay).
-  /// Oversized tool loops stop with an explicit outcome rather than silently losing their history.
+  /// Admission for an unchanged provider continuation. The active-boundary owner may compact
+  /// completed evidence and start a fresh request; this validator itself never mutates history.
   func validateContinuingContext(
     _ messages: [Message], request: AgentRunRequest,
     model: ModelDescriptor, tools: [ToolDefinition]
@@ -129,10 +130,10 @@ extension AgentRuntime {
     let costs: [Int]
     do {
       costs =
-        try messages.map { try contextEstimator.estimateTokens(in: $0) }
-        + tools.map { try contextEstimator.estimateTokens(in: $0) }
+        try messages.map { try contextEstimator.estimateTokens(in: $0, model: model) }
+        + tools.map { try contextEstimator.estimateTokens(in: $0, model: model) }
         + [configuration.context.safetyMarginTokens]
-    } catch AgentContextPlanningError.imageCostUnavailable { return } catch {
+    } catch AgentContextPlanningError.imageCostUnavailable { throw unknownContextCost() } catch {
       throw AgentRuntimeError.invalidRequest("Context cost could not be estimated.")
     }
     for cost in costs {
@@ -145,7 +146,7 @@ extension AgentRuntime {
     }
   }
 
-  private func outputReservation(_ request: AgentRunRequest, model: ModelDescriptor) -> Int {
+  func outputReservation(_ request: AgentRunRequest, model: ModelDescriptor) -> Int {
     if let requested = request.options.maxOutputTokens { return requested }
     if let modelMaximum = model.maxOutputTokens { return modelMaximum }
     // An explicit local planning allowance when metadata is unavailable, NOT a claimed provider
@@ -161,7 +162,13 @@ extension AgentRuntime {
       summaryReserveTokens: summaryReserve, estimator: contextEstimator)
   }
 
-  private func contextOverflow() -> AgentRuntimeError {
+  func unknownContextCost() -> AgentRuntimeError {
+    .budgetExceeded(
+      "Hex cannot safely estimate this model’s image context cost. Use text or a model with a configured media estimator; the original content is preserved."
+    )
+  }
+
+  func contextOverflow() -> AgentRuntimeError {
     .budgetExceeded(
       "The current request, required instructions, tools, or active tool exchange exceed this model's estimated context. Hex will not trim them silently. Choose a larger-context model, reduce enabled tools, or start a new conversation for a shorter task."
     )

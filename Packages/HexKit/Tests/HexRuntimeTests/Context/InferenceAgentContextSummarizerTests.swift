@@ -62,6 +62,40 @@ struct InferenceAgentContextSummarizerTests {
   }
 
   @Test
+  func activeToolEvidenceSpansMultipleBoundedSummaryCallsWithoutSplittingPairs() async throws {
+    let history = (0..<3).flatMap { _ -> [Message] in
+      let call = ToolCall(name: "inspect", arguments: [:])
+      return [
+        Message(role: .assistant, content: [.toolCall(call)]),
+        Message(
+          role: .tool,
+          content: [
+            .toolResult(
+              ToolResult(
+                toolCallID: call.id,
+                status: .success, output: .string(String(repeating: "observed ", count: 450))))
+          ]),
+      ]
+    }
+    let provider = makeProvider((0..<3).map { .events(success("Completed batch \($0).")) })
+    let summarizer = InferenceAgentContextSummarizer(provider: provider, safetyMarginTokens: 128)
+    let result = try await summarizer.summarize(
+      AgentContextSummaryRequest(
+        model: model(window: 8_000), sourceMessages: history, maximumSummaryTokens: 1_200,
+        allowsToolBatchBoundaries: true))
+    let requests = await provider.requests()
+    #expect(result.inferenceCalls == 3)
+    #expect(try requests.map(payload).flatMap(\.exchanges).flatMap { $0 } == history)
+    #expect(requests.allSatisfy { $0.previousProviderResponseID == nil && $0.toolChoice == .none })
+    for request in requests {
+      #expect(
+        try request.messages.reduce(0) {
+          try $0 + ConservativeAgentContextTokenEstimator().estimateTokens(in: $1)
+        } + 1_200 + 128 <= 8_000)
+    }
+  }
+
+  @Test
   func keepsParallelToolCallAndResultGroupsTogether() async throws {
     let first = ToolCall(name: "read", arguments: ["path": .string("a.swift")])
     let second = ToolCall(name: "read", arguments: ["path": .string("b.swift")])
