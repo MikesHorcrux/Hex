@@ -101,8 +101,10 @@ public struct HexGatewayComposition: Sendable {
       configuration: configuration.gatewayConfiguration,
       historyReader: historyReader,
       artifactReader: configuration.artifactReader,
-      conversationStore: journal as? any ConversationStorage
+      conversationStore: journal as? any ConversationStorage,
+      taskStore: journal as? any AgentTaskStorage
     )
+    await service.wakeTaskScheduler()
     let transport = InProcessHexGatewayTransport(
       service: service,
       configuration: configuration.gatewayConfiguration

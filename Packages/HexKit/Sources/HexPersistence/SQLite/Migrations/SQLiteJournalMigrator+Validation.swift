@@ -193,7 +193,10 @@ extension SQLiteJournalMigrator {
     connection: SQLiteConnection,
     maximumTextBytes: Int
   ) throws {
-    let additions = try schemaVersion(connection: connection) >= 4 ? conversationSchemaObjects : []
+    let version = try schemaVersion(connection: connection)
+    let additions =
+      (version >= 4 ? conversationSchemaObjects : [])
+      + (version >= 5 ? taskSchemaObjects : [])
     let count = 8 + additions.count
     let statement = try connection.prepare(
       "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master LIMIT \(count + 1)"
@@ -321,6 +324,9 @@ extension SQLiteJournalMigrator {
       "conversation_entries": 6,
       "conversation_settings": 2,
       "run_validation": 4,
+      "agent_task_effects": 4,
+      "agent_tasks": 4,
+      "agent_task_attempts": 3,
     ]
     let statement = try connection.prepare("PRAGMA table_list")
     var validatedNames: Set<String> = []

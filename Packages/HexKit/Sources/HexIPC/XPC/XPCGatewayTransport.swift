@@ -7,7 +7,8 @@ import HexCore
 public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDecisionTransport,
   HexGatewayResidentControlTransport, HexGatewayAccessibilityPermissionTransport,
   HexGatewayScreenControlPermissionTransport, HexGatewayModelCatalogTransport,
-  HexGatewayConversationTransport, HexGatewayRunRecoveryTransport, HexGatewayArtifactReadTransport,
+  HexGatewayTaskTransport, HexGatewayConversationTransport, HexGatewayRunRecoveryTransport,
+  HexGatewayArtifactReadTransport,
   HexGatewayToolServerControlTransport, HexGatewayPermissionManagementTransport
 {
   private struct ConnectionState: Sendable {
@@ -143,6 +144,14 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
   ) async throws -> GatewayRunRecoveryResponse {
     try await recoveryRequest(
       request, operation: .recoverRun, lease: lease, response: GatewayRunRecoveryResponse.self)
+  }
+
+  public func taskOperation(_ request: GatewayTaskRequest, lease: GatewayTransportConnectionLease)
+    async throws -> GatewayTaskRequest.Response
+  {
+    try await recoveryRequest(
+      request, operation: .taskOperation, lease: lease,
+      response: GatewayTaskRequest.Response.self)
   }
 
   public func conversationStorage(

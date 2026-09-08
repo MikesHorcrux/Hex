@@ -185,6 +185,8 @@ extension SQLiteAgentEventJournal {
       )
     }
 
+    try recordTaskEffect(event, runID: runID, connection: connection)
+
     if event.terminatesRun {
       let markTerminal = try connection.prepare(
         """

@@ -1,0 +1,301 @@
+{
+  "schema": 5,
+  "integrity": "ok",
+  "prior_conversation_entries": 1934,
+  "missing_prior_entries": 0,
+  "changed_prior_entries": 0,
+  "tasks": [
+    {
+      "id": "24E2D17C-8122-4548-9306-0E05D6D36AA6",
+      "phase": "completed",
+      "attemptCount": 1,
+      "explanation": "Completed",
+      "attempts": [
+        {
+          "number": 1,
+          "run_id": "8AA835FC-A551-420F-8915-3AEBD07C1034",
+          "terminal": "run_completed",
+          "records": 13
+        }
+      ],
+      "dispatches": [],
+      "final_answer": "DURABLE_QUEUE_READY"
+    },
+    {
+      "id": "8F07369E-9B5E-4B02-B61D-AEE14228863E",
+      "phase": "completed",
+      "attemptCount": 4,
+      "explanation": "Completed",
+      "attempts": [
+        {
+          "number": 1,
+          "run_id": "6750FB95-1EAF-47FB-B7C8-556C5FD7BB75",
+          "terminal": "run_cancelled",
+          "records": 120
+        },
+        {
+          "number": 2,
+          "run_id": "E214C51D-F882-4F34-A9D9-B89CB0BB42F0",
+          "terminal": "run_cancelled",
+          "records": 59
+        },
+        {
+          "number": 3,
+          "run_id": "C66E75FC-C53D-4E87-B0E3-EDB9FD69E109",
+          "terminal": "run_cancelled",
+          "records": 69
+        },
+        {
+          "number": 4,
+          "run_id": "771480AC-CCE4-4E41-95CC-D7AB8E5003F0",
+          "terminal": "run_completed",
+          "records": 264
+        }
+      ],
+      "dispatches": [
+        {
+          "attempt": 1,
+          "name": "workspace_list_directory",
+          "path": "."
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_write_text_file",
+          "path": "durable-task-once-20260908.txt"
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_read_text_file",
+          "path": "durable-task-once-20260908.txt"
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-01.txt"
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-02.txt"
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-03.txt"
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-04.txt"
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-05.txt"
+        },
+        {
+          "attempt": 1,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-06.txt"
+        },
+        {
+          "attempt": 2,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-07.txt"
+        },
+        {
+          "attempt": 2,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-08.txt"
+        },
+        {
+          "attempt": 2,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-09.txt"
+        },
+        {
+          "attempt": 2,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-10.txt"
+        },
+        {
+          "attempt": 3,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-11.txt"
+        },
+        {
+          "attempt": 3,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-12.txt"
+        },
+        {
+          "attempt": 3,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-13.txt"
+        },
+        {
+          "attempt": 3,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-14.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-15.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-16.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-17.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-18.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-19.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-20.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-21.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-22.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-23.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-24.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-25.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-26.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-27.txt"
+        },
+        {
+          "attempt": 4,
+          "name": "workspace_read_text_file",
+          "path": "compaction-live-20260908/audit-28.txt"
+        }
+      ],
+      "final_answer": "Completed all reads of `audit-01.txt` through `audit-28.txt` in ascending order.\n\n- Sum of `verified_units`: **6986**\n- `audit-27` marker: **CEDAR-27-9412**\n- File creation was not repeated.\n- No other files were modified.\n\n**STEERING_ACCEPTED**",
+      "audit_reads_exactly_01_through_28": true,
+      "mutation_dispatches": 1
+    },
+    {
+      "id": "A378A803-E13B-42B3-8073-5B005537702D",
+      "phase": "completed",
+      "attemptCount": 1,
+      "explanation": "Completed",
+      "attempts": [
+        {
+          "number": 1,
+          "run_id": "75865166-9540-4597-939A-121852AAB5C4",
+          "terminal": "run_completed",
+          "records": 12
+        }
+      ],
+      "dispatches": [],
+      "final_answer": "SECOND_TASK_FINISHED"
+    },
+    {
+      "id": "7BB185A1-CA53-4827-91B1-83A98810B909",
+      "phase": "cancelled",
+      "attemptCount": 1,
+      "explanation": "Cancelled; dispatched work has been recorded",
+      "attempts": [
+        {
+          "number": 1,
+          "run_id": "02DBE5F0-DCC3-4757-8F3F-A129900390B2",
+          "terminal": "run_cancelled",
+          "records": 15
+        }
+      ],
+      "dispatches": [
+        {
+          "attempt": 1,
+          "name": "process_run",
+          "path": null
+        }
+      ],
+      "final_answer": ""
+    },
+    {
+      "id": "92935D1C-7653-4A92-BF69-72010519D394",
+      "phase": "completed",
+      "attemptCount": 2,
+      "explanation": "Completed",
+      "attempts": [
+        {
+          "number": 1,
+          "run_id": "56F5CF95-C03B-4A68-8E1B-D6740B47A9B1",
+          "terminal": "run_failed",
+          "records": 13
+        },
+        {
+          "number": 2,
+          "run_id": "31C0DC40-5B6A-4EE1-A4F6-2D78C2066A57",
+          "terminal": "run_completed",
+          "records": 49
+        }
+      ],
+      "dispatches": [
+        {
+          "attempt": 1,
+          "name": "process_run",
+          "path": null
+        },
+        {
+          "attempt": 2,
+          "name": "workspace_read_text_file",
+          "path": "durable-unknown-20260908.txt"
+        }
+      ],
+      "final_answer": "RECONCILIATION_VERIFIED. The file contains exactly:\n\n```text\nUNKNOWN_EFFECT_ONCE_20260908\n```"
+    }
+  ],
+  "cancelled_followup_exists": false,
+  "fixtures": {
+    "durable-task-once-20260908.txt": {
+      "bytes": 31,
+      "sha256": "3e648cb699679cbe040972a7ab15e96d9c01a615818e4bcbc8b4f28078a43746",
+      "lines": 1
+    },
+    "durable-unknown-20260908.txt": {
+      "bytes": 29,
+      "sha256": "2881d0f255e15d803401180887ee347a322b150b17546345b3d282ab5b0df46a",
+      "lines": 1
+    }
+  }
+}

@@ -575,7 +575,8 @@ struct XPCGatewayTransportTests {
         return try response(operation: .handshake, value: handshakeResponse)
       case .availableModels:
         return try response(operation: .availableModels, value: [ModelDescriptor]())
-      case .conversationStorage, .toolServerHealth, .refreshToolServer, .approvalInbox,
+      case .taskOperation, .conversationStorage, .toolServerHealth, .refreshToolServer,
+        .approvalInbox,
         .revokeSessionGrant,
         .folderAccessStatus:
         return try codec.encode(
