@@ -11,7 +11,7 @@ not independently verified API documentation. A dash means no leading comment wa
 | [Hex](Hex.md) | 225 | macOS app composition, observable models, services and SwiftUI views. |
 | [HexCapabilities](HexCapabilities.md) | 124 | Native file, process, web, Mac and artifact capability execution. |
 | [HexCapabilitiesTests](HexCapabilitiesTests.md) | 25 | Focused test target; consult suites for exercised boundaries. |
-| [HexCore](HexCore.md) | 75 | Shared Sendable values and small inference, tool, event and authority contracts. |
+| [HexCore](HexCore.md) | 76 | Shared Sendable values and small inference, tool, event and authority contracts. |
 | [HexCoreTests](HexCoreTests.md) | 19 | Focused test target; consult suites for exercised boundaries. |
 | [HexGatewayCommand](HexGatewayCommand.md) | 1 | HexGateway executable entry and concrete provider injection. |
 | [HexGatewayKit](HexGatewayKit.md) | 85 | Resident composition, lifecycle, heartbeats and self-knowledge. |
@@ -29,10 +29,10 @@ not independently verified API documentation. A dash means no leading comment wa
 | [HexProviders](HexProviders.md) | 75 | OpenAI provider/authentication and shared provider support. |
 | [HexProvidersTests](HexProvidersTests.md) | 28 | Focused test target; consult suites for exercised boundaries. |
 | [HexRuntime](HexRuntime.md) | 34 | Provider-independent agent loop, context planning and execution budgets. |
-| [HexRuntimeTests](HexRuntimeTests.md) | 33 | Focused test target; consult suites for exercised boundaries. |
+| [HexRuntimeTests](HexRuntimeTests.md) | 34 | Focused test target; consult suites for exercised boundaries. |
 | [HexTests](HexTests.md) | 53 | Focused test target; consult suites for exercised boundaries. |
 | [HexUITests](HexUITests.md) | 2 | Focused test target; consult suites for exercised boundaries. |
 
-Total: **1294 Swift files** in **24 targets/directories**.
+Total: **1296 Swift files** in **24 targets/directories**.
 
 Regenerate with `python3 docs/_tools/docs.py generate` from the repository root.

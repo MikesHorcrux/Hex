@@ -140,6 +140,23 @@ extension AgentRuntime {
         "Full structured output is saved. Use artifact_read or artifact_search with the artifact ID; offsets are bytes."
       ),
     ]
+    // Preserve the small control receipt independently of the arbitrarily ordered JSON preview.
+    // These values do not confer authority: each executor still validates its run-owned ledger.
+    if case .object(let output) = original.output {
+      for key in [
+        "observation_id", "hex_observation_id", "snapshot", "hex_observed_pid",
+        "hex_observed_window_id", "hex_process_start_identity_decimal",
+        "hex_observation_expires_after_seconds", "hex_observation_actionable",
+        "bundle_id", "process_id", "is_truncated",
+      ] {
+        guard let value = output[key] else { continue }
+        switch value {
+        case .string(let text) where text.utf8.count <= 256: fields[key] = value
+        case .integer, .boolean: fields[key] = value
+        default: break
+        }
+      }
+    }
     let references = [reference] + original.artifacts
     var bounded = ToolResult(
       toolCallID: original.toolCallID, status: original.status, output: .object(fields),

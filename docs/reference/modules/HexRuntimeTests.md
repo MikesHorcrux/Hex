@@ -4,12 +4,13 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**33 Swift files.** Generated; do not edit by hand.
+**34 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexRuntimeTests/Agent
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [AgentRuntimeArgumentRecoveryTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeArgumentRecoveryTests.swift) | — |
 | [AgentRuntimeAuthorizationLifecycleTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeAuthorizationLifecycleTests.swift) | — |
 | [AgentRuntimeAuthorizationModeTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeAuthorizationModeTests.swift) | — |
 | [AgentRuntimeAuthorizationRequestTests.swift](../../../Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeAuthorizationRequestTests.swift) | — |

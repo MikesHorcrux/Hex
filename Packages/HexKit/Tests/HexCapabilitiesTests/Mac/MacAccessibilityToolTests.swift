@@ -6,6 +6,27 @@ import Testing
 @Suite("Mac Accessibility tools")
 struct MacAccessibilityToolTests {
   @Test
+  func malformedObservationIsRecoverableBeforeAuthorizationAndCannotExecute() async throws {
+    let controller = AccessibilityController()
+    let tool = MacAccessibilityActionTool(
+      controller: controller, observationLedger: MacAccessibilityObservationLedger(),
+      sessionState: { .available })
+    let call = ToolCall(
+      name: "mac_accessibility_action",
+      arguments: [
+        "bundle_id": .string("com.apple.Safari"), "action": .string("press"),
+        "identifier": .string("NewTabButton"), "observation_id": .string("?"),
+      ])
+    let context = ToolExecutionContext(runID: AgentRunID())
+    await #expect(throws: ToolCallValidationError.self) {
+      try await tool.authorizationRequest(for: call, in: context)
+    }
+    let result = try await tool.execute(call, in: context)
+    #expect(result.status == .failure)
+    #expect(await controller.lastAction == nil)
+  }
+
+  @Test
   func snapshotAndActionUseExactApplicationAndSelector() async throws {
     let controller = AccessibilityController()
     let observations = MacAccessibilityObservationLedger()

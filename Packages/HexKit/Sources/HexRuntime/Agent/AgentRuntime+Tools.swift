@@ -30,7 +30,8 @@ extension AgentRuntime {
     messages: [Message],
     totalSerializedToolResultBytes: Int
   ) {
-    var authorizationRequests: [AuthorizationRequest] = []
+    var authorizationRequests: [AuthorizationRequest?] = []
+    var invalidResults: [ToolCallID: ToolResult] = [:]
     var executionContexts: [ToolExecutionContext] = []
     authorizationRequests.reserveCapacity(calls.count)
     executionContexts.reserveCapacity(calls.count)
@@ -38,9 +39,20 @@ extension AgentRuntime {
     for call in calls {
       let context = ToolExecutionContext(
         runID: runID, workingDirectory: workingDirectory, artifacts: runArtifacts[runID] ?? [])
+      executionContexts.append(context)
       let request: AuthorizationRequest
       do {
         request = try await toolExecutor.authorizationRequest(for: call, in: context)
+      } catch let error as ToolCallValidationError {
+        try Task.checkCancellation()
+        invalidResults[call.id] = ToolResult(
+          toolCallID: call.id, status: .failure,
+          output: .object([
+            "error": .string("invalid_tool_arguments"), "dispatched": .boolean(false),
+            "recovery": .string(String(error.recovery.prefix(1_024))),
+          ]), notExecutedReason: .invalidArguments)
+        authorizationRequests.append(nil)
+        continue
       } catch is CancellationError {
         throw CancellationError()
       } catch {
@@ -63,14 +75,22 @@ extension AgentRuntime {
       }
       try await append(.authorizationRequested(request), to: runID)
       authorizationRequests.append(request)
-      executionContexts.append(context)
     }
 
-    var decisions: [AuthorizationDecision] = []
+    var decisions: [AuthorizationDecision?] = []
     decisions.reserveCapacity(calls.count)
     var reservedDeniedResultBytes = priorSerializedToolResultBytes
 
     for (call, request) in zip(calls, authorizationRequests) {
+      guard let request else {
+        guard let invalid = invalidResults[call.id] else {
+          throw AgentRuntimeError.invalidState("Missing argument rejection receipt.")
+        }
+        reservedDeniedResultBytes = try addingToolResultBytes(
+          serializedToolResultByteCount(invalid), to: reservedDeniedResultBytes)
+        decisions.append(nil)
+        continue
+      }
       let decision: AuthorizationDecision
       do {
         decision = try await authorizationProvider.authorize(request)
@@ -113,7 +133,7 @@ extension AgentRuntime {
       let result: ToolResult
       let message: Message
       switch decision {
-      case .allow:
+      case .some(.allow):
         try recordToolStartAttempt(call.id, for: runID)
         runsWithStartedTools.insert(runID)
         try await append(.toolStarted(call), to: runID)
@@ -166,9 +186,16 @@ extension AgentRuntime {
           to: totalSerializedToolResultBytes
         )
 
-      case .deny(let reason):
+      case .some(.deny(let reason)):
         result = deniedToolResult(for: call, reason: reason)
         _ = try serializedToolResultByteCount(result)
+        message = try await persistKnownToolReceipt(result, for: runID)
+        try Task.checkCancellation()
+      case nil:
+        guard let invalid = invalidResults[call.id] else {
+          throw AgentRuntimeError.invalidState("Missing argument rejection receipt.")
+        }
+        result = invalid
         message = try await persistKnownToolReceipt(result, for: runID)
         try Task.checkCancellation()
       }

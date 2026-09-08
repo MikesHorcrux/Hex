@@ -53,6 +53,8 @@ extension AgentRuntime {
         detail = "This tool was not run because the run stopped before it was dispatched."
       case .interrupted:
         detail = "This tool was not run before the run was interrupted."
+      case .invalidArguments:
+        detail = "This tool was not run because its arguments were invalid."
       case .authorizationDenied:
         detail = "This tool was not run because its authorization was denied."
       }

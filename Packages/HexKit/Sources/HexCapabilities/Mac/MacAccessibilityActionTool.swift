@@ -80,7 +80,18 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
     for call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> AuthorizationRequest {
-    let request = try validatedRequest(call)
+    let request: MacAccessibilityActionRequest
+    do {
+      request = try validatedRequest(call)
+    } catch {
+      // Pure decoding only: no authorization, ledger mutation, or controller work has occurred.
+      throw ToolCallValidationError(
+        recovery:
+          "Use only the advertised mac_accessibility_action arguments. Take a fresh "
+          + "mac_accessibility_snapshot for the exact bundle_id and copy its observation_id UUID; "
+          + "never use a placeholder, process timestamp, or Peekaboo hex_observation_id. "
+          + "Select an observed element; press requires AXPress. Set value only for set_value.")
+    }
     let resource = try authorizationResource(call)
     try await authorizationLedger.record(call: call, runID: context.runID)
     var details: [String: JSONValue] = [
