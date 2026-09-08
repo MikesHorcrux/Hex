@@ -6,6 +6,22 @@ Ticket: **Finish browser and native-Mac observe-act-verify workflows**
 Feature branch: `codex/observe-act-verify`, based on
 `8e4c5185e36363f14e025f964a77a718008ca03b`.
 
+## Current status
+
+Implementation through `079fc25` is integrated on `dev` at
+`23fde17bf9bcd6b6720b059b160a1aaf6c543415` and canonically activated. The final package suite
+passed 1,309 tests; the signed hosted suite passed 294 tests; lint and documentation passed.
+`/tmp/hex-oav-canonical-verified-build-run.log` records the successful canonical build and refresh.
+
+The complete live gate remains open. The latest native attempt returned `mac_session_locked`
+with `dispatched: false`. The browser navigated to the form but timed out waiting for navigation;
+its preserved receipt shows the click reached the page. The fixture still has zero submissions
+and downloads, and Hex did not replay the click. Evidence: `canonical-verified-run` and
+`canonical-verified-browser-fixture` under the evidence root below. Resume with an unlocked Mac,
+fresh browser fixture and verified pristine native fixture, then require both complete journeys.
+The earlier native run proved one field update and one press with the correct semantic result,
+but its failed screenshot attempt is not complete qualification. The ticket remains In Progress.
+
 ## Behavior
 
 Managed browser actions require a full current `browser_snapshot` and its single-use
