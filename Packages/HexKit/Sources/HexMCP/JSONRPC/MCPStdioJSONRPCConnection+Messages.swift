@@ -1,0 +1,233 @@
+import Foundation
+import HexCore
+
+extension MCPStdioJSONRPCConnection {
+  func received(
+    _ data: Data,
+    from channel: MCPReadChannel,
+    generation: UInt64
+  ) async {
+    guard generation == self.generation, case .connected = state else { return }
+    switch channel {
+    case .error:
+      retainErrorOutput(data)
+    case .output:
+      do {
+        try await receiveOutput(data, generation: generation)
+      } catch {
+        guard generation == self.generation, case .connected = state else { return }
+        await closeConnection(error: error)
+      }
+    }
+  }
+
+  func readerEnded(_ channel: MCPReadChannel, generation: UInt64) async {
+    guard generation == self.generation, case .connected = state else { return }
+    if case .output = channel {
+      await closeConnection(error: MCPClientSessionError.connectionClosed)
+    }
+  }
+
+  func readerFailed(_ channel: MCPReadChannel, generation: UInt64) async {
+    guard generation == self.generation, case .connected = state else { return }
+    _ = channel
+    await closeConnection(error: MCPClientSessionError.connectionClosed)
+  }
+
+  func requestTimedOut(_ requestID: Int64, generation: UInt64) async {
+    guard generation == self.generation else { return }
+    guard let pending = pendingRequests.removeValue(forKey: requestID) else { return }
+    pending.timeoutTask.cancel()
+    pending.continuation.resume(throwing: MCPClientSessionError.requestTimedOut)
+    await closeConnection(error: MCPClientSessionError.connectionClosed)
+  }
+
+  func cancelRequest(_ requestID: Int64, generation: UInt64) async {
+    guard generation == self.generation else { return }
+    guard let pending = pendingRequests.removeValue(forKey: requestID) else { return }
+    pending.timeoutTask.cancel()
+    pending.continuation.resume(throwing: CancellationError())
+    await closeConnection(error: MCPClientSessionError.connectionClosed)
+  }
+
+  private func receiveOutput(_ data: Data, generation: UInt64) async throws {
+    guard generation == self.generation, case .connected = state else { return }
+    outputBuffer.append(data)
+    var cursor = outputBuffer.startIndex
+    var messages: [JSONValue] = []
+    while cursor < outputBuffer.endIndex,
+      let newline = outputBuffer[cursor...].firstIndex(of: 0x0A)
+    {
+      var line = Data(outputBuffer[cursor..<newline])
+      cursor = outputBuffer.index(after: newline)
+      if line.last == 0x0D { line.removeLast() }
+      guard !line.isEmpty else {
+        throw MCPClientSessionError.protocolViolation
+      }
+      guard line.count <= configuration.maximumMessageBytes else {
+        throw MCPClientSessionError.limitExceeded
+      }
+      try MCPJSONStructuralPreflight.validateObjectRoot(line)
+      let value: JSONValue
+      do {
+        value = try JSONDecoder().decode(JSONValue.self, from: line)
+      } catch {
+        throw MCPClientSessionError.protocolViolation
+      }
+      messages.append(value)
+    }
+    if cursor != outputBuffer.startIndex {
+      outputBuffer.removeSubrange(outputBuffer.startIndex..<cursor)
+    }
+    guard outputBuffer.count <= configuration.maximumMessageBytes else {
+      throw MCPClientSessionError.limitExceeded
+    }
+    for message in messages {
+      guard generation == self.generation, case .connected = state else { return }
+      try await handleMessage(message, generation: generation)
+      guard generation == self.generation, case .connected = state else { return }
+    }
+  }
+
+  private func handleMessage(_ value: JSONValue, generation: UInt64) async throws {
+    guard generation == self.generation, case .connected = state else { return }
+    guard
+      let object = value.mcpObject,
+      object["jsonrpc"] == .string("2.0")
+    else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    if let method = object["method"]?.mcpString {
+      guard
+        Self.validMethod(method),
+        object["result"] == nil,
+        object["error"] == nil,
+        object["params"] == nil || object["params"]?.mcpObject != nil
+      else {
+        throw MCPClientSessionError.protocolViolation
+      }
+      if let requestID = object["id"] {
+        guard validServerRequestID(requestID) else {
+          throw MCPClientSessionError.protocolViolation
+        }
+        if method == "ping" {
+          try await sendResult(
+            id: requestID,
+            result: .object([:]),
+            generation: generation
+          )
+        } else {
+          try await sendMethodNotFound(
+            id: requestID,
+            method: method,
+            generation: generation
+          )
+        }
+        guard generation == self.generation, case .connected = state else { return }
+      }
+      return
+    }
+
+    guard
+      let requestID = object["id"]?.mcpInteger,
+      requestID > 0,
+      let pending = pendingRequests.removeValue(forKey: requestID)
+    else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    pending.timeoutTask.cancel()
+    let hasResult = object["result"] != nil
+    let hasError = object["error"] != nil
+    guard hasResult != hasError else {
+      pending.continuation.resume(throwing: MCPClientSessionError.protocolViolation)
+      throw MCPClientSessionError.protocolViolation
+    }
+    if let result = object["result"] {
+      pending.continuation.resume(returning: result)
+      return
+    }
+    guard
+      let errorObject = object["error"]?.mcpObject,
+      let code = errorObject["code"]?.mcpInteger,
+      let message = errorObject["message"]?.mcpString,
+      !message.isEmpty,
+      message.utf8.count <= 8_192
+    else {
+      pending.continuation.resume(throwing: MCPClientSessionError.protocolViolation)
+      throw MCPClientSessionError.protocolViolation
+    }
+    pending.continuation.resume(throwing: MCPClientSessionError.remoteError(code: code))
+  }
+
+  private func sendResult(
+    id: JSONValue,
+    result: JSONValue,
+    generation: UInt64
+  ) async throws {
+    guard generation == self.generation, case .connected = state else { return }
+    try await enqueueCancellableWrite(
+      try encodedMessage(
+        .object([
+          "jsonrpc": .string("2.0"),
+          "id": id,
+          "result": result,
+        ])
+      ),
+      generation: generation
+    )
+    guard generation == self.generation, case .connected = state else { return }
+  }
+
+  private func sendMethodNotFound(
+    id: JSONValue,
+    method: String,
+    generation: UInt64
+  ) async throws {
+    guard method.utf8.count <= 128, !method.contains("\0") else {
+      throw MCPClientSessionError.protocolViolation
+    }
+    guard generation == self.generation, case .connected = state else { return }
+    try await enqueueCancellableWrite(
+      try encodedMessage(
+        .object([
+          "jsonrpc": .string("2.0"),
+          "id": id,
+          "error": .object([
+            "code": .integer(-32_601),
+            "message": .string("Method not supported by this client."),
+          ]),
+        ])
+      ),
+      generation: generation
+    )
+    guard generation == self.generation, case .connected = state else { return }
+  }
+
+  private func validServerRequestID(_ value: JSONValue) -> Bool {
+    switch value {
+    case .integer:
+      return true
+    case .string(let id):
+      return id.utf8.count <= 128 && !id.contains("\0")
+    case .number(let number):
+      return number.isFinite
+    case .null:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func retainErrorOutput(_ data: Data) {
+    let maximum = configuration.maximumStderrBytes
+    guard maximum > 0 else { return }
+    if data.count >= maximum {
+      retainedErrorOutput = Data(data.suffix(maximum))
+      return
+    }
+    retainedErrorOutput.append(data)
+    if retainedErrorOutput.count > maximum {
+      retainedErrorOutput.removeFirst(retainedErrorOutput.count - maximum)
+    }
+  }
+}

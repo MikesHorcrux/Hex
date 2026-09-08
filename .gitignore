@@ -1,0 +1,7 @@
+.DS_Store
+/.build/
+/dist/
+/Packages/HexKit/.build/
+/Packages/HexKit/.swiftpm/
+/Packages/HexKit/Package.resolved
+/Hex.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
