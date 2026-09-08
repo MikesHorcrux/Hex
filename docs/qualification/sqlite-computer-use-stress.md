@@ -75,7 +75,7 @@ Local evidence is in `/tmp/hex-stress-baseline.json`,
 `/tmp/hex-stress-verification.json`, and `/tmp/hex-stress-verify.py`.
 These are local qualification receipts, not repository fixtures.
 
-## Open accessibility finding
+## Original accessibility finding (resolved below)
 
 During several older-history loads, computer use returned a transcript scroll area
 with no accessibility descendants, although contemporaneous screenshots showed the
@@ -96,8 +96,7 @@ This was a bounded live stress exercise with real provider inference and actual
 resident recovery, not a large-database benchmark or power-loss/disk-full test.
 No new automated tests were substituted for computer use. The implementation's
 previous lint, package tests, hosted app checks, and Xcode build remain documented
-in the linked qualification. Integrator review/merge and the accessibility finding
-remain open.
+in the linked qualification. The subsequent accessibility fix and integration checks are recorded below.
 
 ## Accessibility closeout
 
@@ -119,3 +118,25 @@ Verification after the source fix: lint/layout passed for 1,322 Swift files; all
 1,331 package tests in 257 suites passed; signed Debug Xcode build passed using the
 previously documented compiler-probe workaround. Logs: `/tmp/hex-ax-lint.log`,
 `/tmp/hex-ax-package.log`, `/tmp/hex-ax-build.log`.
+
+## Integrated build closeout
+
+Merged into local `dev` as `12b1e55e01fef165d1758ba1c1b9b28594eda05d`, including
+accessibility fix `0c0d3ce`. Reviewed migration publication, transactional writes and
+receipts, incremental interrupted-run recovery, context projection and paging.
+The merge had no conflicts and its source tree exactly matched the tested feature.
+
+Built the actual integrated checkout with the same Xcode command, destination,
+DerivedData and compiler-probe workaround documented above. Full app and resident
+build/signing passed: `/tmp/hex-sqlite-integrated-build.log`. Relaunched the app and
+used its Restart Hex Agent control to refresh the already-enabled matching service.
+App build `69216C78-A018-3CEA-BCC9-1A0925F5EB5E`, resident build prefix `227A9580`,
+session `117F24A9`, protocol 1.16.
+
+Repeated all twelve older-history page loads silently on this integrated app:
+message containers stayed present on every page, the original request was reachable,
+and Jump to latest restored the latest answer. Normal request
+`964DFF81-A730-4588-96D3-EB0BB64A4235` then completed with one inference and zero
+tool calls, correctly recalling 757 combined units and 6,986 overall, ending
+`INTEGRATED SQLITE VERIFIED`. The result and Completed status were visually checked.
+VoiceOver remained off. No push, main merge or distribution installation was performed.
