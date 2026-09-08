@@ -8,6 +8,29 @@ import Testing
 @Suite("Managed native observation boundary")
 struct HexGatewayPeekabooToolExecutorTests {
   @Test
+  func unsupportedObservationArgumentsRefuseBeforeDispatchAndAllowCorrection() async throws {
+    let base = Executor()
+    let wrapper = makeWrapper(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let priorToken = try await observe(wrapper, context: context)
+    var arguments = Self.exactTarget
+    arguments["capture_focus"] = .string("background")
+    let refusal = try await wrapper.execute(call("see", arguments), in: context)
+    #expect(refusal.status == .failure)
+    #expect(field(refusal, "dispatched") == .boolean(false))
+    #expect(field(refusal, "unsupported_arguments") == .array([.string("capture_focus")]))
+    #expect(!refusal.requiresUserAttention)
+    #expect(await base.calls.count == 1)
+    let stale = try await wrapper.execute(
+      call("click", ["on": .string("B1"), "hex_observation_id": priorToken]), in: context)
+    #expect(field(stale, "error") == .string("native_observation_required"))
+    let corrected = try await wrapper.execute(see(), in: context)
+    #expect(corrected.status == .success)
+    #expect(field(corrected, "hex_observation_id") != nil)
+    #expect(await base.calls.count == 2)
+  }
+
+  @Test
   func exactCaptureAuthorizesOneSnapshotActionAndRequiresVisibleVerification() async throws {
     let base = Executor()
     let wrapper = makeWrapper(base)
@@ -300,7 +323,14 @@ struct HexGatewayPeekabooToolExecutorTests {
       ["see", "click", "app", "agent", "analyze", "browser", "unknown"].map {
         ToolDefinition(
           name: "mcp_8_peekaboo_" + $0, description: "Fixture",
-          inputSchema: ["type": .string("object"), "properties": .object([:])])
+          inputSchema: $0 == "see"
+            ? [
+              "type": .string("object"), "additionalProperties": .boolean(false),
+              "properties": .object([
+                "app_target": .object(["type": .string("string")]),
+                "window_id": .object(["type": .string("integer")]),
+              ]),
+            ] : ["type": .string("object"), "properties": .object([:])])
       }
     }
     func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
