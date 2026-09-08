@@ -1,0 +1,10 @@
+# Hex party ad v10
+
+Built-in imagegen edit of v9: dark rainy exterior at window and doorway.
+
+Edit the supplied approved HEX party ad with a focused weather and exterior-lighting correction. Keep the exact composition, all characters and readable names, headline "ROOM FOR ONE MORE?", food, furniture, coral room, and joyful warm party. Preserve Hex sheep EXACTLY: same identity, wool shape, black face, eyes, position, size, and still staring pose in the back doorway.
+
+1. LEFT WINDOW: eliminate all daylight and the white sunny exterior. Through every visible pane show DARK MIDNIGHT outside, deep navy/charcoal, with clearly visible rain droplets and rivulets running down the glass, faint diagonal rain beyond, and subtle silhouettes of wet tree branches. Keep window frame, curtains, balloons and indoor decor unchanged. The party remains brightly illuminated by warm indoor lamps and string lights; no daylight beams.
+2. OPEN BACK DOOR: show a spooky rainy night outside. Visible diagonal rain streaks beyond the sheltered threshold, dark windswept tree silhouettes, wet porch and puddles reflecting a small amount of warm light from indoors, low restrained atmospheric mist in distance. A faint cold storm glow behind the trees provides depth, but no bright daytime sky. Rain is entirely outside, never inside the party room.
+3. HEX LIGHTING: same adorable sheep standing motionless just under shelter at the threshold, subtly ominous. Keep her face shaded but recognizable with tiny natural black-eye catchlights, thin cool moon/storm rim along wool and a little warm indoor spill on front. Keep her wool cream, no redesign, no horror face, no fangs, no glowing red eyes. A soft shadow and wet reflected glow at her feet sell the eerie entrance.
+Mood: happy oblivious indoor party versus dark rainy slightly scary exterior, humorous spooky contrast. Maintain the approved bright coral interior and all guest appearances; only remove sunlight from the left window area and replace exterior views with coherent stormy night. No global darkness or heavy vignette. No new text, characters, logos, hexagons or changes to layout.
