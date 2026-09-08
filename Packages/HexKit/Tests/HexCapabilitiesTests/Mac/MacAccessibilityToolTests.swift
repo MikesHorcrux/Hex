@@ -6,6 +6,35 @@ import Testing
 @Suite("Mac Accessibility tools")
 struct MacAccessibilityToolTests {
   @Test
+  func oversizedSnapshotRequestCanBeCorrectedWithoutDispatch() async throws {
+    let controller = AccessibilityController()
+    let tool = MacAccessibilitySnapshotTool(
+      controller: controller, observationLedger: MacAccessibilityObservationLedger(),
+      sessionState: { .available })
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let invalid = ToolCall(
+      name: "mac_accessibility_snapshot",
+      arguments: [
+        "bundle_id": .string("com.apple.Safari"), "max_depth": .integer(12),
+        "max_elements": .integer(600),
+      ])
+    await #expect(throws: ToolCallValidationError.self) {
+      try await tool.authorizationRequest(for: invalid, in: context)
+    }
+    #expect(try await tool.execute(invalid, in: context).status == .failure)
+    #expect(await controller.snapshotCount == 0)
+    let corrected = ToolCall(
+      name: "mac_accessibility_snapshot",
+      arguments: [
+        "bundle_id": .string("com.apple.Safari"), "max_depth": .integer(12),
+        "max_elements": .integer(512),
+      ])
+    _ = try await tool.authorizationRequest(for: corrected, in: context)
+    #expect(try await tool.execute(corrected, in: context).status == .success)
+    #expect(await controller.snapshotCount == 1)
+  }
+
+  @Test
   func malformedObservationIsRecoverableBeforeAuthorizationAndCannotExecute() async throws {
     let controller = AccessibilityController()
     let tool = MacAccessibilityActionTool(
@@ -115,6 +144,7 @@ struct MacAccessibilityToolTests {
 
   private actor AccessibilityController: MacAccessibilityControlling {
     private let trusted: Bool
+    private(set) var snapshotCount = 0
     private(set) var lastAction: MacAccessibilityActionRequest?
 
     init(isTrusted: Bool = true) {
@@ -130,7 +160,8 @@ struct MacAccessibilityToolTests {
       maximumDepth: Int,
       maximumElements: Int
     ) async throws -> MacAccessibilitySnapshot {
-      MacAccessibilitySnapshot(
+      snapshotCount += 1
+      return MacAccessibilitySnapshot(
         bundleIdentifier: bundleIdentifier,
         applicationName: "Safari",
         processIdentifier: 42,
