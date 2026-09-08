@@ -18,9 +18,14 @@ with `dispatched: false`. The browser navigated to the form but timed out waitin
 its preserved receipt shows the click reached the page. The fixture still has zero submissions
 and downloads, and Hex did not replay the click. Evidence: `canonical-verified-run` and
 `canonical-verified-browser-fixture` under the evidence root below. Resume with an unlocked Mac,
-fresh browser fixture and verified pristine native fixture, then require both complete journeys.
+fresh browser and native fixtures, then require both complete journeys.
 The earlier native run proved one field update and one press with the correct semantic result,
 but its failed screenshot attempt is not complete qualification. The ticket remains In Progress.
+
+Owned fixtures and the temporary awake assertion were stopped; evidence was retained. The
+registered agent remains running at PID 66398 from the verified canonical executable, and resident
+settings match their initial digest. The feature worktree is clean after this report commit.
+Canonical `dev` retains only the pre-existing Xcode user scheme-order change, preserved unchanged.
 
 ## Behavior
 
