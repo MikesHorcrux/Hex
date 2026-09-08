@@ -4,7 +4,7 @@
 
 Shared Sendable values and small inference, tool, event and authority contracts.
 
-**75 Swift files.** Generated; do not edit by hand.
+**76 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexCore/Artifacts
 
@@ -126,6 +126,7 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | --- | --- |
 | [ToolArtifactValidation.swift](../../../Packages/HexKit/Sources/HexCore/Tools/ToolArtifactValidation.swift) | Structural validation does not grant access. The reader must also match the stored manifest. |
 | [ToolCall.swift](../../../Packages/HexKit/Sources/HexCore/Tools/ToolCall.swift) | — |
+| [ToolCallValidationError.swift](../../../Packages/HexKit/Sources/HexCore/Tools/ToolCallValidationError.swift) | A host tool's pure argument validation rejected the call before authorization or dispatch. Throw only for malformed model arguments, never for permission, transport, or execution errors. |
 | [ToolChoice.swift](../../../Packages/HexKit/Sources/HexCore/Tools/ToolChoice.swift) | — |
 | [ToolDefinition.swift](../../../Packages/HexKit/Sources/HexCore/Tools/ToolDefinition.swift) | — |
 | [ToolExecutionContext.swift](../../../Packages/HexKit/Sources/HexCore/Tools/ToolExecutionContext.swift) | — |

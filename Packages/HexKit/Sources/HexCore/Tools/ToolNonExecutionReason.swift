@@ -5,4 +5,5 @@ public enum ToolNonExecutionReason: String, Codable, Equatable, Sendable {
   case runStopped
   case interrupted
   case authorizationDenied
+  case invalidArguments
 }

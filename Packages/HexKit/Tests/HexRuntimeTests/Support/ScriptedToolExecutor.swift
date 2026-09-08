@@ -53,6 +53,8 @@ actor ScriptedToolExecutor: ToolExecutor {
       )
     case .request(let request):
       return request
+    case .invalidArguments:
+      throw ToolCallValidationError(recovery: "Observe again and use the returned ID.")
     case .throwing:
       throw ScriptedToolExecutorError.authorizationDescription
     case .suspend:

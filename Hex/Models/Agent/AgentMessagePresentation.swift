@@ -20,6 +20,7 @@ nonisolated enum AgentMessagePresentation {
         case .cancelled: "The run was cancelled before this tool started."
         case .runStopped: "The run stopped before this tool started."
         case .interrupted: "The agent stopped before this tool started."
+        case .invalidArguments: "The tool arguments were invalid, so it did not run."
         case .authorizationDenied: "This action was not approved, so it did not run."
         }
       return "Not run\n\(explanation)"
