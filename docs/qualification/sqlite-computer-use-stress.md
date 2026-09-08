@@ -12,8 +12,8 @@ No production source was changed in this pass.
 
 The live storage, compaction, restart, and explicit continuation checks passed.
 There were no missing baseline records, duplicate audit reads, or incorrect final
-marker/value pairs. An intermittent accessibility-tree issue remains unresolved;
-this is not a blanket UI/accessibility sign-off.
+marker/value pairs. The intermittent accessibility-tree issue was subsequently fixed and silently
+rechecked as recorded below; this is not a blanket VoiceOver usability audit.
 
 All prompts, history navigation, search, normal app quits, and reconnects were
 performed through native computer use. Read-only SQLite queries independently
@@ -98,3 +98,24 @@ No new automated tests were substituted for computer use. The implementation's
 previous lint, package tests, hosted app checks, and Xcode build remain documented
 in the linked qualification. Integrator review/merge and the accessibility finding
 remain open.
+
+## Accessibility closeout
+
+The pre-fix app reproduced the empty transcript accessibility subtree on the fourth
+older-page load. SwiftUI had coalesced adjacent conversation rows into very large
+text elements. Each `AgentConversationRowView` now defines a separate accessibility
+container with its stable message identifier. The contain behavior preserves child
+text, Markdown links, and artifact buttons rather than flattening them into a label.
+
+The rebuilt app exposed separate message containers through all twelve older-history
+loads, including the original request. Earlier/latest controls remained accessible
+when scrolled into view; the earlier control correctly disappeared at the start.
+Jump to latest restored 50 message containers and the exact saved recall result.
+VoiceOver was briefly enabled but that audible check was stopped at the user's
+request; no completed VoiceOver usability test is claimed. All subsequent checks
+were silent computer-use accessibility snapshots and visible UI checks.
+
+Verification after the source fix: lint/layout passed for 1,322 Swift files; all
+1,331 package tests in 257 suites passed; signed Debug Xcode build passed using the
+previously documented compiler-probe workaround. Logs: `/tmp/hex-ax-lint.log`,
+`/tmp/hex-ax-package.log`, `/tmp/hex-ax-build.log`.

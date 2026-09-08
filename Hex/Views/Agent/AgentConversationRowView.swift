@@ -83,6 +83,11 @@ struct AgentConversationRowView: View {
       }
     }
     .padding(.vertical, 3)
+    // Keep each message a separate navigation group. Without a boundary, SwiftUI coalesces
+    // adjacent rows into a very large accessibility element as history pages are replaced.
+    // Contain (rather than combine) preserves Markdown links and artifact buttons as children.
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("conversationMessage-\(item.id)")
   }
 
   @ViewBuilder
