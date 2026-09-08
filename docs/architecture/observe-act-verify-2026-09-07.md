@@ -8,24 +8,36 @@ Feature branch: `codex/observe-act-verify`, based on
 
 ## Current status
 
-Implementation through `079fc25` is integrated on `dev` at
-`23fde17bf9bcd6b6720b059b160a1aaf6c543415` and canonically activated. The final package suite
-passed 1,309 tests; the signed hosted suite passed 294 tests; lint and documentation passed.
-`/tmp/hex-oav-canonical-verified-build-run.log` records the successful canonical build and refresh.
+**Complete.** Production implementation through `079fc25` is integrated on `dev` at
+`23fde17bf9bcd6b6720b059b160a1aaf6c543415` and canonically activated. Both ordinary live
+journeys completed through the signed resident using that executable, with no settings or privacy
+grant changes. The final package suite passed **1,309 tests in 253 suites**; the latest signed
+hosted suite passed **294 tests in 52 suites**; lint passed for 1,294 Swift files.
+Canonical build and refresh: `/tmp/hex-oav-canonical-verified-build-run.log`.
 
-The complete live gate remains open. The latest native attempt returned `mac_session_locked`
-with `dispatched: false`. The browser navigated to the form but timed out waiting for navigation;
-its preserved receipt shows the click reached the page. The fixture still has zero submissions
-and downloads, and Hex did not replay the click. Evidence: `canonical-verified-run` and
-`canonical-verified-browser-fixture` under the evidence root below. Resume with an unlocked Mac,
-fresh browser and native fixtures, then require both complete journeys.
-The earlier native run proved one field update and one press with the correct semantic result,
-but its failed screenshot attempt is not complete qualification. The ticket remains In Progress.
+The live evidence is under `/var/folders/27/f97lbkd505s6jg6k0m1t_3m40000gn/T/hex-observe-act-verify.4oml2iig/canonical-open-run`.
+Native run `5FC44273-3F11-4F32-95C5-1886F1C08519` began with pristine synthetic state,
+set the field once, pressed Apply once, and re-observed the exact text and counter 1. The final
+image was visually inspected (`native-final-window.png`); its original result verifies PID 69915
+and window 7325. An unsupported screenshot argument was locally refused and corrected without
+repeating input. Browser run `623B2620-4680-4EF0-978D-74F1D11E43EE` observed the rerender,
+submitted exactly once, verified the result page, completed one download, and read its exact
+78-byte receipt. The fixture journal independently records one submission and one download.
 
-Owned fixtures and the temporary awake assertion were stopped; evidence was retained. The
-registered agent remains running at PID 66398 from the verified canonical executable, and resident
-settings match their initial digest. The feature worktree is clean after this report commit.
-Canonical `dev` retains only the pre-existing Xcode user scheme-order change, preserved unchanged.
+The first harness evaluation incorrectly inspected a shortened screenshot-result preview and
+sanitized process stdout. The corrected harness reads complete artifacts through the signed
+resident API, validates run/call ownership, completeness, bounded ranges and SHA-256, and applies
+the original assertions. Read-only verification of those same completed events passed **all four
+live-suite tests**, without starting another agent run or repeating actions. Original events and
+identity files remain unchanged. Logs: `/tmp/hex-oav-canonical-open.log` (actual journeys),
+`/tmp/hex-oav-artifact-hosted2.log` (294 hosted tests), and
+`/tmp/hex-oav-completed-verification.log` (four completed-evidence checks), each with an xcresult.
+The screenshot result artifact SHA-256 is
+`d2f92307d774ed92563dd57ea0d992497d16c7fb9a4bf19e34a2a09147b616a3`;
+receipt stdout SHA-256 is `e51397f32a69d10c1d8153c6efcf5ced914a867e410db1068087729701f786c9`.
+
+Canonical `dev` retains the pre-existing Xcode user scheme-order change. The checkpoint sections
+below describe earlier failures and their resolution; they are historical, not remaining gates.
 
 ## Behavior
 
@@ -150,7 +162,7 @@ A subsequent resident read-only probe encountered an actual locked session and r
 does not unlock the Mac or change privacy grants. Completion of the actual native/browser journeys
 after these follow-up fixes is still pending in this work log.
 
-## Current verification gate
+## Historical verification gate (resolved)
 
 The follow-up native selector passed **18 tests in five suites**, including typed child-read
 failures, real empty arrays, leaf absence, invalid values, late API disablement, and absence of
@@ -190,20 +202,17 @@ No preferences, toolchain files, privacy grants, or lock state were changed. Eac
 build was stopped. Logs: `/tmp/hex-oav-hosted-livefix.log`,
 `/tmp/hex-oav-hosted-livefix-retry.log`, `/tmp/hex-oav-hosted-livefix-inprocess.log`.
 
-The follow-up fixes are retained on the feature branch, pending a successful signed build and
-resident qualification. They have **not** been integrated or activated. The canonical app remains
-the build from `3138ccce6769eac93a346c07fc2e5735baa1884a`, whose first resident attempt is recorded
-above. The disposable fixture processes were stopped, and their evidence was preserved.
+At that checkpoint, follow-up fixes were retained on the feature branch pending signed build and
+resident qualification. The canonical app was still the build from
+`3138ccce6769eac93a346c07fc2e5735baa1884a`, whose first resident attempt is recorded above. The disposable fixture processes were stopped, and their evidence was preserved.
 
 The unlocked read-only resident probe subsequently read ten AX elements from a freshly launched
 fixture and captured its exact window (`canonical-unlocked-probe`). The first observation already
 showed an applied counter, so this probe is not evidence that Hex performed the action. Full
 qualification now requires pristine initial field and result values before any input.
 
-Resume with an unlocked session, resolve the exact current verification failures, rebuild the
-signed host, and integrate/activate the reviewed follow-up commit. Launch fresh owned fixtures;
-use their newly recorded PID/window and loopback port. Require the complete ordered native and
-browser evidence before moving the ticket to Done.
+Those checkpoint requirements were subsequently completed: signed host rebuild, canonical
+integration and activation, and fresh fixture journeys with ordered native and browser evidence.
 
 ## Provider arguments and compiler qualification follow-up
 

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import HexCore
 import HexGatewayKit
@@ -155,13 +156,23 @@ struct HexLiveObserveActVerifyTests: Sendable {
       Int(recordedPort) == port, "Fixture directory does not own the requested loopback port.")
     let initial = try Self.readObject(stateDirectory.appendingPathComponent("state.json"))
     try Self.require(
-      initial["submission_count"] == .integer(0) && initial["download_count"] == .integer(0),
+      Self.replaying
+        || initial["submission_count"] == .integer(0) && initial["download_count"] == .integer(0),
       "Use a fresh browser fixture without prior effects.")
     let configuration = try await HexGatewayResidentConfiguration.loadPersisted()
     let layout = try #require(configuration.managedToolLayout)
     let downloadURL = layout.playwrightOutputURL.appendingPathComponent(Self.receiptName)
       .standardizedFileURL
-    let startedAt = Date()
+    let startedAt: Date
+    if Self.replaying {
+      let directory = try Self.temporaryDirectory(
+        environment["HEX_OAV_EVIDENCE_DIR"], create: false)
+      startedAt = try #require(
+        directory.appendingPathComponent("resident-browser-identity.json")
+          .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+    } else {
+      startedAt = Date()
+    }
     let prompt = """
       Complete the harmless local browser fixture at \(url.absoluteString) using Hex's managed
       Playwright tools. Take a full inline browser_snapshot first, without target, filename, or
@@ -260,6 +271,36 @@ struct HexLiveObserveActVerifyTests: Sendable {
       configuration: HexDeveloperConfiguration(environment: ProcessInfo.processInfo.environment),
       route: .residentXPC(machServiceName: configuration.machServiceName),
       initialGatewayAdapter: adapter)
+    if Self.replaying {
+      let directory = try Self.temporaryDirectory(
+        ProcessInfo.processInfo.environment["HEX_OAV_EVIDENCE_DIR"], create: false)
+      let identity = try Self.readObject(
+        directory.appendingPathComponent("resident-\(stage)-identity.json"))
+      try Self.require(
+        identity["canonical_app_path"] == .string(canonical.url.path)
+          && identity["expected_executable_id"] == .string(canonical.executableID.uuidString)
+          && identity["stage"] == .string(stage),
+        "Saved run belongs to another executable or stage.")
+      guard case .string(let rawID) = identity["run_id"], let uuid = UUID(uuidString: rawID) else {
+        throw QualificationError.invalidFixture
+      }
+      let events = try JSONDecoder().decode(
+        [AgentEvent].self,
+        from: Data(contentsOf: directory.appendingPathComponent("resident-\(stage)-events.json")))
+      try Self.require(
+        events.contains { if case .runCompleted = $0 { true } else { false } },
+        "Saved run did not complete.")
+      do {
+        _ = try await client.connect()
+        let hydrated = try await Self.hydrate(
+          events, client: client, runID: AgentRunID(rawValue: uuid))
+        try await client.disconnect()
+        return hydrated
+      } catch {
+        await client.resetResidentGatewayConnection()
+        throw error
+      }
+    }
     let runID = AgentRunID()
     try Self.write(
       .object([
@@ -310,14 +351,74 @@ struct HexLiveObserveActVerifyTests: Sendable {
           if allowsBlockedRun, case .runFailed = $0 { return true }
           return false
         }, "Resident run did not reach the required terminal outcome.")
+      let hydrated = try await Self.hydrate(events, client: client, runID: runID)
       try await Self.withTimeout(seconds: 10, stage: "disconnect") { try await client.disconnect() }
-      return events
+      return hydrated
     } catch {
       // A suite timeout cancels this task. A fresh task permits cancellation-checked client calls.
       // Re-handshake also finds an admitted run whose start response was lost.
       await Task { await Self.cancelOwnedRun(client: client, runID: runID, stage: stage) }.value
       throw error
     }
+  }
+
+  /// Rechecks immutable completed evidence without starting a run or repeating fixture inputs.
+  private static var replaying: Bool {
+    ProcessInfo.processInfo.environment["HEX_OAV_REPLAY_COMPLETED"] == "1"
+  }
+
+  private static func hydrate(_ events: [AgentEvent], client: HexLiveAgentClient, runID: AgentRunID)
+    async throws -> [AgentEvent]
+  {
+    let calls = try receipts(events)
+    var hydrated = events
+    for receipt in calls {
+      let result = receipt.result
+      let stored = field(result, "stored_tool_result") == .boolean(true)
+      let rawProcess = receipt.call.name == "process_run" && result.status == .success
+      guard stored || rawProcess else { continue }
+      let candidates = result.artifacts.filter {
+        $0.mediaType == (stored ? "application/json" : "application/octet-stream")
+      }
+      try require(candidates.count == 1, "Expected one authoritative output artifact.")
+      let reference = try #require(candidates.first)
+      try require(
+        reference.runID == runID && reference.toolCallID == result.toolCallID
+          && reference.isComplete && reference.byteCount > 0 && reference.byteCount <= 1_048_576,
+        "Artifact ownership or completeness does not match the completed call.")
+      var data = Data()
+      while Int64(data.count) < reference.byteCount {
+        let response = try await client.readArtifact(
+          GatewayArtifactReadRequest(
+            reference: reference, offset: Int64(data.count), maximumBytes: 16_384))
+        try require(
+          response.reference == reference && response.offset == Int64(data.count)
+            && !response.data.isEmpty
+            && Int64(data.count + response.data.count) <= reference.byteCount,
+          "Artifact range response is inconsistent.")
+        data.append(response.data)
+      }
+      let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+      try require(digest == reference.sha256, "Artifact digest differs from its immutable receipt.")
+      if stored {
+        let original = try JSONDecoder().decode(ToolResult.self, from: data)
+        try require(
+          original.toolCallID == result.toolCallID && original.status == result.status
+            && original.requiresUserAttention == result.requiresUserAttention
+            && original.notExecutedReason == result.notExecutedReason,
+          "Stored result contradicts the event receipt.")
+        hydrated[receipt.finishIndex] = .toolFinished(original)
+      } else {
+        let text = try #require(String(data: data, encoding: .utf8))
+        hydrated[receipt.finishIndex] = .toolFinished(
+          ToolResult(
+            toolCallID: result.toolCallID, status: result.status, output: result.output,
+            content: result.content + [.text(text)], artifacts: result.artifacts,
+            requiresUserAttention: result.requiresUserAttention,
+            notExecutedReason: result.notExecutedReason))
+      }
+    }
+    return hydrated
   }
 
   private static func cancelOwnedRun(client: HexLiveAgentClient, runID: AgentRunID, stage: String)

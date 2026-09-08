@@ -83,3 +83,13 @@ tab. The legacy live conversation test also now observes the existing tab; skip 
 qualification. Hosted checks use the already configured inference provider. Timeout cleanup runs
 in a fresh task, reconnects, and requests cancellation only if the active run ID matches the one
 created by the harness, including when the start reply was lost.
+
+For a completed run whose original event and identity files are preserved, set
+`HEX_OAV_REPLAY_COMPLETED=1` (or `TEST_RUNNER_HEX_OAV_REPLAY_COMPLETED=1` through xcodebuild)
+to recheck that evidence without starting another run. Keep the original evidence directory,
+fixture identities, browser journal/state and downloaded file. This mode requires the same
+canonical executable identity and a completed terminal event. It reads immutable output artifacts
+through the resident connection and validates ownership, completeness and SHA-256 before applying
+the same semantic, screenshot, ordering, exact-once and receipt checks. The original browser
+identity-file timestamp remains the lower bound for the download date. This is verification of a
+previously completed live journey, not a new journey or a substitute for missing live evidence.
