@@ -4,7 +4,7 @@
 
 Native file, process, web, Mac and artifact capability execution.
 
-**124 Swift files.** Generated; do not edit by hand.
+**125 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexCapabilities/Artifacts
 
@@ -60,6 +60,7 @@ Native file, process, web, Mac and artifact capability execution.
 | [MacAccessibilitySelector.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySelector.swift) | — |
 | [MacAccessibilitySnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshot.swift) | — |
 | [MacAccessibilitySnapshotTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshotTool.swift) | — |
+| [MacAccessibilityTraversal.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityTraversal.swift) | Visits each subtree before its siblings so shallow application menus cannot exhaust the budget before deeply nested window content. Paths retain the original Accessibility child indices. |
 | [MacActivateApplicationTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacActivateApplicationTool.swift) | — |
 | [MacApplicationActivationResult.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacApplicationActivationResult.swift) | — |
 | [MacApplicationControlling.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacApplicationControlling.swift) | — |
