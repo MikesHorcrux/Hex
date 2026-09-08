@@ -43,13 +43,17 @@ Base: `c04a91447a01b3ac35e2b4a9d0b8644a56aec8c1`; isolated branch
 ## Changed files
 
 - `Hex/Models/Agent/AgentMessagePresentation.swift`
+- `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityAction.swift`
 - `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityActionTool.swift`
+- `Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController.swift`
 - `Packages/HexKit/Sources/HexCore/Tools/ToolCallValidationError.swift`
 - `Packages/HexKit/Sources/HexCore/Tools/ToolNonExecutionReason.swift`
+- `Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPeekabooToolExecutor.swift`
 - `Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+Artifacts.swift`
 - `Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+ToolDispatch.swift`
 - `Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+Tools.swift`
 - `Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityToolTests.swift`
+- `Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPeekabooToolExecutorTests.swift`
 - `Packages/HexKit/Tests/HexGatewayTests/Composition/HexGatewayArtifactWorkflowTests.swift`
 - `Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeArgumentRecoveryTests.swift`
 - `Packages/HexKit/Tests/HexRuntimeTests/Support/ScriptedToolExecutor.swift`
@@ -64,3 +68,27 @@ Signed hosted verification passed 294 tests in 52 suites (`/tmp/hex-safari-hoste
 -configuration Debug -destination 'platform=macOS' -jobs 2 -parallel-testing-enabled NO
 -derivedDataPath /Users/horcrux/ActiveDev/Hex-worktrees/observe-act-verify/.build/ObserveActVerifyDerivedData
 -only-testing:HexTests`, with the per-invocation compiler relay described above.
+
+## Live follow-up: native Confirm and passive read recovery
+
+Canonical activation of `3ee805d22fa673064e9f875a8cf069809aa9d88b` succeeded through
+`./script/build_and_run.sh` (`/tmp/hex-safari-canonical.log`). Run
+`7140C11F-8F66-498E-9C72-4F0491BDCB02` received and copied an inline action ID correctly,
+including after expiry caused a safe fresh-observation retry. It did not repeat the malformed-ID
+authorization crash. The managed helper then refused keyboard delivery because the focused
+address field was outside its reported target bounds (161 by 140, while its window list reported
+1906 by 1179). No keyboard input was dispatched. A later passive screenshot threw and ended the run.
+
+The native snapshot showed that Safari's New Tab toolbar control did not advertise AXPress,
+while its address field advertised AXConfirm. Hex now exposes `confirm` and dispatches it only
+when the exact fresh element advertises AXConfirm, with the same permission/session/identity and
+single-use ledger checks as press. Set-value requires its own fresh observation; confirm needs
+another observation and accepts no value argument. No geometry or permission guard was relaxed.
+
+A thrown read-only managed observation now clears prior action authority and returns a failed,
+zero-input receipt with a native Accessibility fallback instruction. Parent task cancellation still
+propagates. Mutation errors retain uncertain-outcome handling; they are never treated as safe reads.
+Tests failed before both follow-up fixes (`/tmp/hex-safari-confirm-before.log`), then the full suite
+passed 1,313 tests in 254 suites (`/tmp/hex-safari-confirm-package.log`). Lint and docs passed.
+The follow-up signed hosted suite also passed all 294 tests in 52 suites
+(`/tmp/hex-safari-confirm-hosted.log` and `/tmp/hex-safari-confirm-hosted.xcresult`).

@@ -8,6 +8,25 @@ import Testing
 @Suite("Managed native observation boundary")
 struct HexGatewayPeekabooToolExecutorTests {
   @Test
+  func failedReadOnlyCaptureClearsAuthorityAndAllowsFreshObservation() async throws {
+    let base = Executor()
+    let wrapper = makeWrapper(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let oldToken = try await observe(wrapper, context: context)
+    await base.setCaptureMode("throw")
+    let failure = try await wrapper.execute(see(), in: context)
+    #expect(field(failure, "error") == .string("native_observation_failed"))
+    #expect(field(failure, "dispatched") == .boolean(false))
+    #expect(!failure.requiresUserAttention)
+    let blocked = try await wrapper.execute(
+      call("click", ["on": .string("B1"), "hex_observation_id": oldToken]), in: context)
+    #expect(field(blocked, "error") == .string("native_observation_required"))
+    await base.setCaptureMode("ordinary")
+    #expect(field(try await wrapper.execute(see(), in: context), "hex_observation_id") != nil)
+    #expect(await base.calls.count == 3)
+  }
+
+  @Test
   func unsupportedObservationArgumentsRefuseBeforeDispatchAndAllowCorrection() async throws {
     let base = Executor()
     let wrapper = makeWrapper(base)
@@ -346,6 +365,7 @@ struct HexGatewayPeekabooToolExecutorTests {
       calls.append(call)
       let tool = String(call.name.dropFirst("mcp_8_peekaboo_".count))
       let capture = tool == "see" || tool == "inspect_ui"
+      if capture, captureMode == "throw" { throw CocoaError(.fileReadUnknown) }
       if !capture, actionMode == "throw" { throw CancellationError() }
       var metadata =
         capture

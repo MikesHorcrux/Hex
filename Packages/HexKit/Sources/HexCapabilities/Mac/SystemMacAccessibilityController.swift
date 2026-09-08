@@ -109,12 +109,13 @@ public final class SystemMacAccessibilityController: MacAccessibilityControlling
 
     let error: AXError
     switch request.action {
-    case .press:
-      guard Self.actions(for: match.element).contains(kAXPressAction as String) else {
+    case .press, .confirm:
+      let actionName = request.action == .confirm ? kAXConfirmAction : kAXPressAction
+      guard Self.actions(for: match.element).contains(actionName as String) else {
         throw MacToolError.accessibilityActionUnsupported
       }
       try requireAvailable()
-      error = AXUIElementPerformAction(match.element, kAXPressAction as CFString)
+      error = AXUIElementPerformAction(match.element, actionName as CFString)
     case .focus:
       try requireAvailable()
       error = AXUIElementSetAttributeValue(

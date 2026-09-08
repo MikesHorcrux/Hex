@@ -6,8 +6,10 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
   public let definition = ToolDefinition(
     name: "mac_accessibility_action",
     description:
-      "Press, focus, or set the value of one exact element in a running macOS application's "
-      + "Accessibility tree. Use observation_id and a path or exact attributes from a fresh "
+      "Press, confirm, focus, or set the value of one exact element in a running macOS application's "
+      + "Accessibility tree. Press requires advertised AXPress; confirm requires AXConfirm, such as "
+      + "Safari's smart search field after set_value to navigate. Do not substitute press for confirm. "
+      + "Use observation_id and a path or exact attributes from a fresh "
       + "mac_accessibility_snapshot in this run. Each observation permits only one action and "
       + "expires after 60 seconds. Success acknowledges dispatch, not visible completion: observe "
       + "again to verify the result before continuing. Never blindly repeat an uncertain action. "
@@ -196,7 +198,7 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
     switch action {
     case .setValue:
       guard value != nil else { throw MacToolError.invalidArguments }
-    case .press, .focus:
+    case .press, .focus, .confirm:
       guard value == nil else { throw MacToolError.invalidArguments }
     }
     return MacAccessibilityActionRequest(

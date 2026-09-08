@@ -26,8 +26,8 @@ struct MacAccessibilityToolTests {
     #expect(await controller.lastAction == nil)
   }
 
-  @Test
-  func snapshotAndActionUseExactApplicationAndSelector() async throws {
+  @Test(arguments: ["press", "confirm"])
+  func snapshotAndActionUseExactApplicationAndSelector(action: String) async throws {
     let controller = AccessibilityController()
     let observations = MacAccessibilityObservationLedger()
     let snapshotTool = MacAccessibilitySnapshotTool(
@@ -62,7 +62,7 @@ struct MacAccessibilityToolTests {
       name: "mac_accessibility_action",
       arguments: [
         "bundle_id": .string("com.apple.Safari"),
-        "action": .string("press"),
+        "action": .string(action),
         "observation_id": .string(observationID),
         "path": .string("0.1"),
       ]
