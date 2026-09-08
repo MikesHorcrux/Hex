@@ -1090,6 +1090,9 @@ struct OpenAIResponsesRequestBuilder {
         "name": .string(tool.name),
         "description": .string(tool.description),
         "parameters": .object(tool.inputSchema),
+        // Responses otherwise attempts strict normalization, turning omitted optional inputs
+        // into required fields. Preserve Hex's schemas and exact host argument validation.
+        "strict": .boolean(false),
       ])
     }
   }

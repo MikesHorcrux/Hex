@@ -65,8 +65,17 @@ synthetic receipt in the managed Playwright output directory.
 For native qualification, supply `HEX_OAV_NATIVE_BUNDLE_ID`, `HEX_OAV_NATIVE_PID`, and
 `HEX_OAV_NATIVE_WINDOW_ID` from the disposable fixture. The full journey requires exactly the
 built-in `set_value` and `press` actions, fresh correlated semantic observations, and a subsequent
-image receipt from that exact PID/window. `HEX_OAV_PROBE_ONLY=1` performs read-only native probes
+image receipt from that exact PID/window. The full native journey requires the fixture's initial
+text and `No action has been applied` result before input; launch a fresh fixture if it has already
+been used. `HEX_OAV_PROBE_ONLY=1` performs read-only native probes
 and preserves concrete blockers without requiring a completed interaction.
+
+`HEX_OAV_WORKFLOW=browser|native|all` selects the hosted journey, defaulting to `all`.
+Unselected journeys are reported as skipped and perform no fixture actions; invalid values fail
+the selector validation test. A browser-only run does not require native fixture variables and
+does not qualify native interaction. With `HEX_OAV_PROBE_ONLY=1`, the browser journey is skipped.
+When a blocker stops a model batch, announced calls with valid runtime `notExecutedReason`
+receipts remain recorded as never started; they cannot satisfy action or observation ordering.
 
 Run these hosted checks only when the resident is idle and its current managed browser tab is
 already blank or belongs to the controlled fixture. The first snapshot observes that existing

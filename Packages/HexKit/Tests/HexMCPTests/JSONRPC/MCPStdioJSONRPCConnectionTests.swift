@@ -1110,21 +1110,36 @@ struct MCPStdioJSONRPCConnectionTests {
 
     try? await Task.sleep(for: .milliseconds(20))
     let drainTask = Task {
-      for _ in 0..<400 {
+      // Keep the peer reading until the tested writes finish. A fixed number of drain attempts
+      // can end while a valid writer is still progressing under load, manufacturing backpressure
+      // for the rest of its deadline. The connection's 30-second write deadline bounds failure.
+      while !Task.isCancelled {
         Self.drainPipe(secondFixture.inputReadDescriptor)
-        try? await Task.sleep(for: .milliseconds(2))
+        do {
+          try await Task.sleep(for: .milliseconds(2))
+        } catch {
+          return
+        }
       }
     }
-    try await replacementWrite.value
-    try await queuedReplacement.value
-    drainTask.cancel()
-    _ = await firstWrite.result
-
-    await connection.disconnect()
-    await terminator.releaseFirstTermination()
-    await firstShutdown.completion.value
-    await closer.close(firstFixture)
-    await closer.close(secondFixture)
+    func cleanup() async {
+      drainTask.cancel()
+      await drainTask.value
+      await terminator.releaseFirstTermination()
+      await connection.disconnect()
+      await firstShutdown.completion.value
+      await closer.close(firstFixture)
+      await closer.close(secondFixture)
+    }
+    do {
+      try await replacementWrite.value
+      try await queuedReplacement.value
+      _ = await firstWrite.result
+    } catch {
+      await cleanup()
+      throw error
+    }
+    await cleanup()
   }
 
   @Test("A stale output reader cannot consume a replacement generation burst")

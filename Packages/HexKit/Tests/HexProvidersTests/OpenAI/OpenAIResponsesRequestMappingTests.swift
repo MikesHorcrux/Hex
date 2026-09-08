@@ -6,6 +6,42 @@ import Testing
 
 @Suite("OpenAI Responses request mapping")
 struct OpenAIResponsesRequestMappingTests {
+  @Test(arguments: [OpenAIResponsesService.platformAPI, .chatGPTCodexSubscription])
+  func optionalToolArgumentsRemainOptionalForBothServices(service: OpenAIResponsesService) throws {
+    let schema: [String: JSONValue] = [
+      "type": .string("object"),
+      "properties": .object([
+        "bundle_id": .object(["type": .string("string"), "minLength": .integer(1)]),
+        "observation_id": .object(["type": .string("string")]),
+        "action": .object([
+          "type": .string("string"), "enum": .array([.string("press"), .string("set_value")]),
+        ]),
+        "value": .object(["type": .string("string"), "minLength": .integer(1)]),
+        "path": .object(["type": .string("string")]),
+      ]),
+      "required": .array([.string("bundle_id"), .string("observation_id"), .string("action")]),
+      "additionalProperties": .boolean(false),
+    ]
+    let tool = ToolDefinition(
+      name: "mac_accessibility_action", description: "An optional value is omitted for press.",
+      inputSchema: schema)
+    let configuration = try OpenAIResponsesConfiguration(
+      service: service, models: [OpenAIResponsesTestFixture.model()])
+    let plan = try OpenAIResponsesRequestBuilder(configuration: configuration).build(
+      OpenAIResponsesTestFixture.request(tools: [tool]), serverState: nil, localState: nil)
+    guard case .object(let body) = try JSONDecoder().decode(JSONValue.self, from: plan.body),
+      case .array(let tools) = body["tools"], tools.count == 1,
+      case .object(let mapped) = tools[0]
+    else {
+      Issue.record("Expected exactly one mapped tool")
+      return
+    }
+    #expect(mapped["strict"] == .boolean(false))
+    #expect(mapped["parameters"] == .object(schema))
+    guard case .object(let parameters) = mapped["parameters"] else { return }
+    #expect(parameters["required"] == schema["required"])
+  }
+
   @Test
   func nextTurnIncludesExplicitNonExecutionMeaningInProviderInput() throws {
     let call = ToolCall(name: "lookup_weather", arguments: ["city": .string("Paris")])
@@ -131,7 +167,7 @@ struct OpenAIResponsesRequestMappingTests {
       let mappedTool = try #require(mappedTools.first)
       #expect(mappedTool["type"] as? String == "function")
       #expect(mappedTool["parameters"] as? [String: Any] != nil)
-      #expect(mappedTool["strict"] == nil)
+      #expect(mappedTool["strict"] as? Bool == false)
 
       let input = try #require(body["input"] as? [[String: Any]])
       #expect(

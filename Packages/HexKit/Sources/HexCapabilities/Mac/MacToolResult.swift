@@ -96,6 +96,10 @@ enum MacToolResult {
     }
     let code: String
     switch error {
+    case let readError as MacAccessibilityReadError:
+      code =
+        readError.isPermissionDenied
+        ? "accessibility_permission_required" : "accessibility_observation_incomplete"
     case ToolCallArgumentsError.invalidArguments, MacToolError.invalidArguments:
       code = "invalid_arguments"
     case ToolAuthorizationLedgerError.authorizationRequired,
@@ -140,6 +144,12 @@ enum MacToolResult {
         "mac_session_locked", "mac_session_unavailable",
       ].contains(code)
     var output: [String: JSONValue] = ["error": .string(code)]
+    if let readError = error as? MacAccessibilityReadError {
+      output["attribute"] = .string(readError.attribute)
+      output["element_path"] = .string(readError.elementPath)
+      output["ax_error_code"] = .integer(Int64(readError.axErrorCode))
+      output["reason"] = .string(readError.reason.rawValue)
+    }
     if code.hasPrefix("accessibility_") || code.hasPrefix("mac_session_") {
       output["dispatched"] = .boolean(outcomeUnknown)
       output["outcome_verified"] = .boolean(false)
@@ -150,6 +160,11 @@ enum MacToolResult {
         "The action may have taken effect. Observe the application before considering any retry.")
     } else if code == "accessibility_observation_stale" {
       output["next_step"] = .string("Obtain a fresh observation before planning another action.")
+    } else if code == "accessibility_observation_incomplete" {
+      output["next_step"] = .string(
+        "The Accessibility hierarchy could not be read completely. Obtain a fresh observation. "
+          + "If this persists, use exact-target screen observation or report the blocker; "
+          + "no native action receipt was created by this read.")
     }
     return ToolResult(
       toolCallID: callID,

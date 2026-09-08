@@ -59,12 +59,20 @@ public actor HexGatewayBrowserToolExecutor: ToolExecutor {
     try await base.availableTools().map { definition in
       guard let name = Self.remoteName(definition.name) else { return definition }
       if name == "browser_snapshot" {
+        // Publish only shapes that can produce an action-authorizing full observation. Models
+        // may fill every advertised optional field, including a depth that truncates the tree.
+        var schema = definition.inputSchema
+        if case .object(let properties) = schema["properties"] {
+          schema["properties"] = .object(properties.filter { $0.key == "boxes" })
+        }
+        schema.removeValue(forKey: "required")
+        schema["additionalProperties"] = .boolean(false)
         return ToolDefinition(
           name: definition.name,
           description: definition.description
-            + " Capture a full inline snapshot (omit target, filename, and depth) to obtain the current "
+            + " Capture a full inline snapshot to obtain the current "
             + "Hex observation ID, page identity, and references before any browser action.",
-          inputSchema: definition.inputSchema)
+          inputSchema: schema)
       }
       guard Self.mutationTools.contains(name) else { return definition }
       var schema = definition.inputSchema

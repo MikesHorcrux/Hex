@@ -4,7 +4,7 @@
 
 MCP protocol, transports, managed adapters and discovery.
 
-**89 Swift files.** Generated; do not edit by hand.
+**90 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexMCP/Client
 
@@ -99,6 +99,7 @@ MCP protocol, transports, managed adapters and discovery.
 | [MCPExecutableSnapshotPolicy.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotPolicy.swift) | Persistent namespace and per-snapshot admission limits for mutable MCP executables. |
 | [MCPExecutableSnapshotPolicyError.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotPolicyError.swift) | — |
 | [MCPMachOImage.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPMachOImage.swift) | — |
+| [MCPProcessCleanupSystemCalls.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPProcessCleanupSystemCalls.swift) | Immutable syscall boundary for owned-child cleanup, with errno captured before other work. |
 | [MCPProcessEnvironment.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPProcessEnvironment.swift) | — |
 | [MCPSpawnedProcess.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPSpawnedProcess.swift) | — |
 | [MCPStdioProcessSpawner.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPStdioProcessSpawner.swift) | — |

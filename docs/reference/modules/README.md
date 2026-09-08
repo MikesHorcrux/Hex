@@ -9,8 +9,8 @@ not independently verified API documentation. A dash means no leading comment wa
 | Module / target | Swift files | Ownership |
 | --- | ---: | --- |
 | [Hex](Hex.md) | 225 | macOS app composition, observable models, services and SwiftUI views. |
-| [HexCapabilities](HexCapabilities.md) | 123 | Native file, process, web, Mac and artifact capability execution. |
-| [HexCapabilitiesTests](HexCapabilitiesTests.md) | 23 | Focused test target; consult suites for exercised boundaries. |
+| [HexCapabilities](HexCapabilities.md) | 124 | Native file, process, web, Mac and artifact capability execution. |
+| [HexCapabilitiesTests](HexCapabilitiesTests.md) | 25 | Focused test target; consult suites for exercised boundaries. |
 | [HexCore](HexCore.md) | 75 | Shared Sendable values and small inference, tool, event and authority contracts. |
 | [HexCoreTests](HexCoreTests.md) | 19 | Focused test target; consult suites for exercised boundaries. |
 | [HexGatewayCommand](HexGatewayCommand.md) | 1 | HexGateway executable entry and concrete provider injection. |
@@ -18,8 +18,8 @@ not independently verified API documentation. A dash means no leading comment wa
 | [HexGatewayTests](HexGatewayTests.md) | 42 | Focused test target; consult suites for exercised boundaries. |
 | [HexIPC](HexIPC.md) | 134 | Gateway wire contracts, clients, services, XPC and recovery. |
 | [HexIPCTests](HexIPCTests.md) | 78 | Focused test target; consult suites for exercised boundaries. |
-| [HexMCP](HexMCP.md) | 89 | MCP protocol, transports, managed adapters and discovery. |
-| [HexMCPTests](HexMCPTests.md) | 27 | Focused test target; consult suites for exercised boundaries. |
+| [HexMCP](HexMCP.md) | 90 | MCP protocol, transports, managed adapters and discovery. |
+| [HexMCPTests](HexMCPTests.md) | 28 | Focused test target; consult suites for exercised boundaries. |
 | [HexMLXProvider](HexMLXProvider.md) | 15 | Concrete MLX model loading, mapping and generation. |
 | [HexMLXProviderTests](HexMLXProviderTests.md) | 6 | Focused test target; consult suites for exercised boundaries. |
 | [HexPersistence](HexPersistence.md) | 51 | Journal, settings and artifact persistence implementations. |
@@ -33,6 +33,6 @@ not independently verified API documentation. A dash means no leading comment wa
 | [HexTests](HexTests.md) | 53 | Focused test target; consult suites for exercised boundaries. |
 | [HexUITests](HexUITests.md) | 2 | Focused test target; consult suites for exercised boundaries. |
 
-Total: **1289 Swift files** in **24 targets/directories**.
+Total: **1294 Swift files** in **24 targets/directories**.
 
 Regenerate with `python3 docs/_tools/docs.py generate` from the repository root.

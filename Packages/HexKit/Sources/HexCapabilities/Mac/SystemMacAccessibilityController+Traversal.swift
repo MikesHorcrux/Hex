@@ -6,7 +6,7 @@ extension SystemMacAccessibilityController {
     root: AXUIElement,
     maximumDepth: Int,
     maximumElements: Int
-  ) -> (elements: [ObservedElement], isTruncated: Bool) {
+  ) throws -> (elements: [ObservedElement], isTruncated: Bool) {
     var queue: [(element: AXUIElement, depth: Int, path: String)] = [(root, 0, "0")]
     var cursor = 0
     var elements: [ObservedElement] = []
@@ -21,7 +21,7 @@ extension SystemMacAccessibilityController {
       }
       let node = queue[cursor]
       cursor += 1
-      let children = children(of: node.element)
+      let children = try children(of: node.element, path: node.path)
       let window = observedWindow(of: node.element)
       let reference: String?
       if let window {
@@ -65,16 +65,18 @@ extension SystemMacAccessibilityController {
       throw MacToolError.accessibilityElementNotFound
     }
     var element = root
+    var currentPath = "0"
     for part in parts.dropFirst() {
       try Task.checkCancellation()
       guard let index = Int(part), index >= 0 else {
         throw MacToolError.accessibilityElementNotFound
       }
-      let currentChildren = children(of: element)
+      let currentChildren = try children(of: element, path: currentPath)
       guard currentChildren.indices.contains(index) else {
         throw MacToolError.accessibilityElementNotFound
       }
       element = currentChildren[index]
+      currentPath += ".\(part)"
     }
     guard matchesSelector(element, path: path, selector: selector),
       selector.occurrence == nil || selector.occurrence == 0
@@ -133,8 +135,38 @@ extension SystemMacAccessibilityController {
     )
   }
 
-  static func children(of element: AXUIElement) -> [AXUIElement] {
-    attribute(kAXChildrenAttribute as String, from: element) as? [AXUIElement] ?? []
+  static func children(of element: AXUIElement, path: String) throws -> [AXUIElement] {
+    try Task.checkCancellation()
+    var value: CFTypeRef?
+    let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value)
+    try Task.checkCancellation()
+    return try decodeChildren(value: value, error: error, path: path)
+  }
+
+  /// A missing child attribute is normal for a leaf. It does not establish that an application's
+  /// entire hierarchy is empty. Transport/read failures at any depth must never masquerade as leaves.
+  static func decodeChildren(value: CFTypeRef?, error: AXError, path: String) throws
+    -> [AXUIElement]
+  {
+    switch error {
+    case .success:
+      guard let children = value as? [AXUIElement],
+        children.allSatisfy({ CFGetTypeID($0) == AXUIElementGetTypeID() })
+      else {
+        throw MacAccessibilityReadError(
+          elementPath: path, axErrorCode: error.rawValue, reason: .invalidValue)
+      }
+      return children
+    case .attributeUnsupported, .noValue:
+      guard path != "0" else {
+        throw MacAccessibilityReadError(
+          elementPath: path, axErrorCode: error.rawValue, reason: .childrenNotExposed)
+      }
+      return []
+    default:
+      throw MacAccessibilityReadError(
+        elementPath: path, axErrorCode: error.rawValue, reason: .requestFailed)
+    }
   }
 
   static func actions(for element: AXUIElement) -> [String] {
