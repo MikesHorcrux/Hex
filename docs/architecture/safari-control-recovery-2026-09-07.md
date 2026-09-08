@@ -143,3 +143,20 @@ Traversal verification passed 1,318 package tests in 255 suites
 Lint passed for 1,298 Swift files; documentation validation passed. The first package run exposed
 a test-fixture assumption that its marker always falls within the final 256 JSON bytes. Its search
 now uses a bounded 4 KiB tail, accommodating receipt metadata in any JSON object-key order.
+
+
+## Main checkpoint: remaining live gap
+
+Canonical build `80415c4e28ed6a5f47ce0c99849d43c6a34ffa35` passed and refreshed the signed
+resident helper (`/tmp/hex-safari-traversal-canonical.log`). Fresh run
+`1DE7113A-E785-4584-816A-CF1BBFA777C2` received an ordinary request to choose and play a
+movie in Safari using Mike. No element paths or scripted clicks were supplied. It independently
+opened Back in Action's details. The live snapshot contained 118 AXLinks and an AXWebArea,
+confirming the window traversal improvement.
+
+Playback was not verified. The remaining details controls were not available within one bounded
+snapshot, and repeated artifact reads/searches exhausted the model's estimated context. Native
+snapshot pagination was proposed but no pagination implementation was started before the user
+requested this commit-and-merge checkpoint. Managed clicks can still return uncertain receipts;
+the earlier Mike selection required independent inspection before resuming Hex. This checkpoint
+therefore does not establish reliable unattended completion of the full Netflix workflow.

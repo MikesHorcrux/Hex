@@ -1,0 +1,7 @@
+# Hex party ad v6
+
+Built-in imagegen edit of approved v5: darken only Hex and the background doorway.
+
+Make ONE tightly localized edit to this approved party advertisement. Preserve the entire image exactly: all foreground characters, their poses, drinks, snacks, colors, bright cheerful party lighting, typography "ROOM FOR ONE MORE?", framing, dimensions and composition.
+CHANGE ONLY the background doorway containing Hex the sheep: make the hallway interior behind Hex deep dark charcoal/plum shadow, like an unlit room. Hex remains at the exact same position, size, shape and pose, standing silently staring into the bright party. Darken Hex naturally within the doorway but keep her recognizable cream scalloped wool silhouette, charcoal face, glossy black button eyes with subtle reflected light, orange ear accents and tiny black hooves visible through restrained soft light spilling in from the party. Both eyes should still be readable, with small natural catchlights; NO glowing eyes or new irises. She should feel quietly ominous, watching from the dark doorway, in humorous contrast to the happy bright party.
+Keep the outer coral wall, cream doorway trim, open door and bright party floor unchanged. The darkening must be confined to the interior of the doorway and Hex within it, with a natural transition at the threshold. No global darkening, no vignette, no changes to other characters or text, no redesigned Hex, no additional objects, no logos. This is the same approved ad with a dark doorway and sheep in shadow, nothing else.
