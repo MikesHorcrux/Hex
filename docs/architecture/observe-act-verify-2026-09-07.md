@@ -137,13 +137,24 @@ action authority on an incomplete observation. Independent review found no block
 The browser selector passed **13 tests in one suite**. Lint passed for 1,292 Swift files and the
 documentation check passed for 44 checked files.
 
-The latest full package run completed **1,300 tests in 252 suites**, with two failures:
+An intermediate full package run completed **1,300 tests in 252 suites**, with two failures:
 `MCPBoundedProcessRunnerTests` stdout overflow and `MCPPeekabooPermissionControllerTests` oversized
 stdout returned `connectionClosed` where the tests expect `limitExceeded`. The focused retry
 reproduced both failures (24 of 26 tests passed). The process runner is unchanged by this ticket;
 an owned-child syscall probe did not reproduce the suspected cleanup error, so no speculative
-production fix was made. Logs: `/tmp/hex-oav-package-drainer-fixed.log` and
-`/tmp/hex-oav-output-limit-retry.log`. This latest package run is not green.
+production fix was made from that initial hypothesis. Logs: `/tmp/hex-oav-package-drainer-fixed.log`
+and `/tmp/hex-oav-output-limit-retry.log`.
+
+After the session was unlocked, a trace inside the actual Swift runner proved the race: group
+signaling returned `EPERM` before `waitid` observed the leader's exit; direct leader signaling and
+reaping succeeded, but the earlier group result still masked the output-limit error. Commit
+`d0e55f0` defers that judgment until the owned leader has been reaped and a group probe proves
+`ESRCH`. A surviving or unverifiable group still fails; no signal is delivered after reaping.
+The deterministic regression failed before the fix. The focused 32 tests then passed, followed by
+**1,306 tests in 253 suites**, with no failures, in 69.028 seconds. Lint passed for 1,294 Swift files.
+Logs: `/tmp/hex-oav-cleanup-before.log`, `/tmp/hex-oav-cleanup-fixed-focused.log`,
+`/tmp/hex-oav-package-cleanup-fixed.log`, `/tmp/hex-oav-cleanup-fixed-lint.log`. Temporary syscall
+instrumentation was removed before verification; independent review found no blocker.
 
 The first follow-up package run also exposed a test-harness liveness flaw: a synthetic pipe reader
 stopped after 400 polling attempts even while its writer could still be progressing within its
@@ -163,10 +174,46 @@ resident qualification. They have **not** been integrated or activated. The cano
 the build from `3138ccce6769eac93a346c07fc2e5735baa1884a`, whose first resident attempt is recorded
 above. The disposable fixture processes were stopped, and their evidence was preserved.
 
+The unlocked read-only resident probe subsequently read ten AX elements from a freshly launched
+fixture and captured its exact window (`canonical-unlocked-probe`). The first observation already
+showed an applied counter, so this probe is not evidence that Hex performed the action. Full
+qualification now requires pristine initial field and result values before any input.
+
 Resume with an unlocked session, resolve the exact current verification failures, rebuild the
 signed host, and integrate/activate the reviewed follow-up commit. Launch fresh owned fixtures;
 use their newly recorded PID/window and loopback port. Require the complete ordered native and
 browser evidence before moving the ticket to Done.
+
+## Provider arguments and compiler qualification follow-up
+
+The configured Responses provider now explicitly sends `strict: false` for tool definitions.
+The [official function-calling guide](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)
+explains that omitted strict mode attempts normalization that can make optional fields required.
+Hex retains its exact tool schemas and host validation, including omission of native `value` for
+button presses. The regression failed before the fix for both API and Codex routes; all 20 request
+mapping and authorization routing tests then passed. Independent review found no blocker.
+Logs: `/tmp/hex-oav-provider-schema-before.log`, `/tmp/hex-oav-provider-schema-after.log`.
+
+The Xcode discovery stall also reproduced in a tiny independent project. A task-local compiler
+output relay resolved that reproduction: it runs the installed Apple compiler with the original
+arguments, concurrently collects only the exact `/dev/null` macro-discovery output, then forwards
+unchanged stdout followed by stderr. Every other invocation directly executes Apple's compiler.
+Four toolchain resource realpath/hash checks and 14 output/status parity cases passed; a tiny real
+Xcode compilation/link completed in 8.237 seconds. No installed toolchain, global build setting,
+repository build script, signing configuration, or privacy grant was changed. The relay source,
+validation results and invocation-only xcconfig are preserved in `compiler-relay-qualification`
+under the evidence root. The follow-up signed Hex suite passed **294 tests in 52 suites** in 2.146 seconds;
+`/tmp/hex-oav-hosted-qualified.xcresult` and `/tmp/hex-oav-hosted-qualified.log` retain the run.
+The final package suite passed **1,307 tests in 253 suites** in 66.480 seconds
+(`/tmp/hex-oav-package-final.log`); lint passed for 1,294 Swift files and documentation passed
+for 44 checked files. Runtime qualification remains pending until the build is integrated and activated.
+
+A second task-local config uses recognized `clang`/`clang++` names and the actual Apple
+`libclang.dylib`, preserving Xcode explicit module behavior. A fresh Objective-C/Foundation
+project completed discovery, dependency scanning, 31 explicit module compilations, compilation
+and linking in 4.098 seconds with no warnings or fallback notes. Canonical activation uses this
+config; evidence is under `compiler-relay-explicit-modules-qualification`. The earlier hosted
+build used the same real compiler with implicit modules for the third-party C target.
 
 ## Exact changed files
 
@@ -197,10 +244,13 @@ Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayPeekabooToolExecut
 Packages/HexKit/Sources/HexGatewayKit/Authorization/HexGatewayScreenPermissionToolExecutor.swift
 Packages/HexKit/Sources/HexGatewayKit/Composition/HexAgentOperatingContract.swift
 Packages/HexKit/Sources/HexGatewayKit/Resident/HexGatewayResidentHost.swift
+Packages/HexKit/Sources/HexMCP/Process/MCPBoundedProcessRunner.swift
+Packages/HexKit/Sources/HexMCP/Process/MCPProcessCleanupSystemCalls.swift
 Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutor.swift
 Packages/HexKit/Sources/HexMCP/Tools/MCPRemoteToolResult.swift
 Packages/HexKit/Sources/HexMCP/Tools/MCPRemoteToolResultDecoder.swift
 Packages/HexKit/Sources/HexMCP/Tools/MCPToolResultMapper.swift
+Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesRequestBuilder.swift
 Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+Tools.swift
 Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityChildrenReadTests.swift
 Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityDispatchSafetyTests.swift
@@ -214,7 +264,9 @@ Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPeekabooToolExecut
 Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayScreenPermissionToolExecutorTests.swift
 Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayManagedBrowserIntegrationTests.swift
 Packages/HexKit/Tests/HexMCPTests/JSONRPC/MCPStdioJSONRPCConnectionTests.swift
+Packages/HexKit/Tests/HexMCPTests/Process/MCPBoundedProcessCleanupTests.swift
 Packages/HexKit/Tests/HexMCPTests/Tools/MCPRemoteToolResultMetadataTests.swift
+Packages/HexKit/Tests/HexProvidersTests/OpenAI/OpenAIResponsesRequestMappingTests.swift
 docs/architecture/observe-act-verify-2026-09-07.md
 docs/qualification/observe-act-verify/HexObserveActVerifyFixture.swift
 docs/qualification/observe-act-verify/README.md
@@ -224,6 +276,7 @@ docs/reference/modules/HexCapabilities.md
 docs/reference/modules/HexCapabilitiesTests.md
 docs/reference/modules/HexGatewayKit.md
 docs/reference/modules/HexGatewayTests.md
+docs/reference/modules/HexMCP.md
 docs/reference/modules/HexMCPTests.md
 docs/reference/modules/HexTests.md
 docs/reference/modules/README.md

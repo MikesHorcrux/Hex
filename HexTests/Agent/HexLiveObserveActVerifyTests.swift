@@ -18,6 +18,8 @@ struct HexLiveObserveActVerifyTests: Sendable {
   private static let nativeBundleID = "com.lunarmothstudios.Hex.ObserveActVerifyFixture"
   private static let nativeWindowTitle = "Hex Observe Act Verify Fixture"
   private static let nativeValue = "Hex native workflow verified"
+  private static let nativeInitialValue = "Synthetic Hex qualification text"
+  private static let nativeInitialResult = "No action has been applied"
   private static let receiptName = "hex-qualification-receipt.txt"
   private static let receiptText =
     "HEX_BROWSER_QUALIFICATION_RECEIPT\nlabel=Hex qualification draft\nsubmissions=1\n"
@@ -86,6 +88,10 @@ struct HexLiveObserveActVerifyTests: Sendable {
         """
       : identity + """
 
+        First take mac_accessibility_snapshot and confirm the initial field is exactly
+        \(Self.nativeInitialValue) and the result is exactly \(Self.nativeInitialResult).
+        If either differs, stop before any input and report that a fresh fixture is required.
+        Do not reset or change an already-used fixture to make it appear fresh.
         Complete the harmless workflow with exactly two built-in mac_accessibility_action calls:
         first action=set_value on the observed text field, value=\(Self.nativeValue); then, after
         a new mac_accessibility_snapshot, action=press on Apply synthetic change exactly once.
@@ -445,6 +451,11 @@ struct HexLiveObserveActVerifyTests: Sendable {
     }
     let initial = try observationUsed(by: setting, receipts: receipts, pid: pid)
     let input = try element(initial.result, identifier: "hex-fixture-text")
+    let initialResult = try element(initial.result, identifier: "hex-fixture-result")
+    try require(
+      input["value"] == .string(nativeInitialValue)
+        && initialResult["value"] == .string(nativeInitialResult),
+      "The observation authorizing the first action did not show a pristine native fixture.")
     try require(
       field(setting.result, "path") == input["path"]
         && field(setting.result, "window_reference") == input["window_reference"],

@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**27 Swift files.** Generated; do not edit by hand.
+**28 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexMCPTests/Client
 
@@ -53,6 +53,7 @@ Focused test target; consult suites for exercised boundaries.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [MCPBoundedProcessCleanupTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Process/MCPBoundedProcessCleanupTests.swift) | — |
 | [MCPBoundedProcessRunnerTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Process/MCPBoundedProcessRunnerTests.swift) | — |
 | [MCPConfiguredExecutableImageTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Process/MCPConfiguredExecutableImageTests.swift) | — |
 | [MCPExecutableSnapshotAdmissionTests.swift](../../../Packages/HexKit/Tests/HexMCPTests/Process/MCPExecutableSnapshotAdmissionTests.swift) | — |

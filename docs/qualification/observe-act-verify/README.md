@@ -65,7 +65,9 @@ synthetic receipt in the managed Playwright output directory.
 For native qualification, supply `HEX_OAV_NATIVE_BUNDLE_ID`, `HEX_OAV_NATIVE_PID`, and
 `HEX_OAV_NATIVE_WINDOW_ID` from the disposable fixture. The full journey requires exactly the
 built-in `set_value` and `press` actions, fresh correlated semantic observations, and a subsequent
-image receipt from that exact PID/window. `HEX_OAV_PROBE_ONLY=1` performs read-only native probes
+image receipt from that exact PID/window. The full native journey requires the fixture's initial
+text and `No action has been applied` result before input; launch a fresh fixture if it has already
+been used. `HEX_OAV_PROBE_ONLY=1` performs read-only native probes
 and preserves concrete blockers without requiring a completed interaction.
 
 `HEX_OAV_WORKFLOW=browser|native|all` selects the hosted journey, defaulting to `all`.
