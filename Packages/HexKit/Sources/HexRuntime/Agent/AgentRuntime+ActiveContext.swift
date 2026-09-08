@@ -16,6 +16,7 @@ extension AgentRuntime {
     guard protectedCount > 0, messages.count > protectedCount else { throw contextOverflow() }
     let pinned = Array(messages.prefix(protectedCount))
     let source = Array(messages.dropFirst(protectedCount))
+    let currentTask = request.initialMessages.last { $0.role == .user }
     guard source.last?.role == .tool else { throw contextOverflow() }
     // The same strict source validator used by the real summarizer guards injected implementations.
     _ = try AgentContextSummarySource(
@@ -34,7 +35,8 @@ extension AgentRuntime {
       summary = try await contextSummarizer.summarize(
         AgentContextSummaryRequest(
           model: model, sourceMessages: source, maximumSummaryTokens: limit,
-          maximumReportedTokens: remainingReportedTokens, allowsToolBatchBoundaries: true))
+          maximumReportedTokens: remainingReportedTokens, allowsToolBatchBoundaries: true,
+          currentTask: currentTask))
     } catch is CancellationError { throw CancellationError() } catch {
       if Task.isCancelled { throw CancellationError() }
       throw AgentRuntimeError.providerFailure(
@@ -53,7 +55,7 @@ extension AgentRuntime {
       providerID: inferenceProvider.descriptor.id, modelID: request.modelID,
       estimatedTokensBefore: before, estimatedTokensAfter: 1,
       reportedTokens: summary.reportedTokens, inferenceCalls: summary.inferenceCalls,
-      boundary: .completedToolBatch)
+      boundary: .completedToolBatch, taskMessageID: currentTask?.id)
     guard
       try contextEstimator.estimateTokens(in: provisional.summaryMessage, model: model) <= limit
         + 256
@@ -70,7 +72,7 @@ extension AgentRuntime {
       estimatedTokensAfter: activeContextCost(
         candidate, request: request, model: model, tools: tools),
       reportedTokens: summary.reportedTokens, inferenceCalls: summary.inferenceCalls,
-      boundary: .completedToolBatch)
+      boundary: .completedToolBatch, taskMessageID: currentTask?.id)
     try await append(.contextCompacted(record), to: request.runID)
     try Task.checkCancellation()
     return (candidate, summary.reportedTokens)

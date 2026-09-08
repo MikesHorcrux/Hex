@@ -79,15 +79,20 @@ struct InferenceAgentContextSummarizerTests {
     }
     let provider = makeProvider((0..<3).map { .events(success("Completed batch \($0).")) })
     let summarizer = InferenceAgentContextSummarizer(provider: provider, safetyMarginTokens: 128)
+    let goal = Message(
+      role: .user, content: [.text("Perform a fresh pass over all three files exactly once.")])
     let result = try await summarizer.summarize(
       AgentContextSummaryRequest(
         model: model(window: 8_000), sourceMessages: history, maximumSummaryTokens: 1_200,
-        allowsToolBatchBoundaries: true))
+        allowsToolBatchBoundaries: true, currentTask: goal))
     let requests = await provider.requests()
     #expect(result.inferenceCalls == 3)
     #expect(try requests.map(payload).flatMap(\.exchanges).flatMap { $0 } == history)
     #expect(requests.allSatisfy { $0.previousProviderResponseID == nil && $0.toolChoice == .none })
     for request in requests {
+      #expect(try payload(request).currentTask == goal)
+      #expect(try textContent(request.messages[0]).contains("AFTER that request"))
+      #expect(try !textContent(request.messages[0]).contains("Perform a fresh pass"))
       #expect(
         try request.messages.reduce(0) {
           try $0 + ConservativeAgentContextTokenEstimator().estimateTokens(in: $1)
@@ -427,6 +432,7 @@ struct InferenceAgentContextSummarizerTests {
   }
 
   private struct Payload: Decodable {
+    let currentTask: Message?
     let previousSummary: String?
     let exchanges: [[Message]]
   }

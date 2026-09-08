@@ -14,6 +14,15 @@ extension SQLiteAgentEventJournal {
         maximum: configuration.maximumReadLimit
       )
     }
+    if configuration.integrityPolicy == .incremental {
+      guard let snapshot = try await runSnapshot(for: runID),
+        (sequence ?? 0) < snapshot.latestSequence
+      else { return [] }
+      return try await recoveryRecords(
+        for: runID, after: sequence ?? 0,
+        through: snapshot.latestSequence, limit: limit, maximumBytes: configuration.maximumReadBytes
+      )
+    }
     let connection = try requireConnection()
     return try withDeferredOwnedTransaction(connection: connection) {
       try Task.checkCancellation()

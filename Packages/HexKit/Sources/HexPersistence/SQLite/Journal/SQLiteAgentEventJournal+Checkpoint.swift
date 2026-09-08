@@ -23,7 +23,9 @@ extension SQLiteAgentEventJournal {
         maximumTextBytes: configuration.maximumTextBytes
       )
       try validateIntegrityDataVersion(connection: connection)
-      let currentUsage = try validateWholeJournalIntegrity(connection: connection)
+      let currentUsage =
+        try configuration.integrityPolicy == .incremental
+        ? (integrityUsage ?? .zero) : validateWholeJournalIntegrity(connection: connection)
       guard try eventExists(for: runID, sequence: sequence, connection: connection) else {
         throw SQLiteAgentEventJournalError.checkpointSequenceMissing(
           runID: runID,
@@ -81,10 +83,13 @@ extension SQLiteAgentEventJournal {
           "Inserting a checkpoint did not complete."
         )
       }
-      let updatedUsage = try validateWholeJournalIntegrity(
-        connection: connection,
-        checksCancellation: false
-      )
+      let updatedUsage =
+        try configuration.integrityPolicy == .incremental
+        ? currentUsage
+        : validateWholeJournalIntegrity(
+          connection: connection,
+          checksCancellation: false
+        )
       return (
         checkpoint: checkpoint,
         integrityUsage: updatedUsage,

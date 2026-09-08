@@ -6,7 +6,7 @@ nonisolated enum AgentConversationContextProjection {
   nonisolated static func messages(in history: AgentConversationHistory) throws -> [Message] {
     guard !history.compactions.isEmpty else { return uncompactedMessages(in: history) }
     let byOwner = try validatedCompactions(in: history)
-    var projection = Snapshot(legacyMessages: history.legacyMessages)
+    var projection = Snapshot(legacyMessages: (history.contextBase ?? []) + history.legacyMessages)
     var previousBase: Snapshot?
     var previousRunID: AgentRunID?
 
@@ -24,7 +24,7 @@ nonisolated enum AgentConversationContextProjection {
         try projection.apply(initialCompaction)
       }
       var effectiveExchange = exchange
-      var priorActiveSummaryID: MessageID?
+      var priorActiveSummaryID: MessageID? = exchange.projectionSummaryID
       for compaction in records where compaction.boundary == .completedToolBatch {
         try applyActive(compaction, to: &effectiveExchange, priorSummaryID: priorActiveSummaryID)
         priorActiveSummaryID = compaction.summaryMessage.id
@@ -38,20 +38,66 @@ nonisolated enum AgentConversationContextProjection {
 
   nonisolated static func uncompactedMessages(in history: AgentConversationHistory) -> [Message] {
     let superseded = Set(history.exchanges.compactMap(\.retryOfRunID))
-    return history.legacyMessages
+    return (history.contextBase ?? []) + history.legacyMessages
       + history.exchanges.filter { !superseded.contains($0.runID) }.flatMap(\.messages)
+  }
+
+  /// Called only after originals have a durable save receipt. Rebasing changes a cache, not history.
+  nonisolated static func workingHistory(in history: AgentConversationHistory) throws
+    -> AgentConversationHistory
+  {
+    let byOwner = try validatedCompactions(in: history)
+    var projection = Snapshot(legacyMessages: (history.contextBase ?? []) + history.legacyMessages)
+    var previousBase: Snapshot?
+    var previousRunID: AgentRunID?
+    var tail: AgentConversationExchange?
+    var tailBase = projection
+    var tailInitialCompaction: AgentContextCompaction?
+    for exchange in history.exchanges {
+      if let retry = exchange.retryOfRunID {
+        guard retry == previousRunID, let previousBase else {
+          throw invalid("The working checkpoint has invalid retry ancestry.")
+        }
+        projection = previousBase
+      }
+      let initial = projection
+      let records = byOwner[exchange.runID] ?? []
+      if let first = records.first, first.boundary == nil { try projection.apply(first) }
+      tailBase = initial
+      tailInitialCompaction = records.first.flatMap { $0.boundary == nil ? $0 : nil }
+      var effective = exchange
+      var summaryID = exchange.projectionSummaryID
+      for compaction in records where compaction.boundary == .completedToolBatch {
+        try applyActive(compaction, to: &effective, priorSummaryID: summaryID)
+        summaryID = compaction.summaryMessage.id
+      }
+      effective.projectionSummaryID = summaryID
+      effective.originalRetryOfRunID = exchange.originalRetryOfRunID ?? exchange.retryOfRunID
+      effective.retryOfRunID = nil
+      projection.append(effective)
+      tail = effective
+      previousBase = initial
+      previousRunID = exchange.runID
+    }
+    // Retain one attempt for failure/retry and in-flight recovery. Earlier attempts remain indexed
+    // individually in SQLite, including their original retry ancestry and pre-compaction messages.
+    return AgentConversationHistory(
+      exchanges: tail.map { [$0] } ?? [],
+      compactions: tailInitialCompaction.map { [$0] } ?? [],
+      contextBase: tail == nil ? projection.messages : tailBase.messages)
   }
 
   private nonisolated static func validatedCompactions(in history: AgentConversationHistory) throws
     -> [AgentRunID: [AgentContextCompaction]]
   {
-    guard history.compactions.count <= 512
+    guard history.contextBase != nil || history.compactions.count <= 512
     else { throw invalid("Conversation compaction metadata exceeds its record limits.") }
     let positions = Dictionary(
       history.exchanges.enumerated().map { ($0.element.runID, $0.offset) },
       uniquingKeysWith: { first, _ in first })
     var identities = Set(
-      (history.legacyMessages + history.exchanges.flatMap(\.messages)).map(\.id))
+      ((history.contextBase ?? []) + history.legacyMessages + history.exchanges.flatMap(\.messages))
+        .map(\.id))
     var byOwner: [AgentRunID: [AgentContextCompaction]] = [:]
     var previousPosition = -1
     for compaction in history.compactions {
@@ -76,6 +122,7 @@ nonisolated enum AgentConversationContextProjection {
     let count = compaction.sourceMessageIDs.count
     let source = Array(exchange.messages.dropFirst().prefix(count))
     guard exchange.messages.first?.role == .user, source.count == count,
+      compaction.taskMessageID == nil || compaction.taskMessageID == exchange.messages.first?.id,
       source.map(\.id) == compaction.sourceMessageIDs,
       source.last?.role == .tool
     else { throw invalid("Active compaction does not match completed generated evidence.") }
@@ -85,7 +132,7 @@ nonisolated enum AgentConversationContextProjection {
       if message.role == .user {
         guard index == 0, message.id == priorSummaryID, message.content.count == 1,
           case .text(let text) = message.content[0],
-          text.hasPrefix(AgentContextCompaction.summaryLabel)
+          AgentContextCompaction.hasSummaryLabel(text)
         else { throw invalid("Active compaction cannot replace a user goal.") }
       } else if message.role != .assistant && message.role != .tool {
         throw invalid("Active compaction cannot replace trusted instructions.")

@@ -48,7 +48,7 @@ struct HexApp: App {
     self.init(
       client: client,
       modelID: initialModelID,
-      conversationStore: AgentConversationStore.live(),
+      conversationStore: AgentSQLiteConversationStore(storage: client),
       requiresConversationPersistence: true,
       composerPreferenceStore: composerPreferenceStore,
       route: configuration.gatewayRoute,
@@ -66,7 +66,7 @@ struct HexApp: App {
   init(
     client: any HexAgentClient = PreviewHexAgentClient(),
     modelID: String = "preview",
-    conversationStore: AgentConversationStore? = nil,
+    conversationStore: (any AgentConversationStoring)? = nil,
     requiresConversationPersistence: Bool = false,
     composerPreferenceStore: (any AgentComposerPreferenceStoring)? = nil,
     route: HexGatewayRoute = .residentXPC(),

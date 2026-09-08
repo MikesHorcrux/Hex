@@ -18,6 +18,7 @@ nonisolated struct AgentConversation: Codable, Equatable, Identifiable, Sendable
   /// Exact output references survive compaction and tool completion without a following message.
   /// Nil preserves the canonical shape of archives created before the output catalog existed.
   var artifactInventory: [ArtifactReference]?
+  var artifactSources: [AgentConversationArtifactSource]?
   /// Optional fields keep canonical legacy archive bytes unchanged when absent.
   var archivedAt: Date?
   var isTitleExplicit: Bool?

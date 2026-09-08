@@ -6,6 +6,8 @@ public struct AgentContextSummaryRequest: Sendable {
   public let allowsToolBatchBoundaries: Bool
   public let model: ModelDescriptor
   public let sourceMessages: [Message]
+  /// Quoted goal for active progress, separate from the immutable evidence being replaced.
+  public let currentTask: Message?
   public let maximumSummaryTokens: Int
   /// Optional stricter cap on the estimated physical summary prompt, including its instructions.
   public let maximumInputTokens: Int?
@@ -17,11 +19,12 @@ public struct AgentContextSummaryRequest: Sendable {
     maximumSummaryTokens: Int,
     maximumInputTokens: Int? = nil,
     maximumReportedTokens: UInt64 = 1_000_000,
-    allowsToolBatchBoundaries: Bool = false
+    allowsToolBatchBoundaries: Bool = false, currentTask: Message? = nil
   ) {
     self.allowsToolBatchBoundaries = allowsToolBatchBoundaries
     self.model = model
     self.sourceMessages = sourceMessages
+    self.currentTask = currentTask
     self.maximumSummaryTokens = maximumSummaryTokens
     self.maximumInputTokens = maximumInputTokens
     self.maximumReportedTokens = maximumReportedTokens

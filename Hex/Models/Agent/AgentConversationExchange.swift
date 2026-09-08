@@ -17,6 +17,8 @@ nonisolated struct AgentConversationExchange: Codable, Equatable, Sendable {
   var messages: [Message]
   var outcome: Outcome
   var lastEventSequence: UInt64?
+  var originalRetryOfRunID: AgentRunID?
+  var projectionSummaryID: MessageID?
   var retryOfRunID: AgentRunID?
 
   init(

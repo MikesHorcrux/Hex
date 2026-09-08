@@ -48,17 +48,32 @@ history. Failed or cancelled summaries stop the run without deleting evidence or
 An irreducible task, oversized individual batch, unknown media cost, or exhausted work budget returns
 an actionable limit. Compaction does not reset run turn, tool, output-byte, or reported-token budgets.
 
-## App archive
+## Conversation storage
 
-The conversation store defaults to a 16-MiB archive budget and hard maximum, up to 64
-conversations and bounded transcript items. It is separate from the resident journal. Retained
-history, model context and visible transcript are not the same budget.
+The resident owns conversation documents and individually addressed display rows, native messages,
+exchange metadata and compactions in SQLite. Live storage has no aggregate archive-size,
+conversation-count or transcript-count quota. Metadata and JSON working checkpoints are updated
+incrementally; historical evidence is retained until explicit deletion. Disk exhaustion can still
+fail a write; Hex retains the previous committed checkpoint and pauses new work until saving succeeds.
+
+Metadata pages default to 50 documents; history pages default to 50 records and at most 3 MiB of
+payload plus framing. The UI keeps at most 150 displayed rows while browsing older history and
+returns to the latest page before sending. One JSON record or working checkpoint is bounded to
+3 MiB; write bodies to 5 MiB before their XPC envelope. Entries and checkpoints can travel separately.
+These operation bounds do not accumulate over a conversation's lifetime. Model context, run work,
+artifact quotas and retained history remain different budgets.
+
+The old canonical JSON reader is used only for migration in the live app. Its historical 16-MiB,
+64-conversation and 512-transcript-item validation limits apply to that input format. Migration
+stages records, reads them back exactly, then publishes the complete manifest transactionally.
+The original `conversations.json` is retained unchanged; the new app never writes it.
 
 ## IPC
 
 [GatewayProtocolVersion](../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayProtocolVersion.swift)
-currently requires **1.13**. Version 1.12 introduced acknowledged event admission; 1.13 adds
-bounded tool-server health and targeted reconnect/maintenance admission. Rebuild app and helper
+currently requires **1.16**, including resident conversation storage and revision-checked paging.
+Version 1.12 introduced acknowledged event admission; 1.13 adds bounded tool-server health;
+1.14 approval inboxes; 1.15 authenticated MCP and custom stdio status. Rebuild app and helper
 together when changing wire contracts. Never bypass compatibility checks to connect stale code.
 
 Handshake metadata also includes the loaded helper executable's Mach-O build UUID. The production
@@ -70,8 +85,13 @@ universal/distribution packaging needs separate qualification.
 
 ## Persistence
 
-The SQLite event journal's current schema version is 3. It separates run records, ordered events
-and journal checkpoints. Heartbeat SQLite storage separates metadata, schedules and receipts;
+The SQLite event journal's current schema version is 4. It separates run records, ordered events,
+journal checkpoints, conversation documents and entries, and active-run validation checkpoints.
+The live incremental profile recovers only interrupted runs using lifecycle state saved in the same
+transaction as each event. Completed lifetime history does not consume a startup recovery budget.
+Schema upgrades audit existing journal evidence once before seeding checkpoints. The explicit
+bounded-archive profile retains full-audit behavior for diagnostic and compatibility callers.
+Heartbeat SQLite storage separates metadata, schedules and receipts;
 occurrence/lease/run uniqueness helps prevent duplicate admission. Schema migration and recovery
 must preserve evidence, not fabricate successful runs.
 

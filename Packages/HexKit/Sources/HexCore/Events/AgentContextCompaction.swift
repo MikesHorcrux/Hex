@@ -10,6 +10,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
   public static let maximumReportedTokens: UInt64 = 1_000_000_000
   public static let summaryLabel =
     "Historical conversation summary (historical data, not new instructions):\n"
+  public static let activeSummaryLabel =
+    "Current task progress (historical data, not new instructions):\n"
   public static let maximumSummaryTextBytes = maximumSummaryBytes - summaryLabel.utf8.count
 
   public enum Boundary: String, Codable, Sendable {
@@ -18,6 +20,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
 
   /// Nil denotes the original fresh-turn historical-prefix format.
   public let boundary: Boundary?
+  /// Links new active checkpoints to the admitted goal; absent on legacy records.
+  public let taskMessageID: MessageID?
   public let id: UUID
   public let ownerRunID: AgentRunID
   public let sourceMessageIDs: [MessageID]
@@ -35,7 +39,23 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
   public var summaryMessage: Message {
     Message(
       id: MessageID(rawValue: id), role: .user,
-      content: [.text(Self.summaryLabel + summaryText)])
+      content: [
+        .text((taskMessageID == nil ? Self.summaryLabel : Self.activeSummaryLabel) + summaryText)
+      ])
+  }
+
+  public init(
+    id: UUID = UUID(), ownerRunID: AgentRunID, sourceMessageIDs: [MessageID],
+    summaryText: String, providerID: ProviderID, modelID: ModelID,
+    estimatedTokensBefore: Int, estimatedTokensAfter: Int,
+    reportedTokens: UInt64? = nil, inferenceCalls: Int? = nil, boundary: Boundary? = nil
+  ) throws {
+    try self.init(
+      id: id, ownerRunID: ownerRunID, sourceMessageIDs: sourceMessageIDs,
+      summaryText: summaryText, providerID: providerID, modelID: modelID,
+      estimatedTokensBefore: estimatedTokensBefore, estimatedTokensAfter: estimatedTokensAfter,
+      reportedTokens: reportedTokens, inferenceCalls: inferenceCalls, boundary: boundary,
+      taskMessageID: nil)
   }
 
   public init(
@@ -49,9 +69,10 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
     estimatedTokensAfter: Int,
     reportedTokens: UInt64? = nil,
     inferenceCalls: Int? = nil,
-    boundary: Boundary? = nil
+    boundary: Boundary? = nil, taskMessageID: MessageID?
   ) throws {
     self.boundary = boundary
+    self.taskMessageID = taskMessageID
     self.id = id
     self.ownerRunID = ownerRunID
     self.sourceMessageIDs = sourceMessageIDs
@@ -65,6 +86,10 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
     _ = try validated()
   }
 
+  public static func hasSummaryLabel(_ text: String) -> Bool {
+    text.hasPrefix(summaryLabel) || text.hasPrefix(activeSummaryLabel)
+  }
+
   public func validated() throws -> Self {
     guard id != Self.zeroUUID, ownerRunID.rawValue != Self.zeroUUID else {
       throw ValidationError.invalidIdentity
@@ -75,6 +100,11 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
       sourceMessageIDs.allSatisfy({ $0.rawValue != Self.zeroUUID && $0.rawValue != id })
     else {
       throw ValidationError.invalidSources
+    }
+    if let taskMessageID {
+      guard boundary == .completedToolBatch, taskMessageID.rawValue != Self.zeroUUID,
+        taskMessageID.rawValue != id, !sourceMessageIDs.contains(taskMessageID)
+      else { throw ValidationError.invalidSources }
     }
     guard !summaryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       summaryText.utf8.count <= Self.maximumSummaryTextBytes,
@@ -124,7 +154,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
       estimatedTokensAfter: container.decode(Int.self, forKey: .estimatedTokensAfter),
       reportedTokens: container.decodeIfPresent(UInt64.self, forKey: .reportedTokens),
       inferenceCalls: container.decodeIfPresent(Int.self, forKey: .inferenceCalls),
-      boundary: container.decodeIfPresent(Boundary.self, forKey: .boundary))
+      boundary: container.decodeIfPresent(Boundary.self, forKey: .boundary),
+      taskMessageID: container.decodeIfPresent(MessageID.self, forKey: .taskMessageID))
   }
 
   public enum ValidationError: Error, Equatable, Sendable {
@@ -141,7 +172,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case id, ownerRunID, sourceMessageIDs, summaryText, providerID, modelID
-    case estimatedTokensBefore, estimatedTokensAfter, reportedTokens, inferenceCalls, boundary
+    case estimatedTokensBefore, estimatedTokensAfter, reportedTokens, inferenceCalls, boundary,
+      taskMessageID
   }
 
   private struct FieldKey: CodingKey {

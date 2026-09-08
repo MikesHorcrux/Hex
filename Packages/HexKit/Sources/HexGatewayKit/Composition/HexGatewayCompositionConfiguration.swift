@@ -108,7 +108,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     runtimeConfiguration: AgentRuntimeConfiguration = AgentRuntimeConfiguration()
   ) -> Self {
     Self(
-      journalConfiguration: SQLiteAgentEventJournalConfiguration(databaseURL: databaseURL),
+      journalConfiguration: SQLiteAgentEventJournalConfiguration(
+        databaseURL: databaseURL, integrityPolicy: .incremental),
       inferenceProvider: HexGatewayInertInferenceProvider(),
       toolExecutor: HexGatewayInertToolExecutor(),
       authorizationProvider: CapabilityAuthorizationCenter(),

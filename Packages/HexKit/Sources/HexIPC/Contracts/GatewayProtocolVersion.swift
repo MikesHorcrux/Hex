@@ -6,8 +6,9 @@ public struct GatewayProtocolVersion: Codable, Comparable, Sendable {
   /// safely interpret that new outcome, so both endpoints must implement the current contract.
   /// Version 1.14 requires an approval inbox for scheduled work that waits for a human decision.
   /// Version 1.15 requires custom stdio identity and actionable MCP authentication status.
-  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 15)
-  public static let current = GatewayProtocolVersion(major: 1, minor: 15)
+  /// Version 1.16 requires resident conversation storage and revision-checked paged history.
+  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 16)
+  public static let current = GatewayProtocolVersion(major: 1, minor: 16)
 
   public let major: UInt16
   public let minor: UInt16

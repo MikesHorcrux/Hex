@@ -26,7 +26,7 @@ extension SQLiteAgentEventJournal {
     checksCancellation: Bool,
     recordCount: inout Int
   ) throws {
-    let remainingCapacity = configuration.maximumRecoveryRecordCount - recordCount
+    let remainingCapacity = configuration.auditRecordLimit - recordCount
     let statement = try connection.prepare("SELECT run_id FROM \(table) LIMIT ?")
     try statement.bind(Int64(remainingCapacity + 1), at: 1)
     while true {
@@ -40,9 +40,9 @@ extension SQLiteAgentEventJournal {
       guard stepResult == .row else {
         break
       }
-      guard recordCount < configuration.maximumRecoveryRecordCount else {
+      guard recordCount < configuration.auditRecordLimit else {
         throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
-          maximum: configuration.maximumRecoveryRecordCount
+          maximum: configuration.auditRecordLimit
         )
       }
       let runID = try statement.columnText(

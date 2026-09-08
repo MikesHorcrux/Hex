@@ -1,6 +1,6 @@
 import HexCore
 
-struct SQLiteRunLifecycleValidator {
+struct SQLiteRunLifecycleValidator: Codable {
   private let runID: AgentRunID
   private var unresolvedToolCallSequences: [ToolCallID: UInt64] = [:]
   private var finishedToolCallIDs: Set<ToolCallID> = []

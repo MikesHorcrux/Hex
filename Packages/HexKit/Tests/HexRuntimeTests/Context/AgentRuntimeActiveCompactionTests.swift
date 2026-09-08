@@ -48,6 +48,11 @@ struct AgentRuntimeActiveCompactionTests {
       let request = try #require(requests.first { $0.messages.contains(record.summaryMessage) })
       #expect(request.previousProviderResponseID == nil)
       #expect(!record.sourceMessageIDs.contains(goal.id))
+      #expect(record.taskMessageID == goal.id)
+      #expect(
+        record.summaryMessage.content == [
+          .text(AgentContextCompaction.activeSummaryLabel + record.summaryText)
+        ])
     }
     #expect(result.totalReportedTokens == UInt64(compactions.count * 3))
   }
@@ -140,7 +145,9 @@ struct AgentRuntimeActiveCompactionTests {
   private struct Summary: AgentContextSummarizing {
     func summarize(_ request: AgentContextSummaryRequest) async throws -> AgentContextSummaryResult
     {
-      AgentContextSummaryResult(
+      #expect(request.currentTask?.role == .user)
+      #expect(!request.sourceMessages.contains { $0.id == request.currentTask?.id })
+      return AgentContextSummaryResult(
         text: "Completed observations retained; continue remaining items.",
         reportedTokens: 3, inferenceCalls: 1)
     }
