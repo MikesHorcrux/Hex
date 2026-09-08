@@ -152,6 +152,20 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
       if kind == .mutation {
         return uncertain(call)
       }
+      try Task.checkCancellation()
+      if kind == .observation {
+        return ToolResult(
+          toolCallID: call.id, status: .failure,
+          output: .object([
+            "error": .string("native_observation_failed"), "dispatched": .boolean(false),
+            "outcome_verified": .boolean(false),
+            "recovery": .string(
+              "The read-only observation failed and its previous action authority was cleared. "
+                + "Read the current exact app/window identity before a new observation, or use "
+                + "mac_accessibility_snapshot and the actions actually advertised by its elements. "
+                + "Do not repeat earlier input actions or guess observation IDs."),
+          ]))
+      }
       throw error
     }
     guard result.toolCallID == call.id else {
