@@ -396,7 +396,11 @@ struct OpenAIResponsesRequestBuilder {
       input.append(
         .object([
           "type": .string("message"),
-          "role": .string(message.role.rawValue),
+          // The ChatGPT subscription route rejects system messages. Developer messages
+          // carry the same host-owned instructions on that route.
+          "role": .string(
+            configuration.service == .chatGPTCodexSubscription && message.role == .system
+              ? "developer" : message.role.rawValue),
           "content": .array(messageContent),
         ])
       )
