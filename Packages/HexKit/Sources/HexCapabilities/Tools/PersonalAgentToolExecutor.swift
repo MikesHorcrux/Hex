@@ -40,9 +40,12 @@ public struct PersonalAgentToolExecutor: ToolExecutor, Sendable {
     processEnvironment: [String: String]? = nil,
     processAuthorizationConfiguration: CapabilityAuthorizationCenterConfiguration = .standard
   ) throws {
+    let observationLedger = MacAccessibilityObservationLedger()
     executor = try HostToolExecutor(tools: [
-      MacAccessibilityActionTool(controller: accessibilityController),
-      MacAccessibilitySnapshotTool(controller: accessibilityController),
+      MacAccessibilityActionTool(
+        controller: accessibilityController, observationLedger: observationLedger),
+      MacAccessibilitySnapshotTool(
+        controller: accessibilityController, observationLedger: observationLedger),
       MacActivateApplicationTool(controller: applicationController),
       MacListApplicationsTool(controller: applicationController),
       ProcessRunTool(

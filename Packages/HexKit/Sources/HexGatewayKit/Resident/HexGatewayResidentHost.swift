@@ -71,12 +71,22 @@ public final class HexGatewayResidentHost {
       try MCPPeekabooPermissionController(layout: $0)
     }
     let protectedMCPExecutors: [any ToolExecutor] = mcpToolExecutors.map { executor in
+      if configuration.mcpServerSettings.contains(where: {
+        $0.serverID == executor.serverID && $0.transport == .playwright
+      }) {
+        return HexGatewayBrowserToolExecutor(base: executor) {
+          await executor.connectionIdentity()
+        }
+      }
       guard
         configuration.mcpServerSettings.contains(where: {
           $0.serverID == executor.serverID && $0.transport == .peekaboo
         })
       else { return executor }
-      return HexGatewayScreenPermissionToolExecutor(base: executor) {
+      let observed = HexGatewayPeekabooToolExecutor(base: executor) {
+        await executor.connectionIdentity()
+      }
+      return HexGatewayScreenPermissionToolExecutor(base: observed) {
         guard let controller = screenControlPermissionController else {
           throw GatewayFailure(
             code: .transportUnavailable, message: "Screen control cannot be verified.")

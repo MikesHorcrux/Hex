@@ -184,6 +184,24 @@ enum MCPToolResultMapper {
     if let structuredContent = remoteResult.structuredContent {
       output["structuredContent"] = structuredContent
     }
+    if let metadata = remoteResult.metadata, metadata.mcpObject != nil,
+      MCPJSONValueValidator.isValid(
+        metadata, maximumNodes: 4_096, maximumStringBytes: 32 * 1_024,
+        maximumEstimatedBytes: 64 * 1_024),
+      let encodedMetadata = try? JSONEncoder().encode(metadata),
+      encodedMetadata.count <= 64 * 1_024,
+      consume(byteCounts: [encodedMetadata.count], overhead: 64, from: &remainingContentBytes)
+    {
+      var candidate = output
+      candidate["_meta"] = metadata
+      let value = JSONValue.object(candidate)
+      if MCPJSONValueValidator.isValid(
+        value, maximumStringBytes: 2 * 1_024 * 1_024, maximumEstimatedBytes: 2 * 1_024 * 1_024),
+        let encoded = try? JSONEncoder().encode(value), encoded.count <= 2 * 1_024 * 1_024
+      {
+        output = candidate
+      }
+    }
     let outputValue = JSONValue.object(output)
     guard
       MCPJSONValueValidator.isValid(

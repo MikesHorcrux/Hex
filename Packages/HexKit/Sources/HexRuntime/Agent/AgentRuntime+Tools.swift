@@ -187,6 +187,16 @@ extension AgentRuntime {
   private func userAttentionMessage(for result: ToolResult) -> String {
     if case .object(let output) = result.output {
       switch output["error"] {
+      case .string("mac_session_locked"):
+        return
+          "The Mac session is locked. Unlock the Mac, inspect the target app, then start a new request. No action was dispatched and this run will not retry automatically."
+      case .string("mac_session_unavailable"):
+        return
+          "Hex cannot verify an available console session. Return to your logged-in Mac desktop and inspect the target app before starting a new request. No action was dispatched."
+      case .string("accessibility_action_outcome_unknown"),
+        .string("browser_action_outcome_uncertain"), .string("native_action_outcome_uncertain"):
+        return
+          "The action may have reached its target, but its outcome is uncertain. Inspect the current app or page and the saved tool receipt before deciding whether another action is needed. Hex stopped and will not repeat the action automatically."
       case .string("accessibility_permission_required"):
         return
           "macOS Accessibility access is missing or was revoked. Open Hex Settings → Mac access, verify Hex Agent’s Accessibility permission, then start a new request. This run stopped and will not retry automatically."

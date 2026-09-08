@@ -31,10 +31,24 @@ enum MCPRemoteToolResultDecoder {
     } else {
       structuredContent = nil
     }
+    let metadata: JSONValue?
+    if let candidate = object["_meta"], candidate.mcpObject != nil,
+      MCPJSONValueValidator.isValid(
+        candidate, maximumNodes: 4_096, maximumStringBytes: 32 * 1_024,
+        maximumEstimatedBytes: 64 * 1_024),
+      let data = try? JSONEncoder().encode(candidate), data.count <= 64 * 1_024
+    {
+      metadata = candidate
+    } else {
+      // Optional diagnostics must not discard an otherwise delivered, valid tool receipt.
+      // Missing trustworthy metadata cannot authorize a native action or prove safe retry.
+      metadata = nil
+    }
     let content = try encodedContent.map(decodeContent)
     return MCPRemoteToolResult(
       content: content,
       structuredContent: structuredContent,
+      metadata: metadata,
       isError: isError
     )
   }

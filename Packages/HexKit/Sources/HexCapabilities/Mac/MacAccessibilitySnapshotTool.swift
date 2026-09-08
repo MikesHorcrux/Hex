@@ -5,7 +5,9 @@ public struct MacAccessibilitySnapshotTool: HostTool, Sendable {
     name: "mac_accessibility_snapshot",
     description:
       "Read a bounded semantic Accessibility tree for one running macOS application. Secure text "
-      + "values are never returned. macOS Accessibility permission is required.",
+      + "values are never returned. Returns a single-use observation_id for one action in this run, "
+      + "valid for at most 60 seconds. Observe again after every action to verify visible results. "
+      + "macOS Accessibility permission is required.",
     inputSchema: HostToolSchema.object(
       properties: [
         "bundle_id": HostToolSchema.string(
@@ -28,10 +30,20 @@ public struct MacAccessibilitySnapshotTool: HostTool, Sendable {
   )
 
   private let controller: any MacAccessibilityControlling
+  private let observationLedger: MacAccessibilityObservationLedger
+  private let sessionState: @Sendable () -> MacInteractionSessionState
   private let authorizationLedger = ToolAuthorizationLedger()
 
-  public init(controller: any MacAccessibilityControlling) {
+  public init(
+    controller: any MacAccessibilityControlling,
+    observationLedger: MacAccessibilityObservationLedger,
+    sessionState: @escaping @Sendable () -> MacInteractionSessionState = {
+      SystemMacInteractionSessionChecker().status()
+    }
+  ) {
     self.controller = controller
+    self.observationLedger = observationLedger
+    self.sessionState = sessionState
   }
 
   public func authorizationRequest(
@@ -62,14 +74,23 @@ public struct MacAccessibilitySnapshotTool: HostTool, Sendable {
     do {
       let request = try validatedRequest(call)
       try await authorizationLedger.take(call: call, runID: context.runID)
-      guard await controller.isTrusted(promptIfNeeded: true) else {
+      try Task.checkCancellation()
+      try sessionState().requireAvailable()
+      guard await controller.isTrusted(promptIfNeeded: false) else {
         throw MacToolError.accessibilityPermissionRequired
       }
+      try Task.checkCancellation()
+      try sessionState().requireAvailable()
       let snapshot = try await controller.snapshot(
         bundleIdentifier: request.bundleIdentifier,
         maximumDepth: request.maximumDepth,
         maximumElements: request.maximumElements
       )
+      try Task.checkCancellation()
+      guard snapshot.bundleIdentifier == request.bundleIdentifier else {
+        throw MacToolError.accessibilityObservationFailed
+      }
+      try await observationLedger.record(snapshot, runID: context.runID)
       return MacToolResult.snapshot(snapshot, callID: call.id)
     } catch {
       await authorizationLedger.remove(callID: call.id, runID: context.runID)

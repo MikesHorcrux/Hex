@@ -4,7 +4,7 @@
 
 Native file, process, web, Mac and artifact capability execution.
 
-**119 Swift files.** Generated; do not edit by hand.
+**123 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexCapabilities/Artifacts
 
@@ -55,6 +55,7 @@ Native file, process, web, Mac and artifact capability execution.
 | [MacAccessibilityActionTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityActionTool.swift) | — |
 | [MacAccessibilityControlling.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityControlling.swift) | — |
 | [MacAccessibilityElementSnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityElementSnapshot.swift) | — |
+| [MacAccessibilityObservationLedger.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityObservationLedger.swift) | Binds a bounded, single-use observation to the run that obtained it. This is not an approval. |
 | [MacAccessibilitySelector.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySelector.swift) | — |
 | [MacAccessibilitySnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshot.swift) | — |
 | [MacAccessibilitySnapshotTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshotTool.swift) | — |
@@ -62,12 +63,15 @@ Native file, process, web, Mac and artifact capability execution.
 | [MacApplicationActivationResult.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacApplicationActivationResult.swift) | — |
 | [MacApplicationControlling.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacApplicationControlling.swift) | — |
 | [MacApplicationSnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacApplicationSnapshot.swift) | — |
+| [MacInteractionSessionState.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacInteractionSessionState.swift) | — |
 | [MacListApplicationsTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacListApplicationsTool.swift) | — |
 | [MacTargetValidator.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacTargetValidator.swift) | — |
 | [MacToolError.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacToolError.swift) | — |
 | [MacToolResult.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacToolResult.swift) | — |
-| [SystemMacAccessibilityController.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController.swift) | — |
+| [SystemMacAccessibilityController+Traversal.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController+Traversal.swift) | — |
+| [SystemMacAccessibilityController.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController.swift) | Retains native AX identities on the main actor; public values crossing the boundary are Sendable. |
 | [SystemMacApplicationController.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacApplicationController.swift) | — |
+| [SystemMacInteractionSessionChecker.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacInteractionSessionChecker.swift) | Reads local WindowServer session availability without requesting permissions or changing state. |
 
 ## Packages/HexKit/Sources/HexCapabilities/Process
 

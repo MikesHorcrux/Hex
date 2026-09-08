@@ -4,13 +4,16 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**38 Swift files.** Generated; do not edit by hand.
+**42 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Tests/HexGatewayTests/Authorization
 
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexGatewayAuthorizationBrokerTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayAuthorizationBrokerTests.swift) | — |
+| [HexGatewayBrowserToolExecutorTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayBrowserToolExecutorTests.swift) | — |
+| [HexGatewayPeekabooCallPolicyTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPeekabooCallPolicyTests.swift) | — |
+| [HexGatewayPeekabooToolExecutorTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPeekabooToolExecutorTests.swift) | — |
 | [HexGatewayPermissionManagerTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPermissionManagerTests.swift) | — |
 | [HexGatewayScreenPermissionToolExecutorTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayScreenPermissionToolExecutorTests.swift) | — |
 
@@ -47,6 +50,7 @@ Focused test target; consult suites for exercised boundaries.
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexGatewayControlledMCPIntegrationTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayControlledMCPIntegrationTests.swift) | — |
+| [HexGatewayManagedBrowserIntegrationTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayManagedBrowserIntegrationTests.swift) | — |
 | [HexGatewayResidentConfigurationTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayResidentConfigurationTests.swift) | — |
 | [HexGatewayResidentHostLifecycleTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayResidentHostLifecycleTests.swift) | — |
 | [HexGatewayResidentOptionalMCPTests.swift](../../../Packages/HexKit/Tests/HexGatewayTests/Resident/HexGatewayResidentOptionalMCPTests.swift) | — |

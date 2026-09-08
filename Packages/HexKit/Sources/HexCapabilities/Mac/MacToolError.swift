@@ -11,4 +11,8 @@ public enum MacToolError: Error, Equatable, Sendable {
   case accessibilityElementAmbiguous
   case accessibilityActionUnsupported
   case accessibilityActionFailed
+  case accessibilityObservationStale
+  case accessibilityActionOutcomeUnknown
+  case interactionSessionLocked
+  case interactionSessionUnavailable
 }

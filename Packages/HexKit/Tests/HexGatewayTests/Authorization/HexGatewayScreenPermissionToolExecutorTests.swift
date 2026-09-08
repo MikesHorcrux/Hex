@@ -1,6 +1,8 @@
+import HexCapabilities
 import HexCore
 import HexGatewayKit
 import HexIPC
+import Synchronization
 import Testing
 
 @Suite("Screen permission dispatch guard")
@@ -9,7 +11,8 @@ struct HexGatewayScreenPermissionToolExecutorTests {
   func revocationBetweenActionsStopsBeforeCallingTheScreenHelper() async throws {
     let base = Executor()
     let permissions = Permissions()
-    let guarded = HexGatewayScreenPermissionToolExecutor(base: base) { await permissions.status() }
+    let guarded = HexGatewayScreenPermissionToolExecutor(
+      base: base, sessionState: { .available }, status: { await permissions.status() })
     let context = ToolExecutionContext(runID: AgentRunID())
     let first = ToolCall(name: "screen_probe", arguments: [:])
     _ = try await guarded.authorizationRequest(for: first, in: context)
@@ -30,9 +33,9 @@ struct HexGatewayScreenPermissionToolExecutorTests {
   @Test
   func unreachablePermissionCheckDoesNotDispatchOrPretendAccessIsDenied() async throws {
     let base = Executor()
-    let guarded = HexGatewayScreenPermissionToolExecutor(base: base) {
-      throw GatewayFailure(code: .transportUnavailable, message: "Offline")
-    }
+    let guarded = HexGatewayScreenPermissionToolExecutor(
+      base: base, sessionState: { .available },
+      status: { throw GatewayFailure(code: .transportUnavailable, message: "Offline") })
     let result = try await guarded.execute(
       ToolCall(name: "screen_probe", arguments: [:]),
       in: ToolExecutionContext(runID: AgentRunID()))
@@ -41,6 +44,49 @@ struct HexGatewayScreenPermissionToolExecutorTests {
       result.output
         == .object([
           "error": .string("screen_permissions_unverified"), "dispatched": .boolean(false),
+        ]))
+    #expect(await base.calls == 0)
+  }
+
+  @Test
+  func lockedOrUnavailableSessionNeverReachesPermissionOrActionDispatch() async throws {
+    for state in [MacInteractionSessionState.locked, .unavailable] {
+      let base = Executor()
+      let guarded = HexGatewayScreenPermissionToolExecutor(
+        base: base, sessionState: { state },
+        status: {
+          Issue.record("A blocked session must not invoke the external permission helper.")
+          return GatewayScreenControlPermissionStatus(
+            accessibilityGranted: true, screenRecordingGranted: true)
+        })
+      let result = try await guarded.execute(
+        ToolCall(name: "screen_probe", arguments: [:]),
+        in: ToolExecutionContext(runID: AgentRunID()))
+      #expect(result.status == .failure)
+      #expect(result.requiresUserAttention)
+      #expect(await base.calls == 0)
+    }
+  }
+
+  @Test
+  func lockDuringPermissionCheckStopsBeforeActionDispatch() async throws {
+    let base = Executor()
+    let locked = Mutex(false)
+    let guarded = HexGatewayScreenPermissionToolExecutor(
+      base: base, sessionState: { locked.withLock { $0 ? .locked : .available } },
+      status: {
+        locked.withLock { $0 = true }
+        return GatewayScreenControlPermissionStatus(
+          accessibilityGranted: true, screenRecordingGranted: true)
+      })
+    let result = try await guarded.execute(
+      ToolCall(name: "screen_probe", arguments: [:]),
+      in: ToolExecutionContext(runID: AgentRunID()))
+    #expect(result.requiresUserAttention)
+    #expect(
+      result.output
+        == .object([
+          "error": .string("mac_session_locked"), "dispatched": .boolean(false),
         ]))
     #expect(await base.calls == 0)
   }
