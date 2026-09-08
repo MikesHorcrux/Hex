@@ -64,3 +64,82 @@ only bypasses a hanging compiler-version probe; real compilation and signing sti
 This is local development qualification, not a notarization, release publication or guarantee of
 exactly-once transactions in arbitrary external services. See the architecture document for the
 precise recovery and duplicate-operation contract.
+
+## Local dev integration
+
+Implementation commit: `f1801d61d32bbd8629a926d10b61ea47533658a1`.
+Merged into local `dev` as `8c127a8c29af2ce4da4f2197111e583f0ad542c7`.
+`git diff --exit-code codex/durable-tasks HEAD` confirmed an identical source tree after integration.
+The integrated build passed with:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project Hex.xcodeproj -scheme Hex -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/hex-context-derived -jobs 2 CC=/tmp/hex-context-clang build
+```
+
+Integrated lint passed across 1,354 Swift files. Final activation, saved-attempt history navigation,
+and a fresh queued request on the integrated binary remain pending: computer use reported that
+the Mac was locked and automatic unlock could not unlock it. The preceding feature-build live
+qualification above is complete. The Relic ticket remains in progress until final activation checks.
+
+## Exact implementation file set
+
+```text
+Hex/Models/Agent/AgentTaskWorkspaceModel+History.swift
+Hex/Models/Agent/AgentTaskWorkspaceModel+HistoryPages.swift
+Hex/Models/Agent/AgentTaskWorkspaceModel.swift
+Hex/Models/Agent/AgentWorkspaceModel.swift
+Hex/Services/Agent/HexLiveAgentClient.swift
+Hex/Views/Agent/AgentTaskComposerView.swift
+Hex/Views/Agent/AgentTaskListView.swift
+Hex/Views/Agent/AgentTasksView.swift
+Hex/Views/Agent/AgentWorkspaceView.swift
+HexTests/AgentTaskWorkspaceModelTests.swift
+Packages/HexKit/Sources/HexCore/Tasks/AgentTaskAttempt.swift
+Packages/HexKit/Sources/HexCore/Tasks/AgentTaskEffect.swift
+Packages/HexKit/Sources/HexCore/Tasks/AgentTaskEffectReading.swift
+Packages/HexKit/Sources/HexCore/Tasks/AgentTaskOperationFingerprint.swift
+Packages/HexKit/Sources/HexCore/Tasks/AgentTaskRecord.swift
+Packages/HexKit/Sources/HexCore/Tasks/AgentTaskStorage.swift
+Packages/HexKit/Sources/HexCore/Tasks/AgentTaskStorageError.swift
+Packages/HexKit/Sources/HexGatewayKit/Composition/HexGatewayComposition.swift
+Packages/HexKit/Sources/HexGatewayKit/Composition/HexGatewayRunDriverAdapter+BoundaryStopping.swift
+Packages/HexKit/Sources/HexGatewayKit/Composition/HexGatewayRunDriverAdapter.swift
+Packages/HexKit/Sources/HexGatewayKit/Composition/HexTaskGuardedToolExecutor.swift
+Packages/HexKit/Sources/HexIPC/Client/HexGatewayClient+Tasks.swift
+Packages/HexKit/Sources/HexIPC/Contracts/GatewayProtocolVersion.swift
+Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+RunLifecycle.swift
+Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+Shutdown.swift
+Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+TaskRecovery.swift
+Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+TaskScheduler.swift
+Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+Tasks.swift
+Packages/HexKit/Sources/HexIPC/Service/HexGatewayService+ToolMaintenance.swift
+Packages/HexKit/Sources/HexIPC/Service/HexGatewayService.swift
+Packages/HexKit/Sources/HexIPC/Tasks/GatewayTaskCheckpoint.swift
+Packages/HexKit/Sources/HexIPC/Tasks/GatewayTaskRequest.swift
+Packages/HexKit/Sources/HexIPC/Tasks/HexGatewayBoundaryStopping.swift
+Packages/HexKit/Sources/HexIPC/Tasks/HexGatewayTaskClient.swift
+Packages/HexKit/Sources/HexIPC/Tasks/HexGatewayTaskTransport.swift
+Packages/HexKit/Sources/HexIPC/Transport/InProcessHexGatewayTransport.swift
+Packages/HexKit/Sources/HexIPC/Wire/GatewayXPCOperation.swift
+Packages/HexKit/Sources/HexIPC/XPC/HexGatewayXPCService.swift
+Packages/HexKit/Sources/HexIPC/XPC/XPCGatewayTransport.swift
+Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteAgentEventJournal+Append.swift
+Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteAgentEventJournal+TaskEffects.swift
+Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteAgentEventJournal+Tasks.swift
+Packages/HexKit/Sources/HexPersistence/SQLite/Migrations/SQLiteJournalMigrator+Tasks.swift
+Packages/HexKit/Sources/HexPersistence/SQLite/Migrations/SQLiteJournalMigrator+Validation.swift
+Packages/HexKit/Sources/HexPersistence/SQLite/Migrations/SQLiteJournalMigrator.swift
+Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+BoundaryStopping.swift
+Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+Inference.swift
+Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+Tools.swift
+Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime.swift
+Packages/HexKit/Tests/HexGatewayTests/Composition/HexDurableTaskTests.swift
+Packages/HexKit/Tests/HexGatewayTests/Composition/HexTaskGuardedToolExecutorTests.swift
+Packages/HexKit/Tests/HexIPCTests/Transport/XPCGatewayTransportTests.swift
+Packages/HexKit/Tests/HexIPCTests/Wire/GatewayImplementedVersionTests.swift
+Packages/HexKit/Tests/HexPersistenceTests/SQLite/Journal/SQLiteTaskStorageTests.swift
+Packages/HexKit/Tests/HexPersistenceTests/SQLite/Migrations/SQLiteJournalMigrationTests.swift
+docs/architecture/durable-tasks.md
+docs/verification/durable-tasks-2026-09-08.json
+docs/verification/durable-tasks-2026-09-08.md
+```
