@@ -506,8 +506,10 @@ struct HexGatewayArtifactWorkflowTests {
             id: ToolCallID(rawValue: "find-marker"), name: "artifact_search",
             arguments: [
               "artifact_id": .string(reference.id.uuidString), "query": .string(query),
-              "offset": .integer(max(0, reference.byteCount - 256)),
-              "maximum_scan_bytes": .integer(256),
+              // Structured JSON may place receipt metadata after the payload. Search a bounded
+              // tail that includes it instead of assuming a particular object-key order.
+              "offset": .integer(max(0, reference.byteCount - 4_096)),
+              "maximum_scan_bytes": .integer(4_096),
             ])
         }
       } else {

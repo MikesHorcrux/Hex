@@ -7,51 +7,31 @@ extension SystemMacAccessibilityController {
     maximumDepth: Int,
     maximumElements: Int
   ) throws -> (elements: [ObservedElement], isTruncated: Bool) {
-    var queue: [(element: AXUIElement, depth: Int, path: String)] = [(root, 0, "0")]
-    var cursor = 0
     var elements: [ObservedElement] = []
     var windows: [(element: CFTypeRef, reference: String)] = []
     elements.reserveCapacity(maximumElements)
-    var isTruncated = false
-
-    while cursor < queue.count {
-      if elements.count >= maximumElements {
-        isTruncated = true
-        break
-      }
-      let node = queue[cursor]
-      cursor += 1
-      let children = try children(of: node.element, path: node.path)
-      let window = observedWindow(of: node.element)
-      let reference: String?
-      if let window {
-        if let known = windows.first(where: { CFEqual($0.element, window) }) {
-          reference = known.reference
+    let isTruncated = try MacAccessibilityTraversal.walk(
+      root: root, maximumDepth: maximumDepth, maximumElements: maximumElements,
+      children: { try children(of: $0, path: $1) },
+      visit: { element, path, childCount in
+        let window = observedWindow(of: element)
+        let reference: String?
+        if let window {
+          if let known = windows.first(where: { CFEqual($0.element, window) }) {
+            reference = known.reference
+          } else {
+            let newReference = UUID().uuidString
+            windows.append((window, newReference))
+            reference = newReference
+          }
         } else {
-          let newReference = UUID().uuidString
-          windows.append((window, newReference))
-          reference = newReference
+          reference = nil
         }
-      } else {
-        reference = nil
-      }
-      let value = snapshot(
-        element: node.element, path: node.path, childCount: children.count,
-        windowReference: reference
-      )
-      elements.append(ObservedElement(element: node.element, window: window, value: value))
-      if node.depth < maximumDepth {
-        let remainingCapacity = max(maximumElements - queue.count, 0)
-        if children.count > remainingCapacity {
-          isTruncated = true
-        }
-        for (index, child) in children.enumerated().prefix(remainingCapacity) {
-          queue.append((child, node.depth + 1, "\(node.path).\(index)"))
-        }
-      } else if !children.isEmpty {
-        isTruncated = true
-      }
-    }
+        let value = snapshot(
+          element: element, path: path, childCount: childCount, windowReference: reference
+        )
+        elements.append(ObservedElement(element: element, window: window, value: value))
+      })
     return (elements, isTruncated)
   }
 

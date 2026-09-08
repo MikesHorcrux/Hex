@@ -9,8 +9,8 @@ not independently verified API documentation. A dash means no leading comment wa
 | Module / target | Swift files | Ownership |
 | --- | ---: | --- |
 | [Hex](Hex.md) | 225 | macOS app composition, observable models, services and SwiftUI views. |
-| [HexCapabilities](HexCapabilities.md) | 124 | Native file, process, web, Mac and artifact capability execution. |
-| [HexCapabilitiesTests](HexCapabilitiesTests.md) | 25 | Focused test target; consult suites for exercised boundaries. |
+| [HexCapabilities](HexCapabilities.md) | 125 | Native file, process, web, Mac and artifact capability execution. |
+| [HexCapabilitiesTests](HexCapabilitiesTests.md) | 26 | Focused test target; consult suites for exercised boundaries. |
 | [HexCore](HexCore.md) | 76 | Shared Sendable values and small inference, tool, event and authority contracts. |
 | [HexCoreTests](HexCoreTests.md) | 19 | Focused test target; consult suites for exercised boundaries. |
 | [HexGatewayCommand](HexGatewayCommand.md) | 1 | HexGateway executable entry and concrete provider injection. |
@@ -33,6 +33,6 @@ not independently verified API documentation. A dash means no leading comment wa
 | [HexTests](HexTests.md) | 53 | Focused test target; consult suites for exercised boundaries. |
 | [HexUITests](HexUITests.md) | 2 | Focused test target; consult suites for exercised boundaries. |
 
-Total: **1296 Swift files** in **24 targets/directories**.
+Total: **1298 Swift files** in **24 targets/directories**.
 
 Regenerate with `python3 docs/_tools/docs.py generate` from the repository root.

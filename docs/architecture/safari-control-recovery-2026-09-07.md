@@ -46,6 +46,8 @@ Base: `c04a91447a01b3ac35e2b4a9d0b8644a56aec8c1`; isolated branch
 - `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityAction.swift`
 - `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityActionTool.swift`
 - `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshotTool.swift`
+- `Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityTraversal.swift`
+- `Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController+Traversal.swift`
 - `Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController.swift`
 - `Packages/HexKit/Sources/HexCore/Tools/ToolCallValidationError.swift`
 - `Packages/HexKit/Sources/HexCore/Tools/ToolNonExecutionReason.swift`
@@ -54,12 +56,15 @@ Base: `c04a91447a01b3ac35e2b4a9d0b8644a56aec8c1`; isolated branch
 - `Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+ToolDispatch.swift`
 - `Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntime+Tools.swift`
 - `Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityToolTests.swift`
+- `Packages/HexKit/Tests/HexCapabilitiesTests/Mac/MacAccessibilityTraversalTests.swift`
 - `Packages/HexKit/Tests/HexGatewayTests/Authorization/HexGatewayPeekabooToolExecutorTests.swift`
 - `Packages/HexKit/Tests/HexGatewayTests/Composition/HexGatewayArtifactWorkflowTests.swift`
 - `Packages/HexKit/Tests/HexRuntimeTests/Agent/AgentRuntimeArgumentRecoveryTests.swift`
 - `Packages/HexKit/Tests/HexRuntimeTests/Support/ScriptedToolExecutor.swift`
 - `Packages/HexKit/Tests/HexRuntimeTests/Support/ToolAuthorizationBehavior.swift`
 - `docs/architecture/safari-control-recovery-2026-09-07.md`
+- `docs/reference/modules/HexCapabilities.md`
+- `docs/reference/modules/HexCapabilitiesTests.md`
 - `docs/reference/modules/HexCore.md`
 - `docs/reference/modules/HexRuntimeTests.md`
 - `docs/reference/modules/README.md`
@@ -114,3 +119,27 @@ Snapshot follow-up verification: 1,314 package tests in 254 suites passed
 (`/tmp/hex-safari-snapshot-package.log`); signed hosted tests passed
 (`/tmp/hex-safari-snapshot-hosted.log`, `/tmp/hex-safari-snapshot-hosted.xcresult`).
 Lint passed for 1,296 Swift files and documentation inventory validation passed.
+
+
+## Window content traversal
+
+Run `0119F895-AB17-4107-BC82-5E0E418C2779` selected Mike through the managed helper.
+Its click was dispatched through Accessibility but returned `dispatched_unverified`; Hex stopped
+with the existing uncertain-outcome guard. Independent CUA inspection verified `Home - Netflix`,
+the Mike profile control, and `Continue Watching for Mike` before continuation. No profile click
+was repeated.
+
+The native fallback exposed a separate read limitation: 438 of 512 returned elements were
+AXMenuItems, and the breadth-first traversal exhausted its budget at depth 6 before reaching
+AXWebArea. Native traversal now visits each subtree before its siblings, retaining the original
+child-index paths. In Safari's observed hierarchy this visits the window before application menus.
+The same 512-element and 12-depth limits apply; truncation remains explicit, and read failures
+still invalidate the observation instead of returning a partial success. Four focused regressions
+cover a deep page beside 600 menu entries, depth truncation, read failure, and an exact full budget.
+
+Traversal verification passed 1,318 package tests in 255 suites
+(`/tmp/hex-safari-traversal-package-final.log`) and 294 signed hosted tests in 52 suites
+(`/tmp/hex-safari-traversal-hosted.log`, `/tmp/hex-safari-traversal-hosted.xcresult`).
+Lint passed for 1,298 Swift files; documentation validation passed. The first package run exposed
+a test-fixture assumption that its marker always falls within the final 256 JSON bytes. Its search
+now uses a bounded 4 KiB tail, accommodating receipt metadata in any JSON object-key order.
