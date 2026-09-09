@@ -213,6 +213,11 @@ struct WorkspaceFileMetadataSnapshot {
       // inside a protected folder. Leave it intact on disk and let the OS manage it rather
       // than treating it as editable metadata to compare or copy during atomic publication.
       if name == "com.apple.macl" { continue }
+      // decmpfs describes the filesystem's compression representation, not user metadata.
+      // Publication can add/remove it even while logical bytes and flags remain unchanged.
+      // Do not copy a prior representation onto newly written bytes or compare it as metadata;
+      // content hashes, inode/status checks, and the compressed/dataless flag rejection remain.
+      if name == "com.apple.decmpfs" { continue }
       let valueByteCount = name.withCString { namePointer in
         fgetxattr(descriptor, namePointer, nil, 0, 0, 0)
       }
