@@ -607,6 +607,68 @@ struct ProcessRunToolTests {
     #expect(output["output_bytes"] == .integer(4))
   }
 
+  @Test
+  func missingExecutableReturnsRecoverableFeedbackWithoutGrantingExecution() async throws {
+    let executor = RecordingProcessExecutor(
+      result: ProcessExecutionResult(
+        termination: .exited(code: 0), output: Data(), durationMilliseconds: 0))
+    let tool = ProcessRunTool(executor: executor, environment: [:])
+    let context = ToolExecutionContext(
+      runID: AgentRunID(), workingDirectory: URL(fileURLWithPath: "/private/tmp"))
+    let call = ToolCall(
+      name: "process_run",
+      arguments: [
+        "executable": .string("/private/tmp/hex-missing-\(UUID().uuidString)/node"),
+        "arguments": .array([]),
+      ])
+
+    await #expect(throws: ToolCallValidationError.self) {
+      try await tool.authorizationRequest(for: call, in: context)
+    }
+    let corrected = ToolCall(
+      id: call.id, name: call.name,
+      arguments: ["executable": .string("/usr/bin/printf"), "arguments": .array([.string("ok")])])
+    let unapproved = try await tool.execute(corrected, in: context)
+    #expect(unapproved.output == .object(["error": .string("authorization_required")]))
+    #expect(await executor.lastRequest == nil)
+
+    _ = try await tool.authorizationRequest(for: corrected, in: context)
+    let result = try await tool.execute(corrected, in: context)
+    #expect(result.status == .success)
+    #expect(await executor.lastRequest?.executable.path == "/usr/bin/printf")
+  }
+
+  @Test
+  func nonExecutableFileAndMissingWorkingDirectoryRemainAuthorizationFailures() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let executable = directory.appendingPathComponent("not-executable")
+    try Data("no execution permission".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: executable.path)
+    let executor = RecordingProcessExecutor(
+      result: ProcessExecutionResult(
+        termination: .exited(code: 0), output: Data(), durationMilliseconds: 0))
+    let tool = ProcessRunTool(executor: executor, environment: [:])
+    let call = ToolCall(
+      name: "process_run",
+      arguments: ["executable": .string(executable.path), "arguments": .array([])])
+    await #expect(throws: ProcessExecutionError.invalidRequest) {
+      try await tool.authorizationRequest(
+        for: call, in: ToolExecutionContext(runID: AgentRunID(), workingDirectory: directory))
+    }
+    let validExecutable = ToolCall(
+      name: call.name,
+      arguments: ["executable": .string("/usr/bin/printf"), "arguments": .array([])])
+    await #expect(throws: ProcessExecutionError.invalidRequest) {
+      try await tool.authorizationRequest(
+        for: validExecutable,
+        in: ToolExecutionContext(
+          runID: AgentRunID(), workingDirectory: directory.appendingPathComponent("missing")))
+    }
+    #expect(await executor.lastRequest == nil)
+  }
+
   actor RecordingProcessExecutor: ProcessExecuting {
     private(set) var lastRequest: ProcessExecutionRequest?
     private let result: ProcessExecutionResult

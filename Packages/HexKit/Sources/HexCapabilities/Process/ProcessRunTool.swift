@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import HexCore
 
@@ -153,6 +154,10 @@ public struct ProcessRunTool: HostTool, Sendable {
       // A cancelled or malformed authorization attempt must not leave an approval snapshot that a
       // later retry could consume. The ledger operation itself is non-throwing and actor-owned.
       await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
+      if error as? ProcessExecutionError == .invalidRequest {
+        try Task.checkCancellation()
+        try rejectMissingExecutableReference(call)
+      }
       throw error
     }
   }
@@ -193,6 +198,25 @@ public struct ProcessRunTool: HostTool, Sendable {
       await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
       return try ProcessToolResult.failure(error, callID: call.id)
     }
+  }
+
+  private func rejectMissingExecutableReference(_ call: ToolCall) throws {
+    guard case .string(let path) = call.arguments["executable"],
+      path.hasPrefix("/"), path.utf8.count <= 4_096,
+      !path.contains("\0"), WorkspacePathScalarPolicy.isPromptSafe(path)
+    else { return }
+    if let pointer = realpath(path, nil) {
+      free(pointer)
+      return
+    }
+    // Only a definitely absent model-selected executable is recoverable here. Permission,
+    // directory, identity, and other preflight failures retain the authorization failure path.
+    let code = errno
+    guard code == ENOENT || code == ENOTDIR else { return }
+    throw ToolCallValidationError(
+      recovery:
+        "The requested executable path does not exist. No process was started. Discover an installed executable and submit its absolute path; do not guess its location."
+    )
   }
 
   private func validatedRequest(

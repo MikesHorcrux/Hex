@@ -1,5 +1,5 @@
-/// A host tool's pure argument validation rejected the call before authorization or dispatch.
-/// Throw only for malformed model arguments, never for permission, transport, or execution errors.
+/// A host tool rejected model arguments before authorization or dispatch, including a definitely
+/// absent executable reference. Never use for permission, transport, or execution errors.
 public struct ToolCallValidationError: Error, Sendable {
   public let recovery: String
 
