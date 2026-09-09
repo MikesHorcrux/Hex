@@ -9,7 +9,8 @@ import HexProviders
 /// Lazily selects the resident XPC gateway first. The in-process composition is retained only as an
 /// explicit developer fallback, so a missing or unavailable resident service never becomes a
 /// silently privileged app-local agent.
-actor HexLiveAgentClient: HexAgentClient, HexGatewayTaskClient, HexResidentGatewayControlling,
+actor HexLiveAgentClient: HexAgentClient, HexGatewayProcessSessionClient, HexGatewayTaskClient,
+  HexResidentGatewayControlling,
   HexHeartbeatManaging,
   HexAccessibilityPermissionServicing, HexScreenControlPermissionServicing,
   HexResidentGatewayConnectionResetting, HexToolServerHealthServicing, HexPermissionManaging
@@ -218,6 +219,12 @@ actor HexLiveAgentClient: HexAgentClient, HexGatewayTaskClient, HexResidentGatew
       clearConnectionIfUnavailable(error)
       throw error
     }
+  }
+
+  func processSession(_ request: GatewayProcessSessionRequest) async throws
+    -> GatewayProcessSessionRequest.Response
+  {
+    try await connectedGatewayAdapter().client.processSession(request)
   }
 
   func taskOperation(_ request: GatewayTaskRequest) async throws -> GatewayTaskRequest.Response {

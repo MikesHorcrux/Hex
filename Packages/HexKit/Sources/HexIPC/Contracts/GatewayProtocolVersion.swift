@@ -9,8 +9,9 @@ public struct GatewayProtocolVersion: Codable, Comparable, Sendable {
   /// Version 1.16 requires resident conversation storage and revision-checked paged history.
   /// Version 1.17 requires durable task admission, recovery and ordered controls.
   /// Version 1.18 links durable execution to stable conversations and a resident-owned timeline.
-  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 18)
-  public static let current = GatewayProtocolVersion(major: 1, minor: 18)
+  /// Version 1.19 requires durable coding sessions, acknowledged input and change review.
+  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 19)
+  public static let current = GatewayProtocolVersion(major: 1, minor: 19)
 
   public let major: UInt16
   public let minor: UInt16

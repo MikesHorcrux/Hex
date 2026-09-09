@@ -10,7 +10,9 @@ public struct PersonalAgentToolExecutor: ToolExecutor, Sendable {
     processExecutor: any ProcessExecuting,
     processConfiguration: ProcessExecutionConfiguration = .standard,
     processEnvironment: [String: String]? = nil,
-    processAuthorizationConfiguration: CapabilityAuthorizationCenterConfiguration = .standard
+    processAuthorizationConfiguration: CapabilityAuthorizationCenterConfiguration = .standard,
+    codingWorkspace: CodingWorkspaceManager? = nil,
+    processSessions: ProcessSessionManager? = nil
   ) throws {
     let applicationController = SystemMacApplicationController()
     let accessibilityController = SystemMacAccessibilityController()
@@ -25,7 +27,8 @@ public struct PersonalAgentToolExecutor: ToolExecutor, Sendable {
       webFetcher: webFetcher,
       processConfiguration: processConfiguration,
       processEnvironment: processEnvironment,
-      processAuthorizationConfiguration: processAuthorizationConfiguration
+      processAuthorizationConfiguration: processAuthorizationConfiguration,
+      codingWorkspace: codingWorkspace, processSessions: processSessions
     )
   }
 
@@ -38,9 +41,18 @@ public struct PersonalAgentToolExecutor: ToolExecutor, Sendable {
     webFetcher: any WebFetching,
     processConfiguration: ProcessExecutionConfiguration = .standard,
     processEnvironment: [String: String]? = nil,
-    processAuthorizationConfiguration: CapabilityAuthorizationCenterConfiguration = .standard
+    processAuthorizationConfiguration: CapabilityAuthorizationCenterConfiguration = .standard,
+    codingWorkspace: CodingWorkspaceManager? = nil,
+    processSessions: ProcessSessionManager? = nil
   ) throws {
     let observationLedger = MacAccessibilityObservationLedger()
+    func tracked(_ tool: any HostTool) -> any HostTool {
+      if let codingWorkspace, let processSessions {
+        return CodingLegacyWriteTool(
+          base: tool, manager: codingWorkspace, sessions: processSessions)
+      }
+      return tool
+    }
     executor = try HostToolExecutor(tools: [
       MacAccessibilityActionTool(
         controller: accessibilityController, observationLedger: observationLedger),
@@ -62,9 +74,9 @@ public struct PersonalAgentToolExecutor: ToolExecutor, Sendable {
       WebSearchTool(fetcher: webFetcher),
       WorkspaceListDirectoryTool(fileSystem: fileSystem),
       WorkspaceReadTextFileTool(fileSystem: fileSystem),
-      WorkspaceReplaceTextTool(fileSystem: fileSystem),
+      tracked(WorkspaceReplaceTextTool(fileSystem: fileSystem)),
       WorkspaceSearchTextTool(fileSystem: fileSystem),
-      WorkspaceWriteTextFileTool(fileSystem: fileSystem),
+      tracked(WorkspaceWriteTextFileTool(fileSystem: fileSystem)),
     ])
   }
 

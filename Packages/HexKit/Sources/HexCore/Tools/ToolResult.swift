@@ -1,4 +1,5 @@
 public struct ToolResult: Codable, Equatable, Sendable {
+  public let executionOutcome: ToolExecutionOutcome?
   public let toolCallID: ToolCallID
   public let status: ToolResultStatus
   public let output: JSONValue
@@ -13,7 +14,8 @@ public struct ToolResult: Codable, Equatable, Sendable {
 
   public var hasValidNonExecutionMetadata: Bool {
     notExecutedReason == nil
-      || (status == .failure && content.isEmpty && artifacts.isEmpty && !requiresUserAttention)
+      || (status == .failure && content.isEmpty && artifacts.isEmpty && !requiresUserAttention
+        && executionOutcome == nil)
   }
 
   public init(
@@ -23,8 +25,10 @@ public struct ToolResult: Codable, Equatable, Sendable {
     content: [ToolResultContent] = [],
     artifacts: [ArtifactReference] = [],
     requiresUserAttention: Bool = false,
-    notExecutedReason: ToolNonExecutionReason? = nil
+    notExecutedReason: ToolNonExecutionReason? = nil,
+    executionOutcome: ToolExecutionOutcome? = nil
   ) {
+    self.executionOutcome = executionOutcome
     self.toolCallID = toolCallID
     self.status = status
     self.output = output
@@ -35,6 +39,7 @@ public struct ToolResult: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
+    case executionOutcome
     case toolCallID
     case status
     case output
@@ -46,6 +51,8 @@ public struct ToolResult: Codable, Equatable, Sendable {
 
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
+    executionOutcome = try container.decodeIfPresent(
+      ToolExecutionOutcome.self, forKey: .executionOutcome)
     toolCallID = try container.decode(ToolCallID.self, forKey: .toolCallID)
     status = try container.decode(ToolResultStatus.self, forKey: .status)
     output = try container.decode(JSONValue.self, forKey: .output)
@@ -72,6 +79,7 @@ public struct ToolResult: Codable, Equatable, Sendable {
           debugDescription: "A not-executed receipt has contradictory execution metadata."))
     }
     var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(executionOutcome, forKey: .executionOutcome)
     try container.encode(toolCallID, forKey: .toolCallID)
     try container.encode(status, forKey: .status)
     try container.encode(output, forKey: .output)

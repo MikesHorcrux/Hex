@@ -8,6 +8,7 @@ public enum GatewayXPCOperation: String, Codable, Hashable, Sendable {
   case cancelRun
   case recoverRun
   case taskOperation
+  case processSession
   case conversationStorage
   case readRunHistory
   case readArtifact

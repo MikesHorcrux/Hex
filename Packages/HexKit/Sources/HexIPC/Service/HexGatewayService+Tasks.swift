@@ -161,6 +161,16 @@ extension HexGatewayService {
         record.retryCount = 0
         record.explanation = "Applying your reconciliation decision"
       }
+      if record.phase == .cancelled {
+        do { try await processSessions?.finishTask(record.id, cancelled: true) } catch {
+          record.phase = .blocked
+          record.explanation = "Process cleanup is unconfirmed; inspect this task's sessions."
+        }
+      }
+      if case .reconcile = action {
+        try await processSessions?.acknowledgeTask(record.id, operationID: operationID)
+        try await codingWorkspace?.reconcile(taskID: record.id, operationID: operationID)
+      }
       record.lastControlID = operationID
       record.lastControlHash = hash
       let saved: AgentTaskRecord
@@ -172,6 +182,7 @@ extension HexGatewayService {
           message: "The work changed before this control was applied. Refresh and try again.")
       }
       response.tasks = [saved.summary]
+      if case .cancel = action { await processSessions?.cancelTask(saved.id) }
       if saved.attemptPending, let runID = saved.runID,
         activeRunID == runID || taskDispatchReservation == runID,
         let boundaryDriver = driver as? any HexGatewayBoundaryStopping

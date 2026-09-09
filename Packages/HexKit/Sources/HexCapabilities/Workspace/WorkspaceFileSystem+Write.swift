@@ -161,7 +161,7 @@ extension WorkspaceFileSystem {
     return try WorkspaceFileMetadataSnapshot(descriptor: descriptor)
   }
 
-  private func fileSnapshot(
+  func fileSnapshot(
     named name: String,
     in parent: Int32,
     expectedLinkCount: nlink_t,
@@ -769,7 +769,7 @@ extension WorkspaceFileSystem {
     }
   }
 
-  private func validateDirectoryDescriptor(
+  func validateDirectoryDescriptor(
     _ descriptor: Int32,
     components: [String]
   ) throws {

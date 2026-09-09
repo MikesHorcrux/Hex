@@ -20,6 +20,8 @@ public actor HexGatewayService {
   var taskSchedulerFailure: String?
   let conversationStore: (any ConversationStorage)?
   let artifactReader: (any ArtifactReading)?
+  let processSessions: (any ProcessSessionControlling)?
+  let codingWorkspace: (any CodingWorkspaceControlling)?
   var sessions: [GatewaySessionID: GatewaySessionState] = [:]
   var runs: [AgentRunID: GatewayRunState] = [:]
   var completedRunOrder: [AgentRunID] = []
@@ -39,7 +41,9 @@ public actor HexGatewayService {
     historyReader: (any HexGatewayRunHistoryReading)? = nil,
     artifactReader: (any ArtifactReading)? = nil,
     conversationStore: (any ConversationStorage)? = nil,
-    taskStore: (any AgentTaskStorage)? = nil
+    taskStore: (any AgentTaskStorage)? = nil,
+    processSessions: (any ProcessSessionControlling)? = nil,
+    codingWorkspace: (any CodingWorkspaceControlling)? = nil
   ) {
     self.driver = driver
     self.configuration = configuration
@@ -49,6 +53,8 @@ public actor HexGatewayService {
     self.artifactReader = artifactReader
     self.conversationStore = conversationStore
     self.taskStore = taskStore
+    self.processSessions = processSessions
+    self.codingWorkspace = codingWorkspace
   }
 
   func requireValidGatewayIdentity(

@@ -1,7 +1,7 @@
 import Foundation
 
 enum SQLiteJournalMigrator {
-  static let currentSchemaVersion = 6
+  static let currentSchemaVersion = 7
   static let versionOneRunsTableSQL =
     """
     CREATE TABLE runs (
@@ -220,6 +220,7 @@ enum SQLiteJournalMigrator {
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
         try createVersionSix(connection: connection)
+        try createVersionSeven(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -238,6 +239,7 @@ enum SQLiteJournalMigrator {
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
         try createVersionSix(connection: connection)
+        try createVersionSeven(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -254,6 +256,7 @@ enum SQLiteJournalMigrator {
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
         try createVersionSix(connection: connection)
+        try createVersionSeven(connection: connection)
         try validateSchema(
           connection: connection,
           maximumTextBytes: configuration.maximumTextBytes
@@ -270,6 +273,7 @@ enum SQLiteJournalMigrator {
         try createVersionFour(connection: connection)
         try createVersionFive(connection: connection)
         try createVersionSix(connection: connection)
+        try createVersionSeven(connection: connection)
         try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
         try validateMigratedData()
       }
@@ -282,6 +286,7 @@ enum SQLiteJournalMigrator {
           maximumTextBytes: configuration.maximumTextBytes)
         try createVersionFive(connection: connection)
         try createVersionSix(connection: connection)
+        try createVersionSeven(connection: connection)
         try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
         try validateMigratedData()
       }
@@ -293,6 +298,14 @@ enum SQLiteJournalMigrator {
           checkpointsSQL: checkpointsTableSQL, connection: connection,
           maximumTextBytes: configuration.maximumTextBytes)
         try createVersionSix(connection: connection)
+        try createVersionSeven(connection: connection)
+        try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
+        try validateMigratedData()
+      }
+    case 6:
+      try connection.withImmediateTransaction(beforeCommit: beforeCommit, afterCommit: afterCommit)
+      {
+        try createVersionSeven(connection: connection)
         try validateSchema(connection: connection, maximumTextBytes: configuration.maximumTextBytes)
         try validateMigratedData()
       }

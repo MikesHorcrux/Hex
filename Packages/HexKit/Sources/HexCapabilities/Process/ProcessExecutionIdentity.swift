@@ -4,8 +4,8 @@ import Foundation
 /// File identities captured for an authorized invocation and checked again immediately before
 /// spawning. Device and inode prevent a path replacement from silently retargeting execution;
 /// the mode, size, and timestamps also make in-place replacement and metadata changes visible.
-public struct ProcessExecutionIdentity: Equatable, Sendable {
-  public struct FileIdentity: Equatable, Sendable {
+public struct ProcessExecutionIdentity: Codable, Equatable, Sendable {
+  public struct FileIdentity: Codable, Equatable, Sendable {
     public let device: UInt64
     public let inode: UInt64
     public let mode: UInt64

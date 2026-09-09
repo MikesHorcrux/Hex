@@ -160,7 +160,8 @@ extension AgentRuntime {
     let references = [reference] + original.artifacts
     var bounded = ToolResult(
       toolCallID: original.toolCallID, status: original.status, output: .object(fields),
-      content: images, artifacts: references, requiresUserAttention: original.requiresUserAttention)
+      content: images, artifacts: references, requiresUserAttention: original.requiresUserAttention,
+      executionOutcome: original.executionOutcome)
     if try JSONEncoder().encode(bounded).count > configuration.budget.maxToolResultBytes,
       !images.isEmpty
     {
@@ -170,7 +171,8 @@ extension AgentRuntime {
       )
       bounded = ToolResult(
         toolCallID: original.toolCallID, status: original.status, output: .object(fields),
-        artifacts: references, requiresUserAttention: original.requiresUserAttention)
+        artifacts: references, requiresUserAttention: original.requiresUserAttention,
+        executionOutcome: original.executionOutcome)
     }
     while try JSONEncoder().encode(bounded).count > configuration.budget.maxToolResultBytes,
       previewBytes > 0
@@ -180,13 +182,15 @@ extension AgentRuntime {
       bounded = ToolResult(
         toolCallID: original.toolCallID, status: original.status, output: .object(fields),
         content: bounded.content, artifacts: references,
-        requiresUserAttention: original.requiresUserAttention)
+        requiresUserAttention: original.requiresUserAttention,
+        executionOutcome: original.executionOutcome)
     }
     if try JSONEncoder().encode(bounded).count > configuration.budget.maxToolResultBytes {
       bounded = ToolResult(
         toolCallID: original.toolCallID, status: original.status,
         output: .object(["stored_tool_result": .boolean(true)]), artifacts: references,
-        requiresUserAttention: original.requiresUserAttention)
+        requiresUserAttention: original.requiresUserAttention,
+        executionOutcome: original.executionOutcome)
     }
     if try JSONEncoder().encode(bounded).count > configuration.budget.maxToolResultBytes {
       // A deliberately tiny context budget may not fit even the immutable reference. Preserve it

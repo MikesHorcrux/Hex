@@ -1,0 +1,5 @@
+PASS signed pipe input, EOF, and confirmed exit
+PASS signed PTY controlling terminal, foreground group, input, and resize
+PASS signed local server repeated access and explicit stop cleanup
+PASS signed local server repeated access and owner EOF cleanup
+PASS signed 1,000,000-byte output drain and known exit 1

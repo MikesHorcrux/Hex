@@ -6,6 +6,7 @@ import HexMLXProvider
 @main
 enum HexGatewayCommand {
   static func main() async {
+    if HexProcessSupervisorEntry.runIfRequested(Array(CommandLine.arguments.dropFirst())) { return }
     do {
       let environment = ProcessInfo.processInfo.environment
       let configuration: HexGatewayResidentConfiguration

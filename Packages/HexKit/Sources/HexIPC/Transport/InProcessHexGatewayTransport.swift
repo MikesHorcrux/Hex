@@ -7,7 +7,8 @@ import HexCore
 /// Its configuration bounds client-side encoding and forwarding; the service independently enforces
 /// its own envelope, so a larger transport configuration never weakens service admission.
 public actor InProcessHexGatewayTransport: HexGatewayTransport, HexGatewayRunRecoveryTransport,
-  HexGatewayTaskTransport, HexGatewayConversationTransport, HexGatewayArtifactReadTransport,
+  HexGatewayTaskTransport, HexGatewayConversationTransport, HexGatewayProcessSessionTransport,
+  HexGatewayArtifactReadTransport,
   HexGatewayResidentControlTransport,
   HexGatewayToolServerControlTransport
 {
@@ -129,6 +130,17 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport, HexGatewayRunRec
   {
     let sessionID = try requireSession(ownedBy: lease)
     let response = try await service.taskOperation(codec.roundTrip(request), sessionID: sessionID)
+    _ = try requireSession(ownedBy: lease)
+    return try codec.roundTrip(response)
+  }
+
+  public func processSession(
+    _ request: GatewayProcessSessionRequest, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayProcessSessionRequest.Response
+  {
+    let sessionID = try requireSession(ownedBy: lease)
+    let response = try await service.processSession(codec.roundTrip(request), sessionID: sessionID)
     _ = try requireSession(ownedBy: lease)
     return try codec.roundTrip(response)
   }

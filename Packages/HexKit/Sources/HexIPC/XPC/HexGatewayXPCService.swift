@@ -222,6 +222,12 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
         let response = try await service.taskOperation(request, sessionID: sessionID)
         _ = try currentSession(for: envelope)
         return try successResponse(operation: .taskOperation, value: response)
+      case .processSession:
+        let sessionID = try currentSession(for: envelope)
+        let request = try codec.decode(GatewayProcessSessionRequest.self, from: envelope.body)
+        let response = try await service.processSession(request, sessionID: sessionID)
+        _ = try currentSession(for: envelope)
+        return try successResponse(operation: .processSession, value: response)
       case .conversationStorage:
         let sessionID = try currentSession(for: envelope)
         let request = try codec.decode(ConversationStorageRequest.self, from: envelope.body)
@@ -541,6 +547,7 @@ public final class HexGatewayXPCService: NSObject, HexGatewayXPCServiceProtocol 
           )
         }
       case .startRun, .cancelRun, .recoverRun, .taskOperation, .conversationStorage,
+        .processSession,
         .readRunHistory, .readArtifact,
         .availableModels,
         .toolServerHealth, .refreshToolServer,

@@ -31,6 +31,11 @@ struct SQLiteConversationTaskMigrationTests {
     try await journal.close()
     try JournalTestSupport.execute(
       """
+      DROP TABLE process_segments;
+      DROP TABLE process_operations;
+      DROP TABLE process_sessions;
+      DROP TABLE coding_patches;
+      DROP TABLE coding_baselines;
       DROP TABLE conversation_timeline;
       DROP TABLE conversation_tasks;
       DELETE FROM conversation_documents WHERE id = '\(task.id.uuidString)';
@@ -46,6 +51,6 @@ struct SQLiteConversationTaskMigrationTests {
     #expect(
       try await reopened.records(for: runID, after: nil, limit: 10) == [first, input, terminal])
     try await reopened.close()
-    #expect(try JournalTestSupport.userVersion(at: config.databaseURL) == 6)
+    #expect(try JournalTestSupport.userVersion(at: config.databaseURL) == 7)
   }
 }

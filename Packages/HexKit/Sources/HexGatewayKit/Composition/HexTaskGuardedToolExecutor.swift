@@ -34,10 +34,15 @@ actor HexTaskGuardedToolExecutor: ToolExecutor {
     }
     // Exact host capability allowlist: an untrusted MCP tool cannot opt itself into this set.
     let readCapabilities: Set<String> = [
-      "workspace.read", "artifact.read", "mac.application.read", "mac.accessibility.read",
+      "workspace.read", "artifact.read", "process.session.read", "mac.application.read",
+      "mac.accessibility.read",
       "network.web.read", "network.web.search", "hex.self.read",
     ]
-    if let effects, !readCapabilities.contains(capability.rawValue),
+    // Only the native session manager owns this capability. It independently checks the stable
+    // task, known prior process exit and a later committed patch generation before a repeat.
+    let nativeSessionStart =
+      capability.rawValue == "process.session.execute" && call.name == "process_start"
+    if let effects, !readCapabilities.contains(capability.rawValue), !nativeSessionStart,
       let prior = try await effects.previousTaskEffect(
         runID: context.runID,
         fingerprint: AgentTaskOperationFingerprint.data(for: call)),

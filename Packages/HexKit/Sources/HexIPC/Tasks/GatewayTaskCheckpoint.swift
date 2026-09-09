@@ -44,7 +44,8 @@ struct GatewayTaskCheckpoint {
     started.contains { id in
       guard let result = results[id] else { return true }
       return result.requiresUserAttention
-        || (result.status == .failure && result.notExecutedReason == nil)
+        || (result.status == .failure && result.notExecutedReason == nil
+          && result.executionOutcome != .completed)
     } || results.values.contains(where: \.requiresUserAttention)
   }
 

@@ -97,6 +97,15 @@ extension HexGatewayService {
           "A tool outcome is uncertain. Inspect the affected state and supply a reconciliation decision; Hex will not repeat it automatically."
       }
     }
+    if record.phase == .completed || record.phase == .cancelled {
+      do {
+        try await processSessions?.finishTask(record.id, cancelled: record.phase == .cancelled)
+      } catch {
+        record.phase = .blocked
+        record.explanation =
+          "Process cleanup is unconfirmed. Inspect this task's sessions before continuing."
+      }
+    }
     _ = try await taskStore.saveTask(record)
   }
 }

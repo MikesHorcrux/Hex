@@ -75,7 +75,13 @@ enum ProcessToolResult {
       toolCallID: callID, status: result.outputCaptureFailure == nil ? status : .failure,
       output: .object(output), artifacts: result.outputArtifact.map { [$0] } ?? [],
       requiresUserAttention: result.outputCaptureFailure != nil
-        || result.termination == .outputCaptureFailed || result.termination == .outputLimitExceeded)
+        || result.termination == .outputCaptureFailed || result.termination == .outputLimitExceeded,
+      executionOutcome: knownExit(result.termination) ? .completed : nil)
+  }
+
+  private static func knownExit(_ termination: ProcessTermination) -> Bool {
+    if case .exited = termination { return true }
+    return false
   }
 
   static func failure(

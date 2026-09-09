@@ -24,6 +24,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
   public let selfKnowledge: HexSelfKnowledge?
   public let artifactWriter: (any ArtifactWriting)?
   public let artifactReader: (any ArtifactReading)?
+  public let processSessions: ProcessSessionManager?
+  public let codingWorkspace: CodingWorkspaceManager?
 
   /// When present, the gateway ignores client-requested working directories and supplies this
   /// host-owned directory to every runtime tool execution context.
@@ -48,7 +50,9 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     enforcedModelID: ModelID? = nil,
     selfKnowledge: HexSelfKnowledge? = nil,
     artifactWriter: (any ArtifactWriting)? = nil,
-    artifactReader: (any ArtifactReading)? = nil
+    artifactReader: (any ArtifactReading)? = nil,
+    processSessions: ProcessSessionManager? = nil,
+    codingWorkspace: CodingWorkspaceManager? = nil
   ) {
     self.journalConfiguration = journalConfiguration
     journal = nil
@@ -65,6 +69,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.selfKnowledge = selfKnowledge
     self.artifactWriter = artifactWriter
     self.artifactReader = artifactReader
+    self.processSessions = processSessions
+    self.codingWorkspace = codingWorkspace
   }
 
   /// Creates a composition around a caller-owned durable journal. The composition does not close
@@ -83,7 +89,9 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     enforcedModelID: ModelID? = nil,
     selfKnowledge: HexSelfKnowledge? = nil,
     artifactWriter: (any ArtifactWriting)? = nil,
-    artifactReader: (any ArtifactReading)? = nil
+    artifactReader: (any ArtifactReading)? = nil,
+    processSessions: ProcessSessionManager? = nil,
+    codingWorkspace: CodingWorkspaceManager? = nil
   ) {
     journalConfiguration = nil
     self.journal = journal
@@ -100,6 +108,8 @@ public struct HexGatewayCompositionConfiguration: Sendable {
     self.selfKnowledge = selfKnowledge
     self.artifactWriter = artifactWriter
     self.artifactReader = artifactReader
+    self.processSessions = processSessions
+    self.codingWorkspace = codingWorkspace
   }
 
   public static func inert(

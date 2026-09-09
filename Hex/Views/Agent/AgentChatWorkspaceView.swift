@@ -1,4 +1,5 @@
 import HexCore
+import HexIPC
 import SwiftUI
 
 struct AgentChatWorkspaceView: View {
@@ -6,6 +7,7 @@ struct AgentChatWorkspaceView: View {
   @Bindable var workspace: AgentWorkspaceModel
   @State private var artifact: ArtifactReference?
   @State private var showsDetails = false
+  @State private var showsCoding = false
   @State private var showsRename = false
   @State private var titleDraft = ""
 
@@ -38,6 +40,12 @@ struct AgentChatWorkspaceView: View {
           collapsesTools: true
         )
         .id(model.selectedID ?? model.newID)
+        if let id = model.selectedID,
+          let client = model.client as? any HexGatewayProcessSessionClient
+        {
+          AgentProcessActivityView(client: client, conversationID: id, open: { showsCoding = true })
+            .id(id).frame(maxWidth: 760).padding(.horizontal, 24)
+        }
         if let active = model.activeWork {
           AgentChatStatusView(model: model, work: active)
             .frame(maxWidth: 760).padding(.horizontal, 24).padding(.top, 8)
@@ -62,6 +70,9 @@ struct AgentChatWorkspaceView: View {
             workspace.connectFromControl()
           }
           .disabled(workspace.connectionState == .connecting)
+        }
+        if model.selectedID != nil, model.client is any HexGatewayProcessSessionClient {
+          Button("Processes and changes", systemImage: "terminal") { showsCoding = true }
         }
         if model.currentWork != nil {
           Button("Execution history", systemImage: "sidebar.right") { showsDetails = true }
@@ -93,6 +104,12 @@ struct AgentChatWorkspaceView: View {
       TextField("Title", text: $titleDraft)
       Button("Save") { Task { await model.rename(titleDraft) } }
       Button("Cancel", role: .cancel) {}
+    }
+    .sheet(isPresented: $showsCoding) {
+      if let id = model.selectedID, let client = model.client as? any HexGatewayProcessSessionClient
+      {
+        AgentCodingPanelView(client: client, conversationID: id, taskID: model.currentWork?.id)
+      }
     }
     .sheet(isPresented: $showsDetails) {
       AgentExecutionDetailsView(

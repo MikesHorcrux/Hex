@@ -7,7 +7,8 @@ import HexCore
 public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDecisionTransport,
   HexGatewayResidentControlTransport, HexGatewayAccessibilityPermissionTransport,
   HexGatewayScreenControlPermissionTransport, HexGatewayModelCatalogTransport,
-  HexGatewayTaskTransport, HexGatewayConversationTransport, HexGatewayRunRecoveryTransport,
+  HexGatewayTaskTransport, HexGatewayConversationTransport, HexGatewayProcessSessionTransport,
+  HexGatewayRunRecoveryTransport,
   HexGatewayArtifactReadTransport,
   HexGatewayToolServerControlTransport, HexGatewayPermissionManagementTransport
 {
@@ -152,6 +153,16 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
     try await recoveryRequest(
       request, operation: .taskOperation, lease: lease,
       response: GatewayTaskRequest.Response.self)
+  }
+
+  public func processSession(
+    _ request: GatewayProcessSessionRequest, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayProcessSessionRequest.Response
+  {
+    try await recoveryRequest(
+      request, operation: .processSession, lease: lease,
+      response: GatewayProcessSessionRequest.Response.self)
   }
 
   public func conversationStorage(

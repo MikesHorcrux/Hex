@@ -40,6 +40,11 @@ struct SQLiteTaskStorageTests {
     try await journal.close()
     try JournalTestSupport.execute(
       """
+      DROP TABLE process_segments;
+      DROP TABLE process_operations;
+      DROP TABLE process_sessions;
+      DROP TABLE coding_patches;
+      DROP TABLE coding_baselines;
       DROP TABLE conversation_timeline;
       DROP TABLE conversation_tasks;
       DROP TABLE agent_task_effects;
@@ -51,6 +56,6 @@ struct SQLiteTaskStorageTests {
     #expect(try await reopened.records(for: runID, after: nil, limit: 10) == [start, end])
     #expect(try await reopened.listTasks(after: nil, limit: 20, unfinishedOnly: false).isEmpty)
     try await reopened.close()
-    #expect(try JournalTestSupport.userVersion(at: configuration.databaseURL) == 6)
+    #expect(try JournalTestSupport.userVersion(at: configuration.databaseURL) == 7)
   }
 }

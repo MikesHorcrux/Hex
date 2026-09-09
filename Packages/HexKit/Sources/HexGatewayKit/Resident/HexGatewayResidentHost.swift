@@ -53,6 +53,21 @@ public final class HexGatewayResidentHost {
       rootURL: configuration.databaseURL.deletingLastPathComponent()
         .appendingPathComponent("Artifacts", isDirectory: true))
     let processExecutor = POSIXProcessExecutor(artifactWriter: artifactStore)
+    let codingWorkspace = try CodingWorkspaceManager(
+      fileSystem: fileSystem,
+      artifacts: artifactStore, workspace: configuration.workspaceRoot)
+    let processSessions = ProcessSessionManager(
+      supervisor: URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL,
+      writer: artifactStore, reader: artifactStore, codingWorkspace: codingWorkspace)
+    let sessionTools = try HostToolExecutor(tools: [
+      try ProcessStartTool(manager: processSessions),
+      WorkspacePatchTool(manager: codingWorkspace, sessions: processSessions),
+      WorkspaceChangesTool(manager: codingWorkspace, sessions: processSessions),
+      try ProcessSessionTool(manager: processSessions, action: "read"),
+      try ProcessSessionTool(manager: processSessions, action: "list"),
+      try ProcessSessionTool(manager: processSessions, action: "input"),
+      try ProcessSessionTool(manager: processSessions, action: "control"),
+    ])
     let personalMemoryStore = try JSONPersonalMemoryStore(
       fileURL: configuration.personalMemoryURL
     )
@@ -62,7 +77,8 @@ public final class HexGatewayResidentHost {
     )
     let personalToolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
-      processExecutor: processExecutor
+      processExecutor: processExecutor, codingWorkspace: codingWorkspace,
+      processSessions: processSessions
     )
     let mcpToolExecutors = try configuration.mcpClientSessions.map {
       try MCPManagedToolExecutor(session: $0, waitsForInitialDiscovery: false)
@@ -101,7 +117,7 @@ public final class HexGatewayResidentHost {
       executors: mcpToolExecutors, settings: configuration.mcpServerSettings)
     let routedToolExecutor = try CompositeToolExecutor(
       executors: [
-        personalToolExecutor, personalMemoryToolExecutor,
+        personalToolExecutor, personalMemoryToolExecutor, sessionTools,
         try ArtifactToolExecutor(reader: artifactStore),
       ] + protectedMCPExecutors
     )
@@ -138,7 +154,9 @@ public final class HexGatewayResidentHost {
       enforcedWorkingDirectory: configuration.workspaceRoot,
       selfKnowledge: configuration.selfKnowledge,
       artifactWriter: artifactStore,
-      artifactReader: artifactStore
+      artifactReader: artifactStore,
+      processSessions: processSessions,
+      codingWorkspace: codingWorkspace
     )
     let heartbeatConfiguration = try HexHeartbeatSchedulerConfiguration.standard.validated()
     // Nothing has been advertised or started yet. Retain each opened resource before the next
