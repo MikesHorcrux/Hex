@@ -5,53 +5,15 @@ struct AgentConversationRowView: View {
   let item: ConversationItem
   var bubbleWidth: CGFloat?
   var onOpenArtifact: (ArtifactReference) -> Void = { _ in }
-
   var collapsesTools = false
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      if item.role == .user {
-        Spacer(minLength: 72)
-      } else {
-        avatar
+      if item.role == .assistant {
+        HexAppIconView(size: 30)
       }
-
-      VStack(alignment: .leading, spacing: 7) {
-        HStack(spacing: 7) {
-          Text(item.role.label)
-            .font(.caption.weight(.bold))
-            .foregroundStyle(HexBrandPalette.ink)
-          Text(item.timestamp, style: .time)
-            .font(.caption2)
-            .foregroundStyle(HexBrandPalette.mutedInk)
-          if item.isStreaming {
-            ProgressView()
-              .controlSize(.mini)
-              .tint(HexBrandPalette.coral)
-              .accessibilityLabel("Hex is responding")
-          }
-        }
-
-        if item.role == .event {
-          Text(item.text.isEmpty ? "…" : item.text)
-            .font(.callout)
-            .foregroundStyle(HexBrandPalette.mutedInk)
-            .textSelection(.enabled)
-        } else if item.role == .tool {
-          if collapsesTools {
-            DisclosureGroup(item.text.hasPrefix("Started ") ? item.text : "Tool result") {
-              Text(item.text).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-            }
-          } else {
-            Text(item.text).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-          }
-        } else if item.isStreaming {
-          AgentStreamingTextView(text: item.text.isEmpty ? "…" : item.text)
-            .equatable()
-        } else {
-          MarkdownMessageView(markdown: item.text.isEmpty ? "…" : item.text)
-            .equatable()
-        }
+      VStack(alignment: .leading, spacing: 10) {
+        messageContent
         ForEach(item.artifacts, id: \.id) { artifact in
           Button {
             onOpenArtifact(artifact)
@@ -62,105 +24,50 @@ struct AgentConversationRowView: View {
               systemImage: "doc.text.magnifyingglass")
           }
           .buttonStyle(.bordered)
-          .help("Read the saved output without adding the whole file to the conversation")
+          .help("Read the complete saved output")
         }
       }
-      .padding(.horizontal, 15)
-      .padding(.vertical, 12)
-      // A fixed, viewport-derived width avoids repeated zero/infinite-width typesetting probes
-      // through every older multi-screen answer when the current row grows.
+      .foregroundStyle(HexBrandPalette.ink)
+      .padding(.horizontal, item.role == .user ? 16 : 0)
+      .padding(.vertical, item.role == .user ? 12 : 4)
+      // Keep viewport-derived widths: unconstrained probes retypeset every older long answer.
       .frame(
-        width: bubbleWidth.map { min($0, item.role == .user ? 620 : 720) }, alignment: .leading
+        width: bubbleWidth.map { min($0, item.role == .user ? 560 : 720) }, alignment: .leading
       )
-      .frame(
-        maxWidth: bubbleWidth == nil ? (item.role == .user ? 620 : 720) : nil, alignment: .leading
-      )
-      .hexSurface(
-        cornerRadius: 18,
-        fill: bubbleColor,
-        border: bubbleBorderColor,
-        shadowRadius: item.role == .event ? 0 : 5
-      )
-
-      if item.role == .user {
-        avatar
-      } else {
-        Spacer(minLength: 72)
-      }
+      .frame(maxWidth: bubbleWidth == nil ? 720 : nil, alignment: .leading)
+      .background(
+        item.role == .user ? HexBrandPalette.surface : .clear,
+        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
-    .padding(.vertical, 3)
-    // Keep each message a separate navigation group. Without a boundary, SwiftUI coalesces
-    // adjacent rows into a very large accessibility element as history pages are replaced.
-    // Contain (rather than combine) preserves Markdown links and artifact buttons as children.
+    .frame(maxWidth: .infinity, alignment: item.role == .user ? .trailing : .leading)
+    .padding(.vertical, item.role == .tool || item.role == .event ? 2 : 8)
+    // Contain preserves links and artifact actions as individually navigable children.
     .accessibilityElement(children: .contain)
+    .accessibilityLabel(item.role.label)
     .accessibilityIdentifier("conversationMessage-\(item.id)")
   }
 
   @ViewBuilder
-  private var avatar: some View {
-    if item.role == .assistant {
-      HexAppIconView(size: 34)
+  private var messageContent: some View {
+    if item.role == .event {
+      Text(item.text.isEmpty ? "…" : item.text)
+        .font(.callout).foregroundStyle(HexBrandPalette.mutedInk)
+        .textSelection(.enabled)
+    } else if item.role == .tool {
+      if collapsesTools {
+        DisclosureGroup("Tool activity") { toolContent }
+      } else {
+        toolContent
+      }
+    } else if item.isStreaming {
+      AgentStreamingTextView(text: item.text.isEmpty ? "…" : item.text).equatable()
     } else {
-      Image(systemName: icon)
-        .font(.callout.weight(.semibold))
-        .foregroundStyle(iconColor)
-        .frame(width: 32, height: 32)
-        .background(iconColor.opacity(0.12), in: Circle())
-        .overlay {
-          Circle()
-            .strokeBorder(iconColor.opacity(0.16), lineWidth: 1)
-        }
-        .accessibilityHidden(true)
+      MarkdownMessageView(markdown: item.text.isEmpty ? "…" : item.text).equatable()
     }
   }
 
-  private var icon: String {
-    switch item.role {
-    case .user:
-      "person.fill"
-    case .assistant:
-      "sparkles"
-    case .tool:
-      "wrench.and.screwdriver"
-    case .event:
-      "info.circle"
-    }
-  }
-
-  private var iconColor: Color {
-    switch item.role {
-    case .user:
-      HexBrandPalette.coral
-    case .assistant:
-      HexBrandPalette.deepPlum
-    case .tool:
-      HexBrandPalette.apricot
-    case .event:
-      HexBrandPalette.mutedInk
-    }
-  }
-
-  private var bubbleColor: Color {
-    switch item.role {
-    case .user:
-      HexBrandPalette.softCoral
-    case .assistant:
-      HexBrandPalette.raisedSurface
-    case .tool:
-      HexBrandPalette.softApricot.opacity(0.82)
-    case .event:
-      HexBrandPalette.surface.opacity(0.78)
-    }
-  }
-
-  private var bubbleBorderColor: Color {
-    switch item.role {
-    case .user:
-      HexBrandPalette.coral.opacity(0.24)
-    case .assistant, .event:
-      HexBrandPalette.hairline
-    case .tool:
-      HexBrandPalette.apricot.opacity(0.32)
-    }
+  private var toolContent: some View {
+    Text(item.text).font(.system(.callout, design: .monospaced))
+      .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
   }
 }

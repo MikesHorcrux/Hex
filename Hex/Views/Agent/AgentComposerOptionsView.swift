@@ -9,6 +9,7 @@ struct AgentComposerOptionsView: View {
   let isEnabled: Bool
   let isLoading: Bool
   let onRefresh: () -> Void
+  var isCompact = false
 
   var body: some View {
     HStack(spacing: 8) {
@@ -65,6 +66,7 @@ struct AgentComposerOptionsView: View {
       .accessibilityLabel("Effort: \(selectedEffort.displayName)")
       .accessibilityIdentifier("composerEffortMenu")
     }
+    .tint(isCompact ? HexBrandPalette.ink : HexBrandPalette.coral)
     .disabled(!isEnabled)
   }
 
@@ -84,20 +86,24 @@ struct AgentComposerOptionsView: View {
     systemImage: String
   ) -> some View {
     HStack(spacing: 5) {
-      Image(systemName: systemImage)
+      if !isCompact { Image(systemName: systemImage) }
       // Native macOS Menu labels keep one text title. Separate Text nodes can silently drop
       // the selected value while Accessibility still reports it, hiding which model will run.
-      Text("\(title): \(value)")
-        .fontWeight(.semibold)
-      Image(systemName: "chevron.down")
-        .font(.caption2.weight(.bold))
-        .foregroundStyle(HexBrandPalette.mutedInk)
+      Text(isCompact ? value : "\(title): \(value)")
+        .fontWeight(.regular)
+      if !isCompact {
+        Image(systemName: "chevron.down")
+          .font(.caption2.weight(.bold))
+          .foregroundStyle(HexBrandPalette.mutedInk)
+      }
     }
     .font(.caption)
     .foregroundStyle(HexBrandPalette.ink)
-    .padding(.horizontal, 9)
+    .padding(.horizontal, isCompact ? 3 : 9)
     .padding(.vertical, 6)
-    .background(HexBrandPalette.softCoral.opacity(0.36), in: RoundedRectangle(cornerRadius: 8))
+    .background(
+      isCompact ? .clear : HexBrandPalette.softCoral.opacity(0.36),
+      in: RoundedRectangle(cornerRadius: 8))
   }
 
   @ViewBuilder

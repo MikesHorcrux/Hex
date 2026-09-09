@@ -7,6 +7,7 @@ struct AgentApprovalModeMenu: View {
   let savedDefaultMode: HexAuthorizationMode
   let hasOverride: Bool
   let onUseSavedDefault: () -> Void
+  var isCompact = false
   @State private var isPresented = false
 
   var body: some View {
@@ -14,16 +15,16 @@ struct AgentApprovalModeMenu: View {
       isPresented.toggle()
     } label: {
       HStack(spacing: 5) {
-        Image(systemName: selection.permissionSymbol)
+        if !isCompact { Image(systemName: selection.permissionSymbol) }
         Text(selection.permissionTitle)
         Image(systemName: "chevron.down")
           .font(.system(size: 9, weight: .semibold))
       }
       .font(.caption)
       .foregroundStyle(selection == .fullAccess ? HexBrandPalette.warningInk : HexBrandPalette.ink)
-      .padding(.horizontal, 9)
+      .padding(.horizontal, isCompact ? 3 : 9)
       .padding(.vertical, 6)
-      .background(HexBrandPalette.hairline.opacity(0.45), in: Capsule())
+      .background(isCompact ? .clear : HexBrandPalette.hairline.opacity(0.45), in: Capsule())
       .contentShape(Capsule())
     }
     .buttonStyle(.plain)
