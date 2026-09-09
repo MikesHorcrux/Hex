@@ -639,6 +639,29 @@ struct ProcessRunToolTests {
   }
 
   @Test
+  func multilineArgumentsReturnFeedbackWithoutRunningTheProcess() async throws {
+    let executor = RecordingProcessExecutor(
+      result: ProcessExecutionResult(
+        termination: .exited(code: 0), output: Data(), durationMilliseconds: 0))
+    let tool = ProcessRunTool(executor: executor, environment: [:])
+    let context = ToolExecutionContext(
+      runID: AgentRunID(), workingDirectory: URL(fileURLWithPath: "/private/tmp"))
+    let call = ToolCall(
+      name: "process_run",
+      arguments: [
+        "executable": .string("/usr/bin/python3"),
+        "arguments": .array([.string("-c"), .string("print('hello')\nprint('world')")]),
+      ])
+    await #expect(throws: ToolCallValidationError.self) {
+      try await tool.authorizationRequest(for: call, in: context)
+    }
+    #expect(await executor.lastRequest == nil)
+    let result = try await tool.execute(call, in: context)
+    #expect(result.output == .object(["error": .string("invalid_arguments")]))
+    #expect(await executor.lastRequest == nil)
+  }
+
+  @Test
   func nonExecutableFileAndMissingWorkingDirectoryRemainAuthorizationFailures() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

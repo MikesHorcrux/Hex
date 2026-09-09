@@ -40,7 +40,8 @@ public struct ProcessRunTool: HostTool, Sendable {
           ),
           "arguments": HostToolSchema.stringArray(
             "The exact argument vector passed to the executable; every argument is displayed in "
-              + "authorization, so never put secrets here.",
+              + "authorization, so never put secrets here. Control characters, including literal "
+              + "newlines and tabs, are rejected. Write multiline code to a workspace script file, then run that file.",
             maximumItems: configuration.maximumArguments,
             maximumItemLength: configuration.maximumArgumentBytes
           ),
@@ -156,6 +157,9 @@ public struct ProcessRunTool: HostTool, Sendable {
       await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
       if error as? ProcessExecutionError == .invalidRequest {
         try Task.checkCancellation()
+        // Invalid host-injected configuration must never become model argument feedback.
+        try ProcessExecutionEnvironment.validate(environment, configuration: configuration)
+        try rejectUnsafeArgumentScalars(call)
         try rejectMissingExecutableReference(call)
       }
       throw error
@@ -198,6 +202,20 @@ public struct ProcessRunTool: HostTool, Sendable {
       await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
       return try ProcessToolResult.failure(error, callID: call.id)
     }
+  }
+
+  private func rejectUnsafeArgumentScalars(_ call: ToolCall) throws {
+    guard case .array(let arguments) = call.arguments["arguments"] else { return }
+    guard
+      arguments.contains(where: { argument in
+        guard case .string(let text) = argument else { return false }
+        return !WorkspacePathScalarPolicy.isPromptSafe(text)
+      })
+    else { return }
+    throw ToolCallValidationError(
+      recovery:
+        "Process arguments cannot contain control or invisible formatting characters, including literal newlines and tabs. No process was started. Write multiline code to a workspace script file and run that file instead."
+    )
   }
 
   private func rejectMissingExecutableReference(_ call: ToolCall) throws {
