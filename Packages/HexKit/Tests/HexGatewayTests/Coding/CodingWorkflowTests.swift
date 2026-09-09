@@ -438,6 +438,12 @@ struct CodingWorkflowTests {
       #expect(
         try String(contentsOf: f.workspace.appendingPathComponent("example.txt"), encoding: .utf8)
           == "hello\n")
+      let duplicate = ToolCall(name: corrected.name, arguments: corrected.arguments)
+      _ = try await tool.authorizationRequest(for: duplicate, in: f.context)
+      let repeated = try await tool.execute(duplicate, in: f.context)
+      #expect(repeated.status == .failure)
+      #expect(repeated.output == .object(["error": .string("destination_exists")]))
+      #expect(try await f.journal.codingGeneration(f.scope.taskID) == 1)
     }
   }
 

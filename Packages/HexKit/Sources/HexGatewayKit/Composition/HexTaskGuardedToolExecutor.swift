@@ -42,7 +42,13 @@ actor HexTaskGuardedToolExecutor: ToolExecutor {
     // task, known prior process exit and a later committed patch generation before a repeat.
     let nativeSessionStart =
       capability.rawValue == "process.session.execute" && call.name == "process_start"
+    // Native patches preflight every existing file's revision and every created destination.
+    // Their manager owns partial receipts and requires reconciliation after uncertain writes.
+    // The generic fingerprint fence would prevent correcting/retrying a rejected preflight.
+    let nativeRevisionCheckedPatch =
+      capability.rawValue == "workspace.write" && call.name == "workspace_apply_patch"
     if let effects, !readCapabilities.contains(capability.rawValue), !nativeSessionStart,
+      !nativeRevisionCheckedPatch,
       let prior = try await effects.previousTaskEffect(
         runID: context.runID,
         fingerprint: AgentTaskOperationFingerprint.data(for: call)),

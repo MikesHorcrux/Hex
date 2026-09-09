@@ -43,6 +43,29 @@ struct HexTaskGuardedToolExecutorTests {
     #expect(await base.executions == 0)
   }
 
+  @Test(arguments: ["workspace.write", "mcp.tool.execute"])
+  func nativeRevisionCheckedPatchOwnsItsRepeatValidation(capability: String) async throws {
+    let base = CountingTool(capability: capability)
+    let original = ToolCall(name: "workspace_apply_patch", arguments: [:])
+    let next = ToolCall(name: original.name, arguments: original.arguments)
+    let effect = AgentTaskEffect(
+      runID: AgentRunID(), callID: original.id,
+      result: ToolResult(
+        toolCallID: original.id, status: .failure,
+        output: .object(["error": .string("revision_conflict")])))
+    let executor = HexTaskGuardedToolExecutor(
+      base: base,
+      effects: PriorEffect(
+        effect: effect, fingerprint: try AgentTaskOperationFingerprint.data(for: original)))
+    let context = ToolExecutionContext(runID: AgentRunID())
+    _ = try await executor.authorizationRequest(for: next, in: context)
+    let result = try await executor.execute(next, in: context)
+    let native = capability == "workspace.write"
+    #expect(result.status == (native ? .success : .failure))
+    #expect(await base.authorizations == 1)
+    #expect(await base.executions == (native ? 1 : 0))
+  }
+
   private struct PriorEffect: AgentTaskEffectReading {
     let effect: AgentTaskEffect
     let fingerprint: Data
@@ -52,8 +75,10 @@ struct HexTaskGuardedToolExecutorTests {
   }
 
   private actor CountingTool: ToolExecutor {
+    let capability: String
     var authorizations = 0
     var executions = 0
+    init(capability: String = "workspace.write") { self.capability = capability }
     func availableTools() -> [ToolDefinition] { [] }
     func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
       -> AuthorizationRequest
@@ -61,7 +86,7 @@ struct HexTaskGuardedToolExecutorTests {
       authorizations += 1
       return AuthorizationRequest(
         runID: context.runID, toolCallID: call.id,
-        capability: CapabilityID(rawValue: "workspace.write"), operation: "write",
+        capability: CapabilityID(rawValue: capability), operation: "write",
         explanation: "fixture")
     }
     func execute(_ call: ToolCall, in context: ToolExecutionContext) -> ToolResult {
