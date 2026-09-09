@@ -27,7 +27,9 @@ struct WorkspaceFileMetadataSnapshot {
   // Extended ACLs and non-owner-safe flags can make a rejected temporary file impossible to
   // dispose of. They are detected and rejected before commit creates that file.
   var permitsAtomicReplacement: Bool {
-    let safelyReapplicableFlags = UInt32(UF_NODUMP | UF_OPAQUE | UF_HIDDEN)
+    // UF_TRACKED is document-ID bookkeeping, not an immutability or access restriction.
+    // Preserve it on replacement just like the other owner-reapplicable flags.
+    let safelyReapplicableFlags = UInt32(UF_NODUMP | UF_OPAQUE | UF_HIDDEN | UF_TRACKED)
     return accessControlList == nil && flags & ~safelyReapplicableFlags == 0
   }
 

@@ -6,7 +6,8 @@ import Testing
 
 @Suite("Workspace privacy metadata")
 struct WorkspaceFileSystemPrivacyMetadataTests {
-  @Test func createsAndReplacesAcrossDirectoriesWithSystemPrivacyMetadata() async throws {
+  @Test(arguments: [false, true])
+  func createsAndReplacesAcrossDirectoriesWithSystemPrivacyMetadata(tracked: Bool) async throws {
     let configuredRoot = ProcessInfo.processInfo.environment["HEX_PRIVACY_METADATA_TEST_ROOT"]
     let parent =
       configuredRoot.map { URL(fileURLWithPath: $0) }
@@ -32,6 +33,9 @@ struct WorkspaceFileSystemPrivacyMetadataTests {
       #expect(getxattr(destination.path, "com.apple.macl", nil, 0, 0, 0) >= 0)
     }
     #expect(chmod(destination.path, 0o640) == 0)
+    if tracked {
+      #expect(chflags(destination.path, UInt32(UF_TRACKED)) == 0)
+    }
     let attribute = "com.lunarmoth.hex.test-preserved"
     #expect("value".withCString { setxattr(destination.path, attribute, $0, 5, 0, 0) } == 0)
     let updated = try await files.writeTextFile(
@@ -44,6 +48,7 @@ struct WorkspaceFileSystemPrivacyMetadataTests {
     #expect(lstat(destination.path, &status) == 0)
     #expect(status.st_nlink == 1)
     #expect(status.st_mode & 0o777 == 0o640)
+    #expect(status.st_flags & UInt32(UF_TRACKED) == (tracked ? UInt32(UF_TRACKED) : 0))
     var bytes = [UInt8](repeating: 0, count: 5)
     #expect(getxattr(destination.path, attribute, &bytes, bytes.count, 0, 0) == 5)
     #expect(String(decoding: bytes, as: UTF8.self) == "value")
