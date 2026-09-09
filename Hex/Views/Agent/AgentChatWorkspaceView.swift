@@ -12,7 +12,7 @@ struct AgentChatWorkspaceView: View {
   var body: some View {
     NavigationSplitView {
       AgentChatSidebarView(model: model)
-        .navigationSplitViewColumnWidth(min: 240, ideal: 264, max: 310)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 290)
     } detail: {
       VStack(spacing: 0) {
         if let error = model.error ?? workspace.errorMessage {
@@ -35,26 +35,40 @@ struct AgentChatWorkspaceView: View {
           hasEarlierMessages: model.hasEarlier && model.selectedID != nil,
           showsLatestButton: model.showingEarlier, isLoadingHistory: model.isLoading,
           onEarlierMessages: { Task { await model.earlier() } }, onLatestMessages: model.latest,
-          collapsesTools: true)
+          collapsesTools: true
+        )
+        .id(model.selectedID ?? model.newID)
         if let active = model.activeWork {
-          AgentChatStatusView(model: model, work: active).padding(.horizontal, 24)
+          AgentChatStatusView(model: model, work: active)
+            .frame(maxWidth: 760).padding(.horizontal, 24).padding(.top, 8)
         }
         if model.activeWork != nil, let request = model.execution.approvals.first {
           AgentToolAuthorizationView(request: request, isSubmitting: model.isSubmitting) { choice in
             Task { await model.execution.decide(request, choice: choice) }
-          }.padding(.horizontal, 24)
+          }.frame(maxWidth: 760).padding(.horizontal, 24).padding(.top, 8)
         }
         AgentChatComposerView(model: model, workspace: workspace)
-          .padding(.horizontal, 24).padding(.vertical, 14)
+          .frame(maxWidth: 760)
+          .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 20)
       }
       .background(HexBrandPalette.canvas)
       .navigationTitle(model.selected?.title ?? "New conversation")
       .toolbar {
-        Button("New conversation", systemImage: "square.and.pencil") { model.select(nil) }
-          .disabled(model.isSubmitting || model.pending != nil)
-          .keyboardShortcut("n", modifiers: .command)
-        if model.selectedID != nil {
-          Menu("Conversation", systemImage: "ellipsis.circle") {
+        if workspace.connectionState != .connected {
+          Button(
+            workspace.connectionState == .connecting ? "Connecting…" : "Connect",
+            systemImage: "bolt"
+          ) {
+            workspace.connectFromControl()
+          }
+          .disabled(workspace.connectionState == .connecting)
+        }
+        if model.currentWork != nil {
+          Button("Execution history", systemImage: "sidebar.right") { showsDetails = true }
+            .help("Show the work and saved attempts behind this conversation")
+        }
+        Menu("Conversation", systemImage: "ellipsis") {
+          if model.selectedID != nil {
             Button("Rename") {
               titleDraft = model.selected?.title ?? ""
               showsRename = true
@@ -64,22 +78,17 @@ struct AgentChatWorkspaceView: View {
                 Task { await model.archive(id, archived: model.selected?.archivedAt == nil) }
               }
             }.disabled(model.activeWork != nil)
-            if model.currentWork != nil {
-              Button("Execution history") { showsDetails = true }
-            }
+            Divider()
+          }
+          if workspace.connectionState == .connected {
+            Button("Disconnect", systemImage: "bolt.slash", action: workspace.disconnectFromControl)
           }
         }
-        if workspace.connectionState == .connected {
-          Button("Disconnect", systemImage: "bolt.slash", action: workspace.disconnectFromControl)
-        } else {
-          Button("Connect", systemImage: "bolt", action: workspace.connectFromControl)
-            .disabled(workspace.connectionState == .connecting)
-        }
-        SettingsLink { Label("Settings", systemImage: "gearshape") }
+        .disabled(model.isSubmitting || model.pending != nil)
       }
     }
     .navigationSplitViewStyle(.balanced).tint(HexBrandPalette.coral)
-    .frame(minWidth: 900, minHeight: 650)
+    .frame(minWidth: 780, minHeight: 580)
     .alert("Rename conversation", isPresented: $showsRename) {
       TextField("Title", text: $titleDraft)
       Button("Save") { Task { await model.rename(titleDraft) } }

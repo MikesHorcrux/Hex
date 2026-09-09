@@ -15,10 +15,16 @@ struct AgentConversationView: View {
 
   var body: some View {
     GeometryReader { geometry in
-      let contentWidth = max(1, min(820, geometry.size.width - 68))
+      let contentWidth = max(1, min(760, geometry.size.width - 48))
+      let segments = AgentConversationSegment.make(items, collapsesTools: collapsesTools)
       ScrollViewReader { proxy in
         if items.isEmpty {
-          AgentEmptyConversationView(onPromptSuggestion: onPromptSuggestion)
+          if isLoadingHistory && hasEarlierMessages {
+            ProgressView("Loading conversation…")
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+          } else {
+            AgentEmptyConversationView(onPromptSuggestion: onPromptSuggestion)
+          }
         } else {
           ScrollView {
             // Multi-screen messages need measured heights before scrolling. Lazy stacks and native
@@ -37,18 +43,35 @@ struct AgentConversationView: View {
                   .disabled(isLoadingHistory)
                   .accessibilityIdentifier("jumpToLatestMessages")
               }
-              ForEach(items) { item in
-                AgentConversationRowView(
-                  item: item, bubbleWidth: max(1, contentWidth - 130),
-                  onOpenArtifact: onOpenArtifact, collapsesTools: collapsesTools
-                )
-                .id(item.id)
+              ForEach(segments) { segment in
+                Group {
+                  if segment.isActivity {
+                    AgentConversationActivityView(
+                      items: segment.items, contentWidth: contentWidth,
+                      onOpenArtifact: onOpenArtifact)
+                  } else if let item = segment.items.first {
+                    AgentConversationRowView(
+                      item: item, bubbleWidth: max(1, contentWidth - 42),
+                      onOpenArtifact: onOpenArtifact)
+                  }
+                }
+                .id(segment.id)
               }
             }
             .frame(width: contentWidth)
-            .padding(.horizontal, 34)
+            .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity)
+          }
+          .overlay(alignment: .bottom) {
+            if !followsLatest && !showsLatestButton {
+              Button("Jump to latest", systemImage: "arrow.down") {
+                followsLatest = true
+                if let id = segments.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+              }
+              .buttonStyle(.hexSecondaryAction)
+              .padding(.bottom, 12)
+            }
           }
           .scrollIndicators(.automatic)
           .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -65,8 +88,8 @@ struct AgentConversationView: View {
                 >= geometry.contentSize.height - 48
             }
           }
-          .onChange(of: items.last?.id) { _, lastID in
-            if let lastID, !showsLatestButton {
+          .onChange(of: items.last?.id) { _, _ in
+            if let lastID = segments.last?.id, followsLatest, !showsLatestButton {
               followsLatest = true
               proxy.scrollTo(lastID, anchor: .bottom)
             }
@@ -78,7 +101,7 @@ struct AgentConversationView: View {
             }
           }
           .onChange(of: showsLatestButton) { _, showsEarlier in
-            if !showsEarlier, let lastID = items.last?.id {
+            if !showsEarlier, let lastID = segments.last?.id {
               followsLatest = true
               proxy.scrollTo(lastID, anchor: .bottom)
             }
@@ -86,7 +109,8 @@ struct AgentConversationView: View {
           .onChange(of: items.last?.isStreaming) { _, isStreaming in
             // Final Markdown can change the row's height after the last token. Bring that settled
             // answer into view once; do not animate or scroll on every incoming character.
-            if isStreaming == false, followsLatest, !showsLatestButton, let lastID = items.last?.id
+            if isStreaming == false, followsLatest, !showsLatestButton,
+              let lastID = segments.last?.id
             {
               proxy.scrollTo(lastID, anchor: .bottom)
             }
