@@ -32,6 +32,9 @@ struct WorkspaceFileMetadataSnapshot {
   }
 
   init(descriptor: Int32) throws {
+    // First access to privacy-managed metadata can update ctime. Establish access before
+    // taking the baseline; the actual snapshot below still requires stable status throughout.
+    _ = try Self.readExtendedAttributes(from: descriptor)
     var beforeStatus = stat()
     guard
       fstat(descriptor, &beforeStatus) == 0,
@@ -204,6 +207,10 @@ struct WorkspaceFileMetadataSnapshot {
       guard let name = String(data: Data(encodedName), encoding: .utf8) else {
         throw WorkspaceFileSystemError.ioFailure
       }
+      // macOS adds or updates this access bookkeeping when a file is linked into or opened
+      // inside a protected folder. Leave it intact on disk and let the OS manage it rather
+      // than treating it as editable metadata to compare or copy during atomic publication.
+      if name == "com.apple.macl" { continue }
       let valueByteCount = name.withCString { namePointer in
         fgetxattr(descriptor, namePointer, nil, 0, 0, 0)
       }

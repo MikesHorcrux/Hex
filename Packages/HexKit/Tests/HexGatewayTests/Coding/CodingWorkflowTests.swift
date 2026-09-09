@@ -347,6 +347,66 @@ struct CodingWorkflowTests {
     }
   }
 
+  @Test func explicitReconciliationAllowsOneNewAuthorizedStartWithoutReplayingTheOldOne()
+    async throws
+  {
+    try await fixture { f in
+      var old = ProcessSessionRecord(
+        scope: f.scope, runID: f.context.runID, callID: ToolCallID(), epoch: UUID(),
+        executable: "/bin/echo", arguments: ["reconciled start"], transport: "pipe",
+        retained: false,
+        deadline: Date().addingTimeInterval(20))
+      old.phase = "blocked"
+      let saved = try await f.journal.saveProcessSession(old)
+      await #expect(throws: ProcessSessionError.operationConflict) {
+        _ = try await f.start(old.executable, old.arguments)
+      }
+      let decision = UUID()
+      try await f.manager.acknowledgeTask(f.scope.taskID, operationID: decision)
+      #expect(await f.manager.live.isEmpty)
+      let reconciled = try #require(try await f.journal.processSession(saved.id))
+      #expect(reconciled.reconciliationID == decision)
+      #expect(reconciled.phase == "blocked")
+      #expect(!reconciled.cleanupConfirmed)
+      let next = try await f.start(old.executable, old.arguments)
+      #expect(next.id != old.id)
+      let finished = try await f.wait(next.id)
+      #expect(finished.session.exitCode == 0)
+      #expect(finished.session.cleanupConfirmed)
+      #expect(String(decoding: finished.data, as: UTF8.self) == "reconciled start\n")
+      await #expect(throws: ProcessSessionError.operationConflict) {
+        _ = try await f.start(old.executable, old.arguments)
+      }
+    }
+  }
+
+  @Test func legacyWriteReturnsKnownPreflightRejectionWithoutAnUncertainMutation() async throws {
+    try await fixture { f in
+      let original = try await f.files.writeTextFile(
+        "original", at: "document.txt", expectedRevision: nil, relativeTo: nil)
+      try FileManager.default.linkItem(
+        at: f.workspace.appendingPathComponent("document.txt"),
+        to: f.workspace.appendingPathComponent("recovery.txt"))
+      let base = WorkspaceWriteTextFileTool(fileSystem: f.files)
+      let tool = CodingLegacyWriteTool(base: base, manager: f.coding, sessions: f.manager)
+      let call = ToolCall(
+        name: base.definition.name,
+        arguments: [
+          "path": .string("document.txt"), "content": .string("replacement"),
+          "expected_revision": .string(original.revision),
+        ])
+      _ = try await tool.authorizationRequest(for: call, in: f.context)
+      let result = try await tool.execute(call, in: f.context)
+      #expect(result.status == .failure)
+      #expect(result.output == .object(["error": .string("hard_link_rejected")]))
+      #expect(!result.requiresUserAttention)
+      #expect(try await f.journal.codingGeneration(f.scope.taskID) == 0)
+      #expect(
+        try String(contentsOf: f.workspace.appendingPathComponent("document.txt"), encoding: .utf8)
+          == "original")
+    }
+  }
+
   @Test func gitReviewPreservesStagedAndUntrackedWorkAndDisablesFilters() async throws {
     try await fixture { f in
       func git(_ arguments: [String]) async throws {

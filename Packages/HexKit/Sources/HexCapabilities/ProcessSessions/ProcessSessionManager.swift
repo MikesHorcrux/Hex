@@ -84,6 +84,9 @@ public actor ProcessSessionManager: ProcessSessionControlling {
         guard record.executable == request.executable, record.arguments == request.arguments else {
           continue
         }
+        // An explicit reconciliation clears this old generation for a fresh, separately
+        // authorized call. Preserve its unknown outcome; acknowledgement never replays it.
+        if record.terminal && record.reconciliationID != nil { continue }
         guard record.phase == "exited", record.cleanupConfirmed, generation > record.editGeneration
         else {
           throw ProcessSessionError.operationConflict

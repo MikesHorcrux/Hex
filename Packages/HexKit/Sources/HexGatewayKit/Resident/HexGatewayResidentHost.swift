@@ -56,8 +56,13 @@ public final class HexGatewayResidentHost {
     let codingWorkspace = try CodingWorkspaceManager(
       fileSystem: fileSystem,
       artifacts: artifactStore, workspace: configuration.workspaceRoot)
+    // launchd's BundleProgram can leave argv[0] relative to the outer app. The loaded
+    // executable is authoritative; resolving argv[0] against the resident cwd is not.
+    guard let supervisor = Bundle.main.executableURL,
+      FileManager.default.isExecutableFile(atPath: supervisor.path)
+    else { throw ProcessSessionError.unavailable }
     let processSessions = ProcessSessionManager(
-      supervisor: URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL,
+      supervisor: supervisor,
       writer: artifactStore, reader: artifactStore, codingWorkspace: codingWorkspace)
     let sessionTools = try HostToolExecutor(tools: [
       try ProcessStartTool(manager: processSessions),

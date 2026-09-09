@@ -22,7 +22,13 @@ struct CodingLegacyWriteTool: HostTool {
   }
   func execute(_ call: ToolCall, in context: ToolExecutionContext) async throws -> ToolResult {
     try await calls.take(call: call, runID: context.runID)
-    return try await manager.executeLegacy(
-      base, call: call, context: context, scope: sessions.scope(context))
+    do {
+      return try await manager.executeLegacy(
+        base, call: call, context: context, scope: sessions.scope(context))
+    } catch {
+      // Preserve the ordinary workspace tool's known rejection receipts for preflight
+      // failures. Outcome-uncertain and unrecognized errors still throw through this mapper.
+      return try WorkspaceToolResult.failure(error, callID: call.id)
+    }
   }
 }

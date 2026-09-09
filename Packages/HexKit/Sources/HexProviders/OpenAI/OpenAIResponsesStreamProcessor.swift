@@ -250,6 +250,10 @@ struct OpenAIResponsesStreamProcessor {
 
   private func isIgnorableMetadataEvent(_ type: String) -> Bool {
     switch type {
+    case "keepalive":
+      // The subscription route emits these while preparing a long response. They carry no
+      // output or tool authority, and the ordinary JSON, event and optional-sequence bounds apply.
+      configuration.service == .chatGPTCodexSubscription
     case "codex.response.metadata", "response.metadata", "responsesapi.websocket_timing":
       true
     default:
