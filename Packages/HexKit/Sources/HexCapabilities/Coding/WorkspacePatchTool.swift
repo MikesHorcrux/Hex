@@ -95,9 +95,26 @@ public struct WorkspacePatchTool: HostTool {
   {
     try await calls.take(call: call, runID: context.runID)
     let (text, revisions) = try parse(call)
-    let receipt = try await manager.apply(
-      text: text, revisions: revisions,
-      scope: sessions.scope(context), context: context, call: call)
+    let receipt: WorkspacePatchReceipt
+    do {
+      receipt = try await manager.apply(
+        text: text, revisions: revisions,
+        scope: sessions.scope(context), context: context, call: call)
+    } catch WorkspacePatchError.invalidPatch {
+      return ToolResult(
+        toolCallID: call.id, status: .failure,
+        output: .object([
+          "error": .string("invalid_patch"),
+          "recovery": .string(
+            "Read the current files and use exact context, consistent old/new hunk offsets, "
+              + "and expected revisions for exactly the updated/deleted paths. No files were changed."
+          ),
+        ]))
+    } catch {
+      // Known preflight failures precede all publication. The manager returns partial receipts
+      // after publication begins; cancellation, unknown outcomes and storage errors still throw.
+      return try WorkspaceToolResult.failure(error, callID: call.id)
+    }
     return ToolResult(
       toolCallID: call.id, status: receipt.state == "completed" ? .success : .failure,
       output: try ProcessSessionTool.value(receipt),

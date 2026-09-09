@@ -441,6 +441,38 @@ struct CodingWorkflowTests {
     }
   }
 
+  @Test func patchContextMismatchReturnsKnownFailureBeforePublishingAnyFile() async throws {
+    try await fixture { f in
+      let first = try await f.files.writeTextFile(
+        "first\n", at: "first.txt", expectedRevision: nil, relativeTo: nil)
+      let second = try await f.files.writeTextFile(
+        "second\n", at: "second.txt", expectedRevision: nil, relativeTo: nil)
+      let tool = WorkspacePatchTool(manager: f.coding, sessions: f.manager)
+      let call = ToolCall(
+        name: tool.definition.name,
+        arguments: [
+          "patch": .string(
+            "--- a/first.txt\n+++ b/first.txt\n@@ -1,1 +1,1 @@\n-first\n+updated\n"
+              + "--- a/second.txt\n+++ b/second.txt\n@@ -1,1 +1,1 @@\n-wrong context\n+updated\n"),
+          "expected_revisions": .object([
+            "first.txt": .string(first.revision), "second.txt": .string(second.revision),
+          ]),
+        ])
+      _ = try await tool.authorizationRequest(for: call, in: f.context)
+      let result = try await tool.execute(call, in: f.context)
+      #expect(result.status == .failure)
+      #expect(result.output == .object(["error": .string("revision_conflict")]))
+      #expect(!result.requiresUserAttention)
+      #expect(try await f.journal.codingGeneration(f.scope.taskID) == 0)
+      #expect(try await f.coding.review(taskID: f.scope.taskID).patches.isEmpty)
+      #expect(
+        try await f.files.readTextFile(at: "first.txt", relativeTo: nil).revision == first.revision)
+      #expect(
+        try await f.files.readTextFile(at: "second.txt", relativeTo: nil).revision
+          == second.revision)
+    }
+  }
+
   @Test func gitReviewPreservesStagedAndUntrackedWorkAndDisablesFilters() async throws {
     try await fixture { f in
       func git(_ arguments: [String]) async throws {
