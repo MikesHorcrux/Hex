@@ -52,7 +52,20 @@ public struct WorkspacePatchTool: HostTool {
   public func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
     async throws -> AuthorizationRequest
   {
-    let (text, _) = try parse(call)
+    let text: String
+    do {
+      (text, _) = try parse(call)
+    } catch {
+      // Pure argument validation only: no workspace access, authorization, or ledger mutation.
+      throw ToolCallValidationError(
+        recovery:
+          "Supply an exact unified diff ending in newline: --- a/path, +++ b/path, and @@ hunks. "
+          + "Use /dev/null for creates/deletes. Each hunk's old/new counts must match its body; "
+          + "prefix context lines with a space, removals with -, and additions with +. "
+          + "Do not include *** Begin Patch or *** End Patch markers. "
+          + "Use valid relative workspace paths and a SHA-256 expected_revisions entry for each "
+          + "updated/deleted file from workspace_read_text_file. No files were changed.")
+    }
     let scope = try await sessions.scope(context)
     let files = try UnifiedPatch(text).files
     for file in files {

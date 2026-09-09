@@ -407,6 +407,40 @@ struct CodingWorkflowTests {
     }
   }
 
+  @Test func malformedPatchReturnsValidationFeedbackBeforeAuthorizationOrMutation() async throws {
+    try await fixture { f in
+      let tool = WorkspacePatchTool(manager: f.coding, sessions: f.manager)
+      let valid = "--- /dev/null\n+++ b/example.txt\n@@ -0,0 +1,1 @@\n+hello\n"
+      for malformed in [
+        valid + "*** End Patch\n",
+        valid.replacingOccurrences(of: "+1,1", with: "+1,2"),
+      ] {
+        let call = ToolCall(
+          name: tool.definition.name,
+          arguments: ["patch": .string(malformed), "expected_revisions": .object([:])])
+        await #expect(throws: ToolCallValidationError.self) {
+          _ = try await tool.authorizationRequest(for: call, in: f.context)
+        }
+        await #expect(throws: (any Error).self) {
+          _ = try await tool.execute(call, in: f.context)
+        }
+        #expect(
+          !FileManager.default.fileExists(
+            atPath: f.workspace.appendingPathComponent("example.txt").path))
+        #expect(try await f.journal.codingGeneration(f.scope.taskID) == 0)
+      }
+      let corrected = ToolCall(
+        name: tool.definition.name,
+        arguments: ["patch": .string(valid), "expected_revisions": .object([:])])
+      _ = try await tool.authorizationRequest(for: corrected, in: f.context)
+      #expect(try await tool.execute(corrected, in: f.context).status == .success)
+      #expect(try await f.journal.codingGeneration(f.scope.taskID) == 1)
+      #expect(
+        try String(contentsOf: f.workspace.appendingPathComponent("example.txt"), encoding: .utf8)
+          == "hello\n")
+    }
+  }
+
   @Test func gitReviewPreservesStagedAndUntrackedWorkAndDisablesFilters() async throws {
     try await fixture { f in
       func git(_ arguments: [String]) async throws {

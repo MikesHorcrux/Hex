@@ -93,4 +93,3 @@ Run: `002EE1BE-F921-48F5-B7D0-D43468DBFA3B`.
 | not dispatched → 104 | `process_run` | /usr/bin/test -e /private/var/folders/27/f97lbkd505s6jg6k0m1t_3m40000gn/T/.hex-workspace-write-transactions-v1-uid-501/runtime-slot-00/candidate-0c973ae0fb23b039c043ef68a33f2608 | failure: not_executed |
 
 Terminal event: `run_failed`, sequence 106.
-
