@@ -73,8 +73,8 @@ struct HexTaskGuardedToolExecutorTests {
 
   @Test(arguments: ["missing", "failed", "attention"])
   func uncertainPriorOutcomesStillRequireReconciliation(outcome: String) async throws {
-    let base = CountingTool(capability: "mac.application.control")
-    let original = ToolCall(name: "mac_open_local_url", arguments: [:])
+    let base = CountingTool(capability: "mac.accessibility.control")
+    let original = ToolCall(name: "mac_accessibility_action", arguments: [:])
     let result: ToolResult? =
       outcome == "missing"
       ? nil
@@ -93,6 +93,64 @@ struct HexTaskGuardedToolExecutorTests {
     #expect(rejected.requiresUserAttention)
     #expect(rejected.notExecutedReason == nil)
     #expect(await base.executions == 0)
+  }
+
+  @Test(
+    arguments: ["mac_activate_application", "mac_open_local_url"],
+    ["native", "wrong-operation", "mcp"])
+  func nativePresentationCanBeRequestedAgainWithFreshAuthorization(name: String, source: String)
+    async throws
+  {
+    let operation =
+      name == "mac_activate_application" ? "activate-application" : "open-local-preview"
+    let base = CountingTool(
+      capability: source == "mcp" ? "mcp.tool.execute" : "mac.application.control",
+      operation: source == "wrong-operation" ? "write" : operation)
+    let original = ToolCall(name: name, arguments: ["bundle_id": .string("com.apple.Safari")])
+    let effect = AgentTaskEffect(
+      runID: AgentRunID(), callID: original.id,
+      result: ToolResult(
+        toolCallID: original.id, status: .success, output: .string("opened earlier")))
+    let executor = HexTaskGuardedToolExecutor(
+      base: base,
+      effects: PriorEffect(
+        effect: effect, fingerprint: try AgentTaskOperationFingerprint.data(for: original)))
+    let next = ToolCall(name: name, arguments: original.arguments)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    _ = try await executor.authorizationRequest(for: next, in: context)
+    let result = try await executor.execute(next, in: context)
+    #expect(await base.authorizations == 1)
+    #expect(await base.executions == (source == "native" ? 1 : 0))
+    #expect(result.status == (source == "native" ? .success : .failure))
+    await #expect(throws: AgentTaskStorageError.self) {
+      _ = try await executor.execute(next, in: context)
+    }
+    #expect(await base.executions == (source == "native" ? 1 : 0))
+  }
+
+  @Test
+  func nativePresentationPreservesNewUncertainty() async throws {
+    let base = CountingTool(
+      capability: "mac.application.control", operation: "open-local-preview",
+      requiresUserAttention: true)
+    let original = ToolCall(name: "mac_open_local_url", arguments: [:])
+    let effect = AgentTaskEffect(
+      runID: AgentRunID(), callID: original.id,
+      result: ToolResult(
+        toolCallID: original.id, status: .success, output: .string("opened earlier")))
+    let executor = HexTaskGuardedToolExecutor(
+      base: base,
+      effects: PriorEffect(
+        effect: effect, fingerprint: try AgentTaskOperationFingerprint.data(for: original)))
+    let next = ToolCall(name: original.name, arguments: original.arguments)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    _ = try await executor.authorizationRequest(for: next, in: context)
+    let result = try await executor.execute(next, in: context)
+    #expect(await base.executions == 1)
+    #expect(result.requiresUserAttention)
+    #expect(result.status == .failure)
+    #expect(result.executionOutcome == nil)
+    #expect(result.toolCallID == next.id)
   }
 
   @Test(arguments: ["workspace.write", "mcp.tool.execute"])
@@ -128,9 +186,18 @@ struct HexTaskGuardedToolExecutorTests {
 
   private actor CountingTool: ToolExecutor {
     let capability: String
+    let operation: String
+    let requiresUserAttention: Bool
     var authorizations = 0
     var executions = 0
-    init(capability: String = "workspace.write") { self.capability = capability }
+    init(
+      capability: String = "workspace.write", operation: String = "write",
+      requiresUserAttention: Bool = false
+    ) {
+      self.capability = capability
+      self.operation = operation
+      self.requiresUserAttention = requiresUserAttention
+    }
     func availableTools() -> [ToolDefinition] { [] }
     func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
       -> AuthorizationRequest
@@ -138,12 +205,14 @@ struct HexTaskGuardedToolExecutorTests {
       authorizations += 1
       return AuthorizationRequest(
         runID: context.runID, toolCallID: call.id,
-        capability: CapabilityID(rawValue: capability), operation: "write",
+        capability: CapabilityID(rawValue: capability), operation: operation,
         explanation: "fixture")
     }
     func execute(_ call: ToolCall, in context: ToolExecutionContext) -> ToolResult {
       executions += 1
-      return ToolResult(toolCallID: call.id, status: .success, output: .string("done"))
+      return ToolResult(
+        toolCallID: call.id, status: requiresUserAttention ? .failure : .success,
+        output: .string("done"), requiresUserAttention: requiresUserAttention)
     }
   }
 }

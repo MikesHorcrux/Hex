@@ -1,18 +1,20 @@
 import HexCore
 
-/// Re-observation remains live. Mutating/unknown tools cannot replay an earlier task operation,
+/// Re-observation and native presentation remain live. Mutating/unknown tools cannot replay
+/// an earlier task operation,
 /// even when a provider invents a new call ID or context compaction removed the original prose.
 actor HexTaskGuardedToolExecutor: ToolExecutor {
   let base: any ToolExecutor
   let effects: (any AgentTaskEffectReading)?
-  private var authorizedCapabilities: [AgentRunID: [ToolCallID: CapabilityID]] = [:]
+  private var authorizedOperations:
+    [AgentRunID: [ToolCallID: (capability: CapabilityID, operation: String)]] = [:]
 
   init(base: any ToolExecutor, effects: (any AgentTaskEffectReading)?) {
     self.base = base
     self.effects = effects
   }
 
-  func finishRun(_ runID: AgentRunID) { authorizedCapabilities.removeValue(forKey: runID) }
+  func finishRun(_ runID: AgentRunID) { authorizedOperations.removeValue(forKey: runID) }
 
   func availableTools() async throws -> [ToolDefinition] { try await base.availableTools() }
 
@@ -20,18 +22,21 @@ actor HexTaskGuardedToolExecutor: ToolExecutor {
     async throws -> AuthorizationRequest
   {
     let request = try await base.authorizationRequest(for: call, in: context)
-    guard (authorizedCapabilities[context.runID]?.count ?? 0) < 4_096 else {
+    guard (authorizedOperations[context.runID]?.count ?? 0) < 4_096 else {
       throw AgentTaskStorageError.invalidRecord
     }
-    authorizedCapabilities[context.runID, default: [:]][call.id] = request.capability
+    authorizedOperations[context.runID, default: [:]][call.id] = (
+      request.capability, request.operation
+    )
     return request
   }
 
   func execute(_ call: ToolCall, in context: ToolExecutionContext) async throws -> ToolResult {
-    guard let capability = authorizedCapabilities[context.runID]?.removeValue(forKey: call.id)
+    guard let authorized = authorizedOperations[context.runID]?.removeValue(forKey: call.id)
     else {
       throw AgentTaskStorageError.invalidRecord
     }
+    let capability = authorized.capability
     // Exact host capability allowlist: an untrusted MCP tool cannot opt itself into this set.
     let readCapabilities: Set<String> = [
       "workspace.read", "artifact.read", "process.session.read", "mac.application.read",
@@ -47,8 +52,17 @@ actor HexTaskGuardedToolExecutor: ToolExecutor {
     // The generic fingerprint fence would prevent correcting/retrying a rejected preflight.
     let nativeRevisionCheckedPatch =
       capability.rawValue == "workspace.write" && call.name == "workspace_apply_patch"
+    // App focus and local preview presentation can become obsolete when a user changes tabs or
+    // apps. Fresh, individually authorized requests must remain usable in later attempts. These
+    // exact native tools retain their target/URL validation and return any new uncertainty intact;
+    // arbitrary accessibility actions and MCP tools do not receive this exception.
+    let nativePresentation =
+      capability.rawValue == "mac.application.control"
+      && ((call.name == "mac_activate_application"
+        && authorized.operation == "activate-application")
+        || (call.name == "mac_open_local_url" && authorized.operation == "open-local-preview"))
     if let effects, !readCapabilities.contains(capability.rawValue), !nativeSessionStart,
-      !nativeRevisionCheckedPatch,
+      !nativeRevisionCheckedPatch, !nativePresentation,
       let prior = try await effects.previousTaskEffect(
         runID: context.runID,
         fingerprint: AgentTaskOperationFingerprint.data(for: call)),

@@ -7,6 +7,7 @@ public struct MacOpenLocalURLTool: HostTool, Sendable {
     name: "mac_open_local_url",
     description: "Open a local development website in an explicitly selected macOS browser. "
       + "Use this for a running localhost preview instead of typing into browser chrome. "
+      + "A fresh authorized call can reopen the preview after the user switches or closes tabs. "
       + "Only HTTP(S) URLs on literal 127.0.0.1 or [::1] are accepted. "
       + "The browser is brought forward; observe it afterward to verify the page loaded.",
     inputSchema: HostToolSchema.object(
