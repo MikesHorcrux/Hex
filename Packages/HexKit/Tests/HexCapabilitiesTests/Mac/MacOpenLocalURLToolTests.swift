@@ -23,6 +23,13 @@ struct MacOpenLocalURLToolTests {
     #expect(request.resource?.contains("com.apple.Safari") == true)
     let result = try await tool.execute(call, in: context)
     #expect(result.status == .success)
+    if case .object(let output) = result.output {
+      #expect(output["process_id"] == .integer(12345))
+      #expect(output["outcome_verified"] == .boolean(false))
+      #expect(output["is_active"] == .boolean(false))
+    } else {
+      Issue.record("Expected browser identity in the opening receipt")
+    }
     #expect(await controller.opened == [url + "|com.apple.Safari"])
     #expect(try await tool.execute(call, in: context).status == .failure)
     #expect(await controller.opened.count == 1)
@@ -71,8 +78,11 @@ struct MacOpenLocalURLToolTests {
 
   private actor Controller: MacLocalURLControlling {
     var opened: [String] = []
-    func openLocalURL(_ url: URL, bundleIdentifier: String) async throws {
+    func openLocalURL(_ url: URL, bundleIdentifier: String) async throws -> MacApplicationSnapshot {
       opened.append(url.absoluteString + "|" + bundleIdentifier)
+      return MacApplicationSnapshot(
+        bundleIdentifier: bundleIdentifier, localizedName: "Safari",
+        processIdentifier: 12345, isActive: false, isHidden: false)
     }
   }
 }

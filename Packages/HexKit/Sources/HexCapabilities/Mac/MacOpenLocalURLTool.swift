@@ -45,13 +45,17 @@ public struct MacOpenLocalURLTool: HostTool, Sendable {
     do {
       let target = try validatedTarget(call)
       try await authorizationLedger.take(call: call, runID: context.runID)
-      try await controller.openLocalURL(target.url, bundleIdentifier: target.bundleIdentifier)
+      let application = try await controller.openLocalURL(
+        target.url, bundleIdentifier: target.bundleIdentifier)
       return ToolResult(
         toolCallID: call.id, status: .success,
         output: .object([
           "open_requested": .boolean(true), "outcome_verified": .boolean(false),
           "url": .string(target.url.absoluteString), "bundle_id": .string(target.bundleIdentifier),
-          "next_step": .string("Observe this browser to verify the local page actually loaded."),
+          "process_id": .integer(Int64(application.processIdentifier)),
+          "is_active": .boolean(application.isActive), "is_hidden": .boolean(application.isHidden),
+          "next_step": .string(
+            "Observe this returned browser process to verify the local page actually loaded."),
         ]))
     } catch {
       await authorizationLedger.remove(callID: call.id, runID: context.runID)
