@@ -33,9 +33,8 @@ public struct PersonalityContextService: Sendable {
   /// Assembles context using a caller-provided, already validated memory query.
   public func assemble(query: PersonalMemoryQuery) async throws -> PersonalityContext {
     try Task.checkCancellation()
-    guard let profile = try await profileStore.load() else {
-      throw PersonalityContextServiceError.profileUnavailable
-    }
+    let savedProfile = try await profileStore.load()
+    let profile = try savedProfile ?? PersonalityProfile.defaultHex()
     try Task.checkCancellation()
     let memories = try await memoryStore.memories(matching: query)
     try Task.checkCancellation()

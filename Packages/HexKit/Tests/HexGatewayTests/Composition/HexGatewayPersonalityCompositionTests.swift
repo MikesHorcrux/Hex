@@ -10,7 +10,7 @@ import Testing
 @Suite("Gateway personality composition")
 struct HexGatewayPersonalityCompositionTests {
   @Test
-  func runsWithoutPersonalityWhenOptionalProfileHasNotBeenCreated() async throws {
+  func injectsCodeDefaultWhenOptionalProfileHasNotBeenCreated() async throws {
     let root = try Self.makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -71,7 +71,10 @@ struct HexGatewayPersonalityCompositionTests {
     let contextText = inferenceRequest.messages.map(Self.messageText).joined(separator: "\n")
     #expect(contextText.contains("You are Hex"))
     #expect(contextText.contains("hello"))
-    #expect(!contextText.contains("<hex_personal_context_data"))
+    #expect(contextText.contains("<hex_personal_context_data"))
+    #expect(contextText.contains("<name>Hex</name>"))
+    #expect(contextText.contains("Warm, direct, curious"))
+    #expect(try await profileStore.load() == nil)
 
     try await composition.close()
     try await journal.close()
