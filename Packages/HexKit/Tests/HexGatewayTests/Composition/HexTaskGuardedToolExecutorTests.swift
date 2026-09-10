@@ -28,7 +28,8 @@ struct HexTaskGuardedToolExecutorTests {
     #expect(request.runID == context.runID)
     #expect(request.capability.rawValue == (action == "list" ? "browser.session.observe" : name))
     #expect(await base.executions == (action == "list" ? 1 : 0))
-    #expect(result.requiresUserAttention == (action != "list"))
+    #expect(!result.requiresUserAttention)
+    #expect(result.executionOutcome == (action == "list" ? nil : .completed))
   }
 
   @Test
@@ -63,8 +64,34 @@ struct HexTaskGuardedToolExecutorTests {
     let context = ToolExecutionContext(runID: AgentRunID())
     _ = try await executor.authorizationRequest(for: next, in: context)
     let result = try await executor.execute(next, in: context)
-    #expect(result.requiresUserAttention)
+    #expect(!result.requiresUserAttention)
+    #expect(result.executionOutcome == .completed)
+    #expect(result.notExecutedReason == nil)
     #expect(result.status == .failure)
+    #expect(await base.executions == 0)
+  }
+
+  @Test(arguments: ["missing", "failed", "attention"])
+  func uncertainPriorOutcomesStillRequireReconciliation(outcome: String) async throws {
+    let base = CountingTool(capability: "mac.application.control")
+    let original = ToolCall(name: "mac_open_local_url", arguments: [:])
+    let result: ToolResult? =
+      outcome == "missing"
+      ? nil
+      : ToolResult(
+        toolCallID: original.id, status: outcome == "failed" ? .failure : .success,
+        output: .string("uncertain"), requiresUserAttention: outcome == "attention")
+    let executor = HexTaskGuardedToolExecutor(
+      base: base,
+      effects: PriorEffect(
+        effect: AgentTaskEffect(runID: AgentRunID(), callID: original.id, result: result),
+        fingerprint: try AgentTaskOperationFingerprint.data(for: original)))
+    let next = ToolCall(name: original.name, arguments: original.arguments)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    _ = try await executor.authorizationRequest(for: next, in: context)
+    let rejected = try await executor.execute(next, in: context)
+    #expect(rejected.requiresUserAttention)
+    #expect(rejected.notExecutedReason == nil)
     #expect(await base.executions == 0)
   }
 

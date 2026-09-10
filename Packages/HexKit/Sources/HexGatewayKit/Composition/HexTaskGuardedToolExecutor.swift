@@ -54,18 +54,24 @@ actor HexTaskGuardedToolExecutor: ToolExecutor {
         fingerprint: AgentTaskOperationFingerprint.data(for: call)),
       prior.result?.notExecutedReason == nil
     {
+      let completed =
+        prior.result?.status == .success && prior.result?.requiresUserAttention == false
       return ToolResult(
         toolCallID: call.id, status: .failure,
         output: .object([
           "error": .string("task_operation_already_dispatched"),
+          "dispatched": .boolean(false),
           "previous_run_id": .string(prior.runID.rawValue.uuidString),
           "previous_call_id": .string(prior.callID.rawValue),
           "previous_outcome": .string(
-            prior.result?.status == .success ? "completed" : "requires_reconciliation"),
+            completed ? "completed" : "requires_reconciliation"),
           "instruction": .string(
-            "This operation was not repeated. Inspect the earlier receipt and current state before continuing."
+            completed
+              ? "This call was not dispatched because an earlier attempt completed the same operation. Inspect the earlier receipt and current state, then continue with the remaining work."
+              : "This operation was not repeated. Inspect the earlier receipt and current state before continuing."
           ),
-        ]), requiresUserAttention: true)
+        ]), requiresUserAttention: !completed,
+        executionOutcome: completed ? .completed : nil)
     }
     return try await base.execute(call, in: context)
   }
