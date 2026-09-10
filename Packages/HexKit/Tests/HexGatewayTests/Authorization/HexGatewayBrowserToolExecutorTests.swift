@@ -7,6 +7,34 @@ import Testing
 @Suite("Managed browser observation boundary")
 struct HexGatewayBrowserToolExecutorTests {
   @Test
+  func onlyExactInlineObservationsReceiveTheHostReadCapability() async throws {
+    let base = Executor()
+    let browser = makeBrowser(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let accepted = [
+      call("browser_snapshot", [:]),
+      call("browser_snapshot", ["boxes": .boolean(true)]),
+      call("browser_tabs", ["action": .string("list")]),
+    ]
+    for candidate in accepted {
+      let request = try await browser.authorizationRequest(for: candidate, in: context)
+      #expect(request.capability.rawValue == "browser.session.observe")
+      #expect(await base.authorizedCall == candidate)
+    }
+    let guarded = [
+      call("browser_snapshot", ["filename": .string("snapshot.txt")]),
+      call("browser_snapshot", ["boxes": .string("true")]),
+      call("browser_tabs", ["action": .string("select"), "index": .integer(1)]),
+      call("browser_tabs", ["action": .string("list"), "unknown": .boolean(true)]),
+      call("browser_evaluate", ["function": .string("() => location.reload()")]),
+    ]
+    for candidate in guarded {
+      let request = try await browser.authorizationRequest(for: candidate, in: context)
+      #expect(request.capability.rawValue != "browser.session.observe")
+    }
+  }
+
+  @Test
   func publishesObservationRequirementWithoutChangingRemoteToolNames() async throws {
     let base = Executor()
     let browser = makeBrowser(base)

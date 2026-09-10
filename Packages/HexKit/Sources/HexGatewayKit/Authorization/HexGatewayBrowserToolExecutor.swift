@@ -107,8 +107,25 @@ public actor HexGatewayBrowserToolExecutor: ToolExecutor {
   public func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
     async throws -> AuthorizationRequest
   {
-    // Keep the exact original call and its correlation at the authorization boundary.
-    try await base.authorizationRequest(for: call, in: context)
+    let request = try await base.authorizationRequest(for: call, in: context)
+    // Only this host-owned adapter can identify these exact, non-writing observation shapes.
+    // MCP descriptions and read-only hints never grant this capability. Approval is still
+    // required by the same policy; the capability only distinguishes repeatable observation.
+    let name = Self.remoteName(call.name)
+    let inlineSnapshot =
+      name == "browser_snapshot"
+      && Set(call.arguments.keys).isSubset(of: ["boxes"])
+      && (call.arguments["boxes"] == nil || call.arguments["boxes"] == .boolean(true)
+        || call.arguments["boxes"] == .boolean(false))
+    let tabList =
+      name == "browser_tabs" && call.arguments["action"] == .string("list")
+      && Set(call.arguments.keys).isSubset(of: ["action", Self.observationKey])
+    guard inlineSnapshot || tabList else { return request }
+    return AuthorizationRequest(
+      id: request.id, runID: request.runID, toolCallID: request.toolCallID,
+      capability: CapabilityID(rawValue: "browser.session.observe"),
+      operation: request.operation, resource: request.resource, details: request.details,
+      explanation: request.explanation)
   }
 
   public func execute(_ call: ToolCall, in context: ToolExecutionContext) async throws -> ToolResult

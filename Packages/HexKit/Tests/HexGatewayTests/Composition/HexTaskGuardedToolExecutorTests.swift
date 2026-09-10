@@ -6,6 +6,31 @@ import Testing
 
 @Suite("Durable task mutation guard")
 struct HexTaskGuardedToolExecutorTests {
+  @Test(arguments: ["list", "select"])
+  func hostQualifiedTabObservationCanRepeatButSelectionCannot(action: String) async throws {
+    let name = "mcp_10_playwright_browser_tabs"
+    let base = CountingTool(capability: name)
+    let session = UUID()
+    let browser = HexGatewayBrowserToolExecutor(base: base, sessionIdentity: { session })
+    let original = ToolCall(name: name, arguments: ["action": .string(action)])
+    let next = ToolCall(name: original.name, arguments: original.arguments)
+    let effect = AgentTaskEffect(
+      runID: AgentRunID(), callID: original.id,
+      result: ToolResult(toolCallID: original.id, status: .success, output: .string("done")))
+    let executor = HexTaskGuardedToolExecutor(
+      base: browser,
+      effects: PriorEffect(
+        effect: effect, fingerprint: try AgentTaskOperationFingerprint.data(for: original)))
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let request = try await executor.authorizationRequest(for: next, in: context)
+    let result = try await executor.execute(next, in: context)
+    #expect(request.toolCallID == next.id)
+    #expect(request.runID == context.runID)
+    #expect(request.capability.rawValue == (action == "list" ? "browser.session.observe" : name))
+    #expect(await base.executions == (action == "list" ? 1 : 0))
+    #expect(result.requiresUserAttention == (action != "list"))
+  }
+
   @Test
   func executionDoesNotRefreshTheAuthorizationSnapshot() async throws {
     let base = CountingTool()
