@@ -58,6 +58,11 @@ enum SQLiteConversationTimeline {
       else { return nil }
       id = message.id.rawValue
       content = .message(message)
+    case .inferenceEvent(.reasoningSummaryDelta(let text)):
+      guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+      content = .notice(text)
+    case .runFailed(let failure): content = .notice("Hex stopped: " + failure.message)
+    case .runCancelled: content = .notice("Work cancelled")
     case .toolStarted(let call): content = .toolStarted(call.name)
     case .toolFinished(let result): content = .toolFinished(result)
     default: return nil

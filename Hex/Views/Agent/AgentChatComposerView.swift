@@ -9,7 +9,7 @@ struct AgentChatComposerView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       TextField(placeholder, text: $model.draft, axis: .vertical)
-        .lineLimit(2...6).textFieldStyle(.plain)
+        .lineLimit(3...6).textFieldStyle(.plain)
         .font(.body).focused($isFocused)
         .accessibilityIdentifier("conversationComposer")
         .disabled(model.pending != nil || model.selected?.archivedAt != nil)
@@ -36,7 +36,7 @@ struct AgentChatComposerView: View {
     .hexSurface(
       cornerRadius: 18, fill: HexBrandPalette.raisedSurface,
       border: isFocused ? HexBrandPalette.accentInk.opacity(0.8) : HexBrandPalette.hairline,
-      shadowRadius: 0
+      shadowRadius: 8
     )
     .onChange(of: model.selectedID) { _, _ in isFocused = true }
   }

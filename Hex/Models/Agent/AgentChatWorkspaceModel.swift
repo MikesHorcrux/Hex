@@ -31,10 +31,8 @@ final class AgentChatWorkspaceModel {
   var isPreparingStorage = false
   var generation = UUID()
   var nextConversation: ConversationStorageRequest.Cursor?
-  var before: Int64?
-  var legacyBefore: Int64?
-  var legacyExhausted = false
-  var showingEarlier = false
+  var newestTimelineSequence: Int64?
+  var didLoadTimeline = false
   var search = ""
   var showsArchived = false
   var pending: (conversationID: UUID, request: GatewayTaskRequest, draft: String)?
@@ -43,7 +41,6 @@ final class AgentChatWorkspaceModel {
       ? selectedDocument : conversations.first { $0.id == selectedID }
   }
   var currentWork: AgentTaskRecord? { activeWork ?? work.first }
-  var hasEarlier: Bool { before != nil || !legacyExhausted }
 
   init(
     client: any HexAgentClient, taskClient: any HexGatewayTaskClient,
@@ -107,7 +104,7 @@ final class AgentChatWorkspaceModel {
             execution.approvals = []
           }
         }
-        if !showingEarlier { try await loadTimeline(id, before: nil, token: token) }
+        try await loadTimeline(id, before: nil, token: token)
       }
       if pending == nil { error = recoveryError }
     } catch is CancellationError { return } catch {
@@ -145,10 +142,8 @@ final class AgentChatWorkspaceModel {
     items = []
     work = []
     activeWork = nil
-    before = nil
-    legacyBefore = nil
-    legacyExhausted = false
-    showingEarlier = false
+    newestTimelineSequence = nil
+    didLoadTimeline = false
     error = nil
     execution.approvals = []
     Task {

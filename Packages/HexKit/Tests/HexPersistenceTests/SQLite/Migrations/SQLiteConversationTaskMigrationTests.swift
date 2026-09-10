@@ -45,9 +45,9 @@ struct SQLiteConversationTaskMigrationTests {
     #expect(
       try await reopened.conversationStorage(.read(oldID)).documents.first?.state == originalState)
     #expect(try await reopened.readTask(task.id)?.conversationID == task.id)
-    #expect(
-      try await reopened.conversationTimeline(task.id, before: nil, limit: 40).entries.map(\.id)
-        == [message.id.rawValue])
+    let timeline = try await reopened.conversationTimeline(task.id, before: nil, limit: 40)
+    #expect(timeline.entries.first?.id == message.id.rawValue)
+    #expect(timeline.entries.map(\.content) == [.message(message), .notice("Work cancelled")])
     #expect(
       try await reopened.records(for: runID, after: nil, limit: 10) == [first, input, terminal])
     try await reopened.close()

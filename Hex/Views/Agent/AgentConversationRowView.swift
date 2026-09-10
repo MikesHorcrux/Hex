@@ -9,9 +9,6 @@ struct AgentConversationRowView: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      if item.role == .assistant {
-        HexAppIconView(size: 30)
-      }
       VStack(alignment: .leading, spacing: 10) {
         messageContent
         ForEach(item.artifacts, id: \.id) { artifact in
@@ -36,7 +33,7 @@ struct AgentConversationRowView: View {
       )
       .frame(maxWidth: bubbleWidth == nil ? 720 : nil, alignment: .leading)
       .background(
-        item.role == .user ? HexBrandPalette.surface : .clear,
+        item.role == .user ? HexBrandPalette.softCoral.opacity(0.65) : .clear,
         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
     .frame(maxWidth: .infinity, alignment: item.role == .user ? .trailing : .leading)
@@ -50,7 +47,7 @@ struct AgentConversationRowView: View {
   @ViewBuilder
   private var messageContent: some View {
     if item.role == .event {
-      Text(item.text.isEmpty ? "…" : item.text)
+      Text((try? AttributedString(markdown: item.text)) ?? AttributedString(item.text))
         .font(.callout).foregroundStyle(HexBrandPalette.mutedInk)
         .textSelection(.enabled)
     } else if item.role == .tool {

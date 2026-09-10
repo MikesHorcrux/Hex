@@ -10,6 +10,7 @@ struct AgentChatWorkspaceView: View {
   @State private var showsCoding = false
   @State private var showsRename = false
   @State private var titleDraft = ""
+  @SceneStorage("conversation.expandsActivity") private var expandsActivity = false
 
   var body: some View {
     NavigationSplitView {
@@ -34,10 +35,8 @@ struct AgentChatWorkspaceView: View {
         AgentConversationView(
           items: model.items, onPromptSuggestion: { model.draft = $0 },
           onOpenArtifact: { artifact = $0 },
-          hasEarlierMessages: model.hasEarlier && model.selectedID != nil,
-          showsLatestButton: model.showingEarlier, isLoadingHistory: model.isLoading,
-          onEarlierMessages: { Task { await model.earlier() } }, onLatestMessages: model.latest,
-          collapsesTools: true
+          isLoadingHistory: model.isLoading, collapsesTools: true,
+          expandsActivity: expandsActivity
         )
         .id(model.selectedID ?? model.newID)
         if let id = model.selectedID,
@@ -70,6 +69,13 @@ struct AgentChatWorkspaceView: View {
             workspace.connectFromControl()
           }
           .disabled(workspace.connectionState == .connecting)
+        }
+        if model.selectedID != nil {
+          Toggle(isOn: $expandsActivity) {
+            Label("Expand all activity", systemImage: "list.bullet.rectangle")
+          }
+          .help("Show every tool receipt in the full conversation")
+          .accessibilityIdentifier("expandConversationActivity")
         }
         if model.selectedID != nil, model.client is any HexGatewayProcessSessionClient {
           Button("Processes and changes", systemImage: "terminal") { showsCoding = true }

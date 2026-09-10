@@ -11,6 +11,7 @@ struct AgentConversationView: View {
   var onEarlierMessages: () -> Void = {}
   var onLatestMessages: () -> Void = {}
   var collapsesTools = false
+  var expandsActivity = false
   @State private var followsLatest = true
 
   var body: some View {
@@ -19,7 +20,7 @@ struct AgentConversationView: View {
       let segments = AgentConversationSegment.make(items, collapsesTools: collapsesTools)
       ScrollViewReader { proxy in
         if items.isEmpty {
-          if isLoadingHistory && hasEarlierMessages {
+          if isLoadingHistory {
             ProgressView("Loading conversation…")
               .frame(maxWidth: .infinity, maxHeight: .infinity)
           } else {
@@ -48,7 +49,7 @@ struct AgentConversationView: View {
                   if segment.isActivity {
                     AgentConversationActivityView(
                       items: segment.items, contentWidth: contentWidth,
-                      onOpenArtifact: onOpenArtifact)
+                      onOpenArtifact: onOpenArtifact, expandsActivity: expandsActivity)
                   } else if let item = segment.items.first {
                     AgentConversationRowView(
                       item: item, bubbleWidth: max(1, contentWidth - 42),

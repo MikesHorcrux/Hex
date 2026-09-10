@@ -6,6 +6,18 @@ nonisolated struct AgentConversationSegment: Identifiable, Equatable, Sendable {
   var items: [ConversationItem]
   let isActivity: Bool
 
+  static func activitySummary(_ items: [ConversationItem]) -> String {
+    let names = items.filter { $0.text.hasPrefix("Started ") }.map {
+      String($0.text.dropFirst("Started ".count)).replacingOccurrences(of: "_", with: " ")
+    }
+    guard !names.isEmpty else { return "\(items.count) tool receipts" }
+    var seen = Set<String>()
+    let distinct = names.filter { seen.insert($0).inserted }
+    let preview = distinct.prefix(2).joined(separator: ", ")
+    return "\(names.count) tool \(names.count == 1 ? "call" : "calls") · \(preview)"
+      + (distinct.count > 2 ? " and \(distinct.count - 2) more" : "")
+  }
+
   static func make(_ items: [ConversationItem], collapsesTools: Bool) -> [Self] {
     var result: [Self] = []
     for item in items {

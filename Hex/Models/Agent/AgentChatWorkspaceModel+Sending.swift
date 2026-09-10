@@ -80,7 +80,6 @@ extension AgentChatWorkspaceModel {
       }
       selectedID = saved.conversationID
       pending = nil
-      showingEarlier = false
       _ = try? await storage.conversationStorage(.select(saved.conversationID))
       error = nil
       await refresh()

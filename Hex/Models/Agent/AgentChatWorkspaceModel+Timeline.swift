@@ -3,62 +3,63 @@ import HexCore
 import HexIPC
 
 extension AgentChatWorkspaceModel {
+  /// Read bounded pages, but retain the complete display transcript. Refresh bridges every page
+  /// since the last loaded sequence so a busy run cannot displace the user's earlier messages.
   func loadTimeline(_ id: UUID, before cursor: Int64?, token: UUID) async throws {
-    let response = try await taskClient.taskOperation(
-      .conversationHistory(id, before: cursor, limit: 40))
-    guard token == generation, id == selectedID else { return }
-    let displayed = response.timeline.compactMap(Self.display)
-    if response.before == nil {
-      try await loadLegacy(id, before: nil, token: token, append: true, suffix: displayed)
-    } else {
-      items = displayed
-    }
-    guard token == generation, id == selectedID else { return }
-    before = response.before
-  }
-
-  func loadLegacy(
-    _ id: UUID, before cursor: Int64?, token: UUID, append: Bool,
-    suffix: [ConversationItem] = []
-  ) async throws {
-    guard let document = try await storage.conversationStorage(.read(id)).documents.first else {
-      if token == generation, id == selectedID { items = append ? suffix : [] }
-      return
-    }
-    let page = try await storage.conversationStorage(
-      .entries(
-        id, kind: .display, before: cursor,
-        limit: 40, revision: document.revision))
-    guard token == generation, id == selectedID else { return }
-    let old = try page.entries.map {
-      try JSONDecoder().decode(ConversationItem.self, from: $0.payload)
-    }
-    let ids = Set(suffix.map(\.id))
-    items = old.filter { !ids.contains($0.id) } + (append ? suffix : [])
-    legacyBefore = page.before
-    legacyExhausted = page.before == nil
-  }
-
-  func earlier() async {
-    guard let id = selectedID, !isLoading else { return }
-    isLoading = true
-    defer { isLoading = false }
-    showingEarlier = true
-    let token = generation
-    do {
-      if let before {
-        try await loadTimeline(id, before: before, token: token)
-      } else if !legacyExhausted {
-        try await loadLegacy(id, before: legacyBefore, token: token, append: false)
+    var cursor = cursor
+    var pages: [[ConversationTimelineEntry]] = []
+    var visited = Set<Int64>()
+    repeat {
+      try Task.checkCancellation()
+      let response = try await taskClient.taskOperation(
+        .conversationHistory(id, before: cursor, limit: 40))
+      guard token == generation, id == selectedID else { return }
+      pages.append(response.timeline.filter { $0.sequence > (newestTimelineSequence ?? 0) })
+      let reachedLoaded =
+        newestTimelineSequence.map { loaded in
+          response.timeline.contains { $0.sequence <= loaded }
+        } ?? false
+      cursor = reachedLoaded ? nil : response.before
+      if let cursor, !visited.insert(cursor).inserted {
+        throw GatewayFailure(
+          code: .recoveryUnavailable, message: "Conversation history stopped advancing.")
       }
-    } catch { self.error = "Earlier messages could not be loaded. The saved history is unchanged." }
+    } while cursor != nil
+
+    let entries = pages.reversed().flatMap { $0 }
+    let displayed = entries.compactMap(Self.display)
+    let prefix = didLoadTimeline ? items : try await legacyItems(id, token: token)
+    guard token == generation, id == selectedID else { return }
+    var ids = Set<UUID>()
+    items = (prefix + displayed).filter { ids.insert($0.id).inserted }
+    newestTimelineSequence = entries.map(\.sequence).max() ?? newestTimelineSequence
+    didLoadTimeline = true
   }
 
-  func latest() {
-    showingEarlier = false
-    legacyBefore = nil
-    legacyExhausted = false
-    Task { await refresh() }
+  private func legacyItems(_ id: UUID, token: UUID) async throws -> [ConversationItem] {
+    guard let document = try await storage.conversationStorage(.read(id)).documents.first else {
+      return []
+    }
+    guard token == generation, id == selectedID else { return [] }
+    var cursor: Int64?
+    var pages: [[ConversationItem]] = []
+    var visited = Set<Int64>()
+    repeat {
+      try Task.checkCancellation()
+      let page = try await storage.conversationStorage(
+        .entries(id, kind: .display, before: cursor, limit: 40, revision: document.revision))
+      guard token == generation, id == selectedID else { return [] }
+      pages.append(
+        try page.entries.map {
+          try JSONDecoder().decode(ConversationItem.self, from: $0.payload)
+        })
+      cursor = page.before
+      if let cursor, !visited.insert(cursor).inserted {
+        throw GatewayFailure(
+          code: .recoveryUnavailable, message: "Saved history stopped advancing.")
+      }
+    } while cursor != nil
+    return pages.reversed().flatMap { $0 }
   }
 
   static func display(_ entry: ConversationTimelineEntry) -> ConversationItem? {
@@ -72,6 +73,8 @@ extension AgentChatWorkspaceModel {
       return .init(
         id: entry.id, role: message.role == .user ? .user : .assistant,
         text: text, timestamp: entry.timestamp)
+    case .notice(let text):
+      return .init(id: entry.id, role: .event, text: text, timestamp: entry.timestamp)
     case .toolStarted(let name):
       return .init(id: entry.id, role: .tool, text: "Started " + name, timestamp: entry.timestamp)
     case .toolFinished(let result):
