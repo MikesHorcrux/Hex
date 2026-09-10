@@ -6,6 +6,43 @@ import Testing
 
 @Suite("Durable task mutation guard")
 struct HexTaskGuardedToolExecutorTests {
+  @Test(arguments: [
+    "window-list", "snapshot", "window-focus", "foreground", "output-path", "other-server",
+  ])
+  func hostQualifiedNativeObservationsCanRepeatWithoutOpeningAnInputException(kind: String)
+    async throws
+  {
+    let snapshot = kind == "snapshot" || kind == "output-path"
+    let name =
+      (kind == "other-server" ? "mcp_5_other_" : "mcp_8_peekaboo_")
+      + (snapshot ? "see" : "window")
+    var arguments: [String: JSONValue] =
+      snapshot
+      ? ["app_target": .string("PID:123"), "window_id": .integer(10)]
+      : ["action": .string(kind == "window-focus" ? "focus" : "list"), "app": .string("Safari")]
+    if kind == "foreground" { arguments["foreground"] = .boolean(true) }
+    if kind == "output-path" { arguments["path"] = .string("/tmp/user-selected.png") }
+    let original = ToolCall(name: name, arguments: arguments)
+    let base = CountingTool(capability: name)
+    let session = UUID()
+    let native = HexGatewayPeekabooToolExecutor(base: base, sessionIdentity: { session })
+    let executor = HexTaskGuardedToolExecutor(
+      base: native,
+      effects: PriorEffect(
+        effect: AgentTaskEffect(
+          runID: AgentRunID(), callID: original.id,
+          result: ToolResult(
+            toolCallID: original.id, status: .success, output: .string("old observation"))),
+        fingerprint: try AgentTaskOperationFingerprint.data(for: original)))
+    let next = ToolCall(name: name, arguments: arguments)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let authorization = try await executor.authorizationRequest(for: next, in: context)
+    _ = try await executor.execute(next, in: context)
+    let repeatable = kind == "window-list" || kind == "snapshot"
+    #expect(authorization.capability.rawValue == (repeatable ? "mac.screen.observe" : name))
+    #expect(await base.executions == (repeatable ? 1 : 0))
+  }
+
   @Test(arguments: ["list", "select"])
   func hostQualifiedTabObservationCanRepeatButSelectionCannot(action: String) async throws {
     let name = "mcp_10_playwright_browser_tabs"

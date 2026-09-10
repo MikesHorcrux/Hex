@@ -140,6 +140,7 @@ struct CodingWorkflowTests {
     #expect(result.status == .failure)
     #expect(!result.requiresUserAttention)
     #expect(result.notExecutedReason == nil)
+    #expect(result.executionOutcome == .completed)
     guard case .object(let output) = result.output else {
       Issue.record("Expected a structured preflight rejection")
       return

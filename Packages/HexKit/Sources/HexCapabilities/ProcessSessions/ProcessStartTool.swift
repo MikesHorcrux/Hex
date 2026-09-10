@@ -107,7 +107,7 @@ public struct ProcessStartTool: HostTool {
           "message": .string(
             "No process was started. Inspect the existing session before starting again. A live or unresolved command cannot be duplicated; a completed one-shot command requires a committed workspace edit. A retained session may restart after a confirmed explicit stop."
           ),
-        ]))
+        ]), executionOutcome: .completed)
     }
     return ToolResult(
       toolCallID: call.id, status: .success, output: try ProcessSessionTool.value(record),

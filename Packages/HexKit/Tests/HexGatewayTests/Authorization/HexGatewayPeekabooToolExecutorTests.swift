@@ -18,9 +18,11 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(failure, "error") == .string("native_observation_failed"))
     #expect(field(failure, "dispatched") == .boolean(false))
     #expect(!failure.requiresUserAttention)
+    #expect(failure.executionOutcome == .completed)
     let blocked = try await wrapper.execute(
       call("click", ["on": .string("B1"), "hex_observation_id": oldToken]), in: context)
     #expect(field(blocked, "error") == .string("native_observation_required"))
+    #expect(blocked.executionOutcome == .completed)
     await base.setCaptureMode("ordinary")
     #expect(field(try await wrapper.execute(see(), in: context), "hex_observation_id") != nil)
     #expect(await base.calls.count == 3)
@@ -39,6 +41,7 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(refusal, "dispatched") == .boolean(false))
     #expect(field(refusal, "unsupported_arguments") == .array([.string("capture_focus")]))
     #expect(!refusal.requiresUserAttention)
+    #expect(refusal.executionOutcome == .completed)
     #expect(await base.calls.count == 1)
     let stale = try await wrapper.execute(
       call("click", ["on": .string("B1"), "hex_observation_id": priorToken]), in: context)
@@ -144,6 +147,7 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(result.requiresUserAttention)
     #expect(field(result, "error") == .string("native_action_outcome_uncertain"))
     #expect(field(result, "dispatched") == .null)
+    #expect(result.executionOutcome == nil)
     if mode != "throw" { #expect(result.content == [.text("Known helper receipt")]) }
     _ = try await wrapper.execute(action, in: context)
     #expect(await base.calls.count == 2)
@@ -161,6 +165,7 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(result, "dispatched") == .boolean(false))
     #expect(field(result, "outcome_verified") == .boolean(false))
     #expect(result.requiresUserAttention == (mode == "permission_denied"))
+    if mode != "confirmed_no_change" { #expect(result.executionOutcome == .completed) }
     if mode == "permission_denied" {
       #expect(field(result, "error") == .string("screen_permissions_required"))
     } else if mode == "target_unavailable" {

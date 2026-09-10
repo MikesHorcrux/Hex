@@ -72,7 +72,27 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
   public func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
     async throws -> AuthorizationRequest
   {
-    try await base.authorizationRequest(for: call, in: context)
+    let request = try await base.authorizationRequest(for: call, in: context)
+    let name = HexGatewayPeekabooCallPolicy.remoteName(call.name)
+    // Qualify exact passive shapes in the host, never from an MCP read-only hint.
+    // Foreground actions, caller-supplied output paths and other operations stay fenced.
+    let windowList =
+      name == "window" && call.arguments["action"] == .string("list")
+      && Set(call.arguments.keys).isSubset(of: [
+        "action", "app", "include_window_details", "hex_observation_id",
+      ])
+    let passiveSnapshot =
+      (name == "see" || name == "inspect_ui")
+      && Set(call.arguments.keys).isSubset(of: [
+        "app_target", "window_id", "max_children", "max_depth", "max_elements", "annotate",
+        "ocr", "hex_observation_id",
+      ])
+    guard windowList || passiveSnapshot else { return request }
+    return AuthorizationRequest(
+      id: request.id, runID: request.runID, toolCallID: request.toolCallID,
+      capability: CapabilityID(rawValue: "mac.screen.observe"),
+      operation: request.operation, resource: request.resource, details: request.details,
+      explanation: request.explanation)
   }
 
   public func execute(_ call: ToolCall, in context: ToolExecutionContext) async throws -> ToolResult
@@ -138,7 +158,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
                 + "and use only the advertised schema to observe the same PID/window. "
                 + "See captures in background by default and has no capture_focus argument. "
                 + "Do not repeat earlier input actions."),
-          ]))
+          ]), executionOutcome: .completed)
       }
     }
     let remote = ToolCall(id: call.id, name: call.name, arguments: arguments)
@@ -164,7 +184,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
                 + "Read the current exact app/window identity before a new observation, or use "
                 + "mac_accessibility_snapshot and the actions actually advertised by its elements. "
                 + "Do not repeat earlier input actions or guess observation IDs."),
-          ]))
+          ]), executionOutcome: .completed)
       }
       throw error
     }
@@ -192,7 +212,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
                 ? "The helper refused input before dispatch because a required Mac permission is missing. Restore the permission before continuing."
                 : "The helper refused input before dispatch. Correct the request, observe the exact PID/window again, and use the new observation ID."
             ),
-          ], attention: permissionDenied)
+          ], attention: permissionDenied, executionOutcome: .completed)
       case .uncertain:
         return annotated(
           result,
@@ -255,7 +275,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
         "recovery": .string(
           "No native input was dispatched. Read the current app/window list, observe the exact "
             + "PID/window with see, and use that new hex_observation_id for one background action."),
-      ]))
+      ]), executionOutcome: .completed)
   }
 
   private func uncertain(_ call: ToolCall) -> ToolResult {
@@ -272,7 +292,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
 
   private func annotated(
     _ result: ToolResult, metadata: [String: JSONValue], attention: Bool = false,
-    status: ToolResultStatus? = nil
+    status: ToolResultStatus? = nil, executionOutcome: ToolExecutionOutcome? = nil
   ) -> ToolResult {
     var output: [String: JSONValue]
     if case .object(let fields) = result.output {
@@ -285,6 +305,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
       toolCallID: result.toolCallID, status: status ?? result.status, output: .object(output),
       content: result.content, artifacts: result.artifacts,
       requiresUserAttention: attention || result.requiresUserAttention,
-      notExecutedReason: result.notExecutedReason)
+      notExecutedReason: result.notExecutedReason,
+      executionOutcome: executionOutcome ?? result.executionOutcome)
   }
 }
