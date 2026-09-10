@@ -3,7 +3,9 @@ import HexCore
 public struct WorkspaceWriteTextFileTool: HostTool, Sendable {
   public let definition = ToolDefinition(
     name: "workspace_write_text_file",
-    description: "Create or revision-guardedly replace one UTF-8 workspace file.",
+    description:
+      "Create or revision-guardedly replace one UTF-8 workspace file. "
+      + "The parent directory must already exist; create missing directories first.",
     inputSchema: HostToolSchema.object(
       properties: [
         "path": HostToolSchema.string(

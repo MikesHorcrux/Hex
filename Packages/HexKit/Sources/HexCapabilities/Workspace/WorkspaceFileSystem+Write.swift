@@ -2,6 +2,15 @@ import Darwin
 import Foundation
 
 extension WorkspaceFileSystem {
+  // Validate using the same descriptor traversal as publication, without creating anything.
+  // Publication still reopens and validates the parent; this is not a race-proof write permit.
+  func validateWriteParent(at path: String, relativeTo workingDirectory: URL?) throws {
+    let components = try combinedComponents(path: path, workingDirectory: workingDirectory)
+    guard !components.isEmpty else { throw WorkspaceFileSystemError.invalidPath }
+    let descriptor = try openDirectory(components: Array(components.dropLast()))
+    Darwin.close(descriptor)
+  }
+
   public func writeTextFile(
     _ content: String,
     at path: String,

@@ -436,6 +436,75 @@ struct CodingWorkflowTests {
     }
   }
 
+  @Test func missingLegacyWriteParentIsRecoverableBeforeAnyPatchReceipt() async throws {
+    try await fixture { f in
+      let base = WorkspaceWriteTextFileTool(fileSystem: f.files)
+      let tool = CodingLegacyWriteTool(base: base, manager: f.coding, sessions: f.manager)
+      let call = ToolCall(
+        name: base.definition.name,
+        arguments: ["path": .string("new-project/index.html"), "content": .string("hello")])
+      _ = try await tool.authorizationRequest(for: call, in: f.context)
+      let result = try await tool.execute(call, in: f.context)
+      #expect(result.status == .failure)
+      #expect(!result.requiresUserAttention)
+      #expect(result.executionOutcome == .completed)
+      #expect(result.notExecutedReason == nil)
+      let receiptID = "\(f.context.runID.rawValue.uuidString):\(call.id.rawValue)"
+      #expect(try await f.journal.codingPatch(receiptID) == nil)
+      #expect(try await f.journal.codingGeneration(f.scope.taskID) == 0)
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: f.workspace.appendingPathComponent("new-project").path))
+      try FileManager.default.createDirectory(
+        at: f.workspace.appendingPathComponent("new-project"), withIntermediateDirectories: false)
+      _ = try await tool.authorizationRequest(for: call, in: f.context)
+      #expect(try await tool.execute(call, in: f.context).status == .success)
+      #expect(try await f.journal.codingGeneration(f.scope.taskID) == 1)
+      #expect(
+        try String(
+          contentsOf: f.workspace.appendingPathComponent("new-project/index.html"),
+          encoding: .utf8) == "hello")
+    }
+  }
+
+  @Test func legacyFailureAfterWriterDispatchStillRequiresReconciliation() async throws {
+    try await fixture { f in
+      let base = PublishedFailureTool(base: WorkspaceWriteTextFileTool(fileSystem: f.files))
+      let tool = CodingLegacyWriteTool(base: base, manager: f.coding, sessions: f.manager)
+      let call = ToolCall(
+        name: base.definition.name,
+        arguments: ["path": .string("published.txt"), "content": .string("published")])
+      _ = try await tool.authorizationRequest(for: call, in: f.context)
+      let result = try await tool.execute(call, in: f.context)
+      #expect(result.requiresUserAttention)
+      #expect(result.executionOutcome == nil)
+      let receiptID = "\(f.context.runID.rawValue.uuidString):\(call.id.rawValue)"
+      let receipt = try #require(try await f.journal.codingPatch(receiptID))
+      #expect(receipt.state == "partial")
+      #expect(receipt.files.first?.state == "unknown")
+      #expect(
+        try String(
+          contentsOf: f.workspace.appendingPathComponent("published.txt"),
+          encoding: .utf8) == "published")
+    }
+  }
+
+  private struct PublishedFailureTool: HostTool {
+    let base: WorkspaceWriteTextFileTool
+    var definition: ToolDefinition { base.definition }
+    func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext) async throws
+      -> AuthorizationRequest
+    {
+      try await base.authorizationRequest(for: call, in: context)
+    }
+    func execute(_ call: ToolCall, in context: ToolExecutionContext) async throws -> ToolResult {
+      _ = try await base.execute(call, in: context)
+      return ToolResult(
+        toolCallID: call.id, status: .failure,
+        output: .object(["error": .string("not_found")]))
+    }
+  }
+
   @Test func legacyWritesAlsoAdvanceCodingReceiptsAndCancelledTasksCannotStart() async throws {
     try await fixture { f in
       let base = WorkspaceWriteTextFileTool(fileSystem: f.files)

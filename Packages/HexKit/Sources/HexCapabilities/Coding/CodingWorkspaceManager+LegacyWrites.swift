@@ -21,39 +21,19 @@ extension CodingWorkspaceManager {
     }
     try await baseline(scope)
     _ = try await store().codingGeneration(scope.taskID)
-    let arguments = try ToolCallArguments(
-      call.arguments,
-      allowedNames: [
-        "path", "content", "expected_revision", "old_text", "new_text", "expected_occurrences",
-      ])
-    let path = try arguments.requiredString(named: "path", maximumBytes: 4_096)
-    let expected = try arguments.optionalString(named: "expected_revision", maximumBytes: 64)
-    let old: WorkspaceTextFile?
-    if let expected {
-      old = try await fileSystem.readTextFile(at: path, relativeTo: workspace)
-      guard old?.revision == expected else { throw WorkspaceFileSystemError.revisionConflict }
-    } else {
-      do {
-        _ = try await fileSystem.readTextFile(at: path, relativeTo: workspace)
-        throw WorkspaceFileSystemError.destinationExists
-      } catch WorkspaceFileSystemError.notFound { old = nil }
+    let plan: (path: String, expected: String?, old: WorkspaceTextFile?, proposed: String)
+    do {
+      plan = try await legacyWritePlan(call)
+    } catch {
+      // Only this read-only preflight can produce a known refusal. Failures after the
+      // durable patch intent or base writer begins retain their partial/unknown boundary.
+      let result = try WorkspaceToolResult.failure(error, callID: call.id)
+      return ToolResult(
+        toolCallID: call.id, status: result.status, output: result.output,
+        content: result.content, artifacts: result.artifacts,
+        requiresUserAttention: result.requiresUserAttention, executionOutcome: .completed)
     }
-    let proposed: String
-    if call.name == "workspace_write_text_file" {
-      proposed = try arguments.requiredString(
-        named: "content", maximumBytes: 1_048_576, allowsEmpty: true)
-    } else {
-      guard call.name == "workspace_replace_text", let old else {
-        throw WorkspacePatchError.invalidPatch
-      }
-      proposed = try BoundedTextReplacement.build(
-        source: old.content,
-        replacing: arguments.requiredString(named: "old_text", maximumBytes: 1_048_576),
-        with: arguments.requiredString(
-          named: "new_text", maximumBytes: 1_048_576, allowsEmpty: true),
-        expectedOccurrences: arguments.requiredInteger(
-          named: "expected_occurrences", range: 1...10_000), maximumBytes: 1_048_576)
-    }
+    let (path, expected, old, proposed) = plan
     let metadata = ArtifactMetadata(
       runID: context.runID, toolCallID: call.id, mediaType: "text/plain")
     let before: ArtifactReference?
@@ -91,5 +71,44 @@ extension CodingWorkspaceManager {
       try await store().saveCodingPatch(receipt)
       throw error
     }
+  }
+  private func legacyWritePlan(_ call: ToolCall) async throws
+    -> (path: String, expected: String?, old: WorkspaceTextFile?, proposed: String)
+  {
+    let arguments = try ToolCallArguments(
+      call.arguments,
+      allowedNames: [
+        "path", "content", "expected_revision", "old_text", "new_text", "expected_occurrences",
+      ])
+    let path = try arguments.requiredString(named: "path", maximumBytes: 4_096)
+    try await fileSystem.validateWriteParent(at: path, relativeTo: workspace)
+    let expected = try arguments.optionalString(named: "expected_revision", maximumBytes: 64)
+    let old: WorkspaceTextFile?
+    if let expected {
+      old = try await fileSystem.readTextFile(at: path, relativeTo: workspace)
+      guard old?.revision == expected else { throw WorkspaceFileSystemError.revisionConflict }
+    } else {
+      do {
+        _ = try await fileSystem.readTextFile(at: path, relativeTo: workspace)
+        throw WorkspaceFileSystemError.destinationExists
+      } catch WorkspaceFileSystemError.notFound { old = nil }
+    }
+    let proposed: String
+    if call.name == "workspace_write_text_file" {
+      proposed = try arguments.requiredString(
+        named: "content", maximumBytes: 1_048_576, allowsEmpty: true)
+    } else {
+      guard call.name == "workspace_replace_text", let old else {
+        throw WorkspacePatchError.invalidPatch
+      }
+      proposed = try BoundedTextReplacement.build(
+        source: old.content,
+        replacing: arguments.requiredString(named: "old_text", maximumBytes: 1_048_576),
+        with: arguments.requiredString(
+          named: "new_text", maximumBytes: 1_048_576, allowsEmpty: true),
+        expectedOccurrences: arguments.requiredInteger(
+          named: "expected_occurrences", range: 1...10_000), maximumBytes: 1_048_576)
+    }
+    return (path, expected, old, proposed)
   }
 }
