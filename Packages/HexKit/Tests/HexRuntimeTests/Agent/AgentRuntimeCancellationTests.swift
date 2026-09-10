@@ -4,6 +4,61 @@ import Testing
 
 @Suite("AgentRuntime cancellation")
 struct AgentRuntimeCancellationTests {
+  @Test(arguments: [false, true])
+  func boundaryStopCancelsIdleInferenceWithoutWaitingForProviderCompletion(opening: Bool) async {
+    let provider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(), models: [RuntimeTestFixture.model()],
+      scripts: [opening ? .suspendOpening : .suspend])
+    let journal = RecordingEventJournal()
+    let executor = ScriptedToolExecutor(tools: [])
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider, executor: executor, journal: journal)
+    let request = RuntimeTestFixture.request()
+    let task = Task { try await runtime.run(request) }
+    await waitUntil { await provider.requests().count == 1 }
+    await runtime.stopAtBoundary(request.runID)
+    for _ in 0..<200 {
+      if await journal.events().contains(where: {
+        if case .runCancelled = $0 { true } else { false }
+      }) {
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    let events = await journal.events()
+    #expect(events.contains { if case .runCancelled = $0 { true } else { false } })
+    #expect(!events.contains { if case .runFailed = $0 { true } else { false } })
+    #expect(await executor.calls().isEmpty)
+    task.cancel()  // Bound cleanup even when this regression fails.
+    await expectCancellation(task)
+  }
+
+  @Test
+  func boundaryStopWaitsForDispatchedToolReceiptBeforeStopping() async {
+    let call = ToolCall(id: ToolCallID(rawValue: "boundary-receipt"), name: "echo", arguments: [:])
+    let provider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(), models: [RuntimeTestFixture.model()],
+      scripts: [.events(RuntimeTestFixture.toolEvents([call]))])
+    let journal = RecordingEventJournal(blockOn: .toolFinished)
+    let executor = ScriptedToolExecutor(tools: [RuntimeTestFixture.tool()])
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider, executor: executor, journal: journal)
+    let request = RuntimeTestFixture.request()
+    let task = Task { try await runtime.run(request) }
+    await waitUntil { await journal.isBlocked() }
+    await runtime.stopAtBoundary(request.runID)
+    #expect(
+      !(await journal.events()).contains { if case .runCancelled = $0 { true } else { false } })
+    await journal.releaseBlockedAppend()
+    await expectCancellation(task)
+    let events = await journal.events()
+    let finished = events.firstIndex { if case .toolFinished = $0 { true } else { false } }
+    let cancelled = events.firstIndex { if case .runCancelled = $0 { true } else { false } }
+    #expect(finished != nil && cancelled != nil)
+    if let finished, let cancelled { #expect(finished < cancelled) }
+    #expect(await executor.calls().count == 1)
+  }
+
   @Test
   func cancellationDuringInferenceJournalsRunCancelled() async {
     let provider = ScriptedInferenceProvider(

@@ -5,6 +5,25 @@ extension AgentRuntime {
   public func stopAtBoundary(_ runID: AgentRunID) {
     boundaryStops.insert(runID)
     boundaryAuthorizations[runID]?.cancel()
+    boundaryInferences[runID]?()
+  }
+
+  /// Provider generation has no tool side effects. Stop and join only that work, leaving
+  /// already-dispatched tools under the existing receipt-preserving boundary protocol.
+  func inferenceAtBoundary<Result: Sendable>(
+    _ runID: AgentRunID, operation: @escaping @Sendable () async throws -> Result
+  ) async throws -> Result {
+    try checkBoundaryStop(runID)
+    let task = Task { try await operation() }
+    boundaryInferences[runID] = { task.cancel() }
+    defer { boundaryInferences.removeValue(forKey: runID) }
+    return try await withTaskCancellationHandler {
+      let result = try await task.value
+      try checkBoundaryStop(runID)
+      return result
+    } onCancel: {
+      task.cancel()
+    }
   }
 
   func authorizeAtBoundary(_ request: AuthorizationRequest) async throws -> AuthorizationDecision {

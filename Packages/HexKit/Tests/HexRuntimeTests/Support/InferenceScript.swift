@@ -7,4 +7,5 @@ enum InferenceScript: Sendable {
   case streamFailure
   case streamRuntimeFailure
   case suspend
+  case suspendOpening
 }

@@ -6,6 +6,41 @@ import Testing
 @Suite("Automatic runtime compaction")
 struct AgentRuntimeCompactionTests {
   @Test
+  func boundaryStopCancelsASummaryAndKeepsOriginalHistory() async {
+    let original = history()
+    let provider = provider(scripts: [.suspend])
+    let journal = RecordingEventJournal()
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider, executor: ScriptedToolExecutor(tools: []), journal: journal)
+    let request = RuntimeTestFixture.request(messages: original)
+    let task = Task { try await runtime.run(request) }
+    for _ in 0..<200 {
+      if await provider.requests().count == 1 { break }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await provider.requests().count == 1)
+    await runtime.stopAtBoundary(request.runID)
+    for _ in 0..<200 {
+      if await journal.events().contains(where: {
+        if case .runCancelled = $0 { true } else { false }
+      }) {
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    let events = await journal.events()
+    #expect(events.contains { if case .contextCompactionStarted = $0 { true } else { false } })
+    #expect(events.contains { if case .runCancelled = $0 { true } else { false } })
+    #expect(!events.contains { if case .contextCompacted = $0 { true } else { false } })
+    #expect(original.allSatisfy { events.contains(.messageAppended($0)) })
+    task.cancel()
+    do {
+      _ = try await task.value
+      Issue.record("Expected summary cancellation")
+    } catch is CancellationError {} catch { Issue.record("Unexpected error: \(error)") }
+  }
+
+  @Test
   func priorLargeExchangeUsesBoundedSummaryBatchesBeforeResumingTheNewRequest() async throws {
     let batches = (0..<5).flatMap { index -> [Message] in
       let call = ToolCall(name: "inspect", arguments: [:])

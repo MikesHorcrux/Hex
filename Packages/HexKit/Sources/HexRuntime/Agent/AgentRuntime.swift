@@ -10,6 +10,7 @@ public actor AgentRuntime {
   let contextSummarizer: any AgentContextSummarizing
   let artifactWriter: (any ArtifactWriting)?
   var boundaryAuthorizations: [AgentRunID: Task<AuthorizationDecision, any Error>] = [:]
+  var boundaryInferences: [AgentRunID: @Sendable () -> Void] = [:]
   var boundaryStops: Set<AgentRunID> = []
   var runArtifacts: [AgentRunID: [ArtifactReference]] = [:]
   // Immutable for each run: changing an earlier host message would invalidate provider replay.
