@@ -13,11 +13,13 @@ import HexPersonality
 public struct PersonalMemoryToolExecutor: ToolExecutor, Sendable {
   private static let maximumResults = 64
   private let executor: HostToolExecutor
+  private let boundScope: PersonalMemoryScope
 
   public init(
     memoryStore: any PersonalMemoryStore,
     scope: PersonalMemoryScope
   ) throws {
+    boundScope = scope
     let context = MemoryContext(
       memoryStore: memoryStore,
       scope: scope,
@@ -39,7 +41,19 @@ public struct PersonalMemoryToolExecutor: ToolExecutor, Sendable {
     for call: ToolCall,
     in context: ToolExecutionContext
   ) async throws -> AuthorizationRequest {
-    try await executor.authorizationRequest(for: call, in: context)
+    do {
+      return try await executor.authorizationRequest(for: call, in: context)
+    } catch ToolError.invalidArguments {
+      throw ToolCallValidationError(
+        recovery:
+          "Check the memory tool schema and required arguments. No memory operation was dispatched."
+      )
+    } catch ToolError.scopeMismatch {
+      throw ToolCallValidationError(
+        recovery:
+          "Use the current host-bound memory scope \(boundScope.rawValue). No memory operation was dispatched."
+      )
+    }
   }
 
   public func execute(

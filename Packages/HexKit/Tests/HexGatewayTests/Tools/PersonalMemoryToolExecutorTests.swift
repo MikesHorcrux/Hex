@@ -7,6 +7,26 @@ import Testing
 @Suite("Personal memory tool executor")
 struct PersonalMemoryToolExecutorTests {
   @Test
+  func wrongScopeIsRecoverableBeforeAuthorizationAndDoesNotGrantExecution() async throws {
+    let scope = try PersonalMemoryScope(rawValue: "hex")
+    let store = try VolatilePersonalMemoryStore()
+    let executor = try PersonalMemoryToolExecutor(memoryStore: store, scope: scope)
+    let context = Self.context(runID: "00000000-0000-0000-0000-000000000020")
+    let wrong = Self.call(
+      id: "list", name: "personal_memory_list", arguments: ["scope": .string("default")])
+    await #expect(throws: ToolCallValidationError.self) {
+      _ = try await executor.authorizationRequest(for: wrong, in: context)
+    }
+    let corrected = Self.call(
+      id: "list", name: "personal_memory_list", arguments: ["scope": .string("hex")])
+    let unapproved = try await executor.execute(corrected, in: context)
+    #expect(unapproved.status == .failure)
+    _ = try await executor.authorizationRequest(for: corrected, in: context)
+    let result = try await executor.execute(corrected, in: context)
+    #expect(result.status == .success)
+  }
+
+  @Test
   func publishesBoundedToolsAndSupportsExplicitScopedRoundTrip() async throws {
     let scope = try PersonalMemoryScope(rawValue: "hex")
     let store = try VolatilePersonalMemoryStore()
