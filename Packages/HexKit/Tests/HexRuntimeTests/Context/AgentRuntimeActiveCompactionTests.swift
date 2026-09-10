@@ -6,6 +6,47 @@ import Testing
 @Suite("Active tool-loop compaction")
 struct AgentRuntimeActiveCompactionTests {
   @Test
+  func resumableHistoryBeyondTwoMiBCompactsBeforeInferenceWithoutLosingTheNewRequest() async throws
+  {
+    let calls = (0..<2).map { _ in ToolCall(name: "echo", arguments: [:]) }
+    let previous = Message(role: .user, content: [.text("Inspect the existing project.")])
+    let results = calls.map {
+      let result = ToolResult(
+        toolCallID: $0.id, status: .success,
+        output: .string(String(repeating: "evidence", count: 140_000)))
+      return Message(role: .tool, content: [.toolResult(result)])
+    }
+    let current = Message(role: .user, content: [.text("Now show me the finished project.")])
+    let messages =
+      [previous, Message(role: .assistant, content: calls.map(MessageContent.toolCall))]
+      + results + [current]
+    let encoded = try JSONEncoder().encode(messages)
+    #expect(encoded.count > 2_097_152)
+    #expect(encoded.count < AgentRunBudget.standard.maxConversationBytes)
+    let provider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(), models: [RuntimeTestFixture.model()],
+      scripts: [.events(RuntimeTestFixture.textEvents("Finished"))])
+    let journal = RecordingEventJournal()
+    let runtime = AgentRuntime(
+      inferenceProvider: provider, toolExecutor: ScriptedToolExecutor(tools: []),
+      authorizationProvider: ScriptedAuthorizationProvider(), journal: journal,
+      contextSummarizer: HistorySummary())
+    _ = try await runtime.run(RuntimeTestFixture.request(messages: messages))
+    let request = try #require(await provider.requests().first)
+    #expect(request.messages.contains(current))
+    #expect(!request.messages.contains(results[0]))
+    #expect(request.previousProviderResponseID == nil)
+    let events = await journal.events()
+    #expect(events.contains(.messageAppended(results[0])))
+    #expect(events.contains(.messageAppended(results[1])))
+    #expect(
+      events.contains {
+        if case .contextCompacted = $0 { return true }
+        return false
+      })
+  }
+
+  @Test
   func repeatedCompactionRetainsGoalAndStartsFreshProviderRequests() async throws {
     let calls = (0..<4).map { _ in ToolCall(id: ToolCallID(), name: "echo", arguments: [:]) }
     let provider = ScriptedInferenceProvider(
@@ -131,6 +172,15 @@ struct AgentRuntimeActiveCompactionTests {
       #expect(message.contains("image context cost"))
     }
     #expect(await provider.requests().isEmpty)
+  }
+
+  private struct HistorySummary: AgentContextSummarizing {
+    func summarize(_ request: AgentContextSummaryRequest) async throws -> AgentContextSummaryResult
+    {
+      AgentContextSummaryResult(
+        text: "The project was inspected; show the finished result.",
+        reportedTokens: 3, inferenceCalls: 1)
+    }
   }
 
   private struct FailingSummary: AgentContextSummarizing {

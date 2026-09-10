@@ -6,7 +6,7 @@ public struct AgentRunBudget: Codable, Equatable, Sendable {
     maxToolCalls: 128,
     maxDiscoveredTools: 256,
     maxProviderEventsPerTurn: 4_096,
-    maxInitialInputBytes: 2_097_152,
+    maxInitialInputBytes: 4_194_304,
     maxConversationBytes: 4_194_304,
     maxTextBytesPerTurn: 1_048_576,
     maxSerializedOutputBytesPerTurn: 2_097_152,
@@ -36,7 +36,8 @@ public struct AgentRunBudget: Codable, Equatable, Sendable {
     maxToolCalls: Int = 128,
     maxDiscoveredTools: Int = 256,
     maxProviderEventsPerTurn: Int = 4_096,
-    maxInitialInputBytes: Int = 2_097_152,
+    // Saved continuations must fit the same bounded envelope as an active conversation.
+    maxInitialInputBytes: Int = 4_194_304,
     maxConversationBytes: Int = 4_194_304,
     maxTextBytesPerTurn: Int = 1_048_576,
     maxSerializedOutputBytesPerTurn: Int = 2_097_152,

@@ -27,12 +27,20 @@ extension HexGatewayService {
       guard snapshot.terminalRecord != nil else {
         throw AgentTaskStorageError.invalidRecord
       }
+    } else if let failure = runs[runID]?.completionFailure {
+      // A driver can reject admission before runStarted is journaled. Its known failure
+      // is still a real stopping reason, not evidence of an interrupted execution.
+      // Preserve it in the task record below; do not manufacture execution journal events.
+      checkpoint.terminal = .runFailed(
+        AgentFailure(
+          code: .invalidState, message: failure.message, isRetryable: failure.isRetryable))
     }
+    // With no run journal, keep the original request before finish appends reconciliation.
+    if checkpoint.messages.isEmpty { checkpoint.messages = source.initialMessages }
     record.attemptPending = false
     if record.phase == .cancelling {
       do {
         try checkpoint.finish(reconciliation: nil)
-        if checkpoint.messages.isEmpty { checkpoint.messages = source.initialMessages }
         var artifacts = source.availableArtifacts
         for item in checkpoint.artifacts where !artifacts.contains(item) { artifacts.append(item) }
         record.request = try codec.encode(
@@ -49,7 +57,6 @@ extension HexGatewayService {
     } else {
       do {
         try checkpoint.finish(reconciliation: record.reconciliation)
-        if checkpoint.messages.isEmpty { checkpoint.messages = source.initialMessages }
         var artifacts = source.availableArtifacts
         for item in checkpoint.artifacts where !artifacts.contains(item) { artifacts.append(item) }
         record.request = try codec.encode(

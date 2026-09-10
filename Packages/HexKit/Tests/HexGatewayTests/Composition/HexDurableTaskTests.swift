@@ -2,12 +2,72 @@ import Foundation
 import HexCore
 import HexIPC
 import HexPersistence
+import HexRuntime
 import Testing
 
 @testable import HexGatewayKit
 
 @Suite("Durable task execution")
 struct HexDurableTaskTests {
+  @Test
+  func nonretryablePreflightFailureIsPreservedWithoutInventingInterruptions() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let configuration = HexGatewayCompositionConfiguration(
+      journalConfiguration: .init(databaseURL: directory.appendingPathComponent("journal.sqlite")),
+      inferenceProvider: GatewayTestInferenceProvider(), toolExecutor: GatewayTestToolExecutor(),
+      authorizationProvider: GatewayTestAuthorizationProvider(),
+      runtimeConfiguration: .init(budget: try AgentRunBudget(maxInitialInputBytes: 128)))
+    let composition = try await HexGatewayComposition.open(configuration: configuration)
+    let session = try await composition.service.handshake(.init(clientID: GatewayClientID()))
+      .sessionID
+    let id = UUID()
+    let request = GatewayStartRunRequest(
+      runID: AgentRunID(), modelID: GatewayTestInferenceProvider().modelID,
+      initialMessages: [
+        Message(role: .user, content: [.text(String(repeating: "large", count: 100))])
+      ],
+      toolChoice: .none)
+    _ = try await composition.service.taskOperation(
+      .submit(id: id, title: "preflight failure", request: request), sessionID: session)
+    let blocked = try await wait(id, phase: .blocked, composition, session)
+    #expect(blocked.attemptCount == 1)
+    #expect(blocked.retryCount == 0)
+    #expect(blocked.explanation.contains("Initial input byte budget exceeded"))
+    try await composition.close()
+    let reopened = try await HexGatewayComposition.open(
+      configuration: .init(
+        journalConfiguration: .init(
+          databaseURL: directory.appendingPathComponent("journal.sqlite")),
+        inferenceProvider: GatewayTestInferenceProvider(), toolExecutor: GatewayTestToolExecutor(),
+        authorizationProvider: GatewayTestAuthorizationProvider()))
+    let newSession = try await reopened.service.handshake(.init(clientID: GatewayClientID()))
+      .sessionID
+    let persisted = try await read(id, reopened, newSession)
+    #expect(persisted.phase == .blocked)
+    #expect(persisted.attemptCount == 1)
+    #expect(persisted.explanation == blocked.explanation)
+    _ = try await reopened.service.taskOperation(
+      .control(
+        id: id, revision: persisted.revision, operationID: UUID(),
+        action: .reconcile("Continue the original request now.")), sessionID: newSession)
+    let done = try await wait(id, phase: .completed, reopened, newSession)
+    #expect(done.attemptCount == 2)
+    let runID = try #require(done.runID)
+    let events = try await reopened.journal.records(for: runID, after: nil, limit: 100).map(\.event)
+    #expect(events.contains(.messageAppended(request.initialMessages[0])))
+    #expect(
+      events.contains { event in
+        guard case .messageAppended(let message) = event else { return false }
+        return message.role == .user
+          && message.content.contains(
+            .text(
+              "My reconciliation decision for the interrupted attempt: Continue the original request now."
+            ))
+      })
+    try await reopened.close()
+  }
+
   @Test
   func busyWorkQueuesAndPauseDrainsBeforeContinuation() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
