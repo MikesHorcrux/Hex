@@ -50,6 +50,8 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       authorizationProvider: authorizationProvider,
       journal: eventJournal,
       configuration: runtimeConfiguration,
+      contextEstimator: ConservativeAgentContextTokenEstimator(
+        imageTokenUpperBounds: HexGatewayImageTokenBounds.documented),
       artifactWriter: artifactWriter
     )
     operatingContractMessage = HexAgentOperatingContract().message

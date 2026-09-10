@@ -33,8 +33,10 @@ public struct ConservativeAgentContextTokenEstimator: AgentContextTokenEstimatin
     }
     guard allowance > 0 else { throw AgentContextPlanningError.invalidEstimate }
     let (media, overflow) = allowance.multipliedReportingOverflow(by: count)
-    let (total, additionOverflow) = try estimateSerializedTokens(message, framing: 16)
-      .addingReportingOverflow(media)
+    let (total, additionOverflow) = try estimateSerializedTokens(
+      textCostProjection(message), framing: 16
+    )
+    .addingReportingOverflow(media)
     guard !overflow, !additionOverflow else { throw AgentContextPlanningError.arithmeticOverflow }
     return total
   }
@@ -60,6 +62,35 @@ public struct ConservativeAgentContextTokenEstimator: AgentContextTokenEstimatin
 
   public func estimateTokens(in tool: ToolDefinition) throws -> Int {
     try estimateSerializedTokens(tool, framing: 8)
+  }
+
+  /// Inline image bytes are decoded as media by the provider, not tokenized as Base64 prose.
+  /// This projection is used only for estimation; the original messages and receipts are unchanged.
+  private func textCostProjection(_ message: Message) -> Message {
+    Message(
+      id: message.id, role: message.role,
+      content: message.content.map { content in
+        switch content {
+        case .image(let image): return .image(imageCostProjection(image))
+        case .toolResult(let result):
+          return .toolResult(
+            ToolResult(
+              toolCallID: result.toolCallID, status: result.status, output: result.output,
+              content: result.content.map { part in
+                if case .image(let image) = part { return .image(imageCostProjection(image)) }
+                return part
+              }, artifacts: result.artifacts, requiresUserAttention: result.requiresUserAttention,
+              notExecutedReason: result.notExecutedReason, executionOutcome: result.executionOutcome
+            ))
+        case .text, .toolCall: return content
+        }
+      })
+  }
+
+  private func imageCostProjection(_ image: ImageContent) -> ImageContent {
+    guard image.sourceURL.scheme == "data" else { return image }
+    return ImageContent(
+      sourceURL: URL(fileURLWithPath: "/encoded-image"), mediaType: image.mediaType)
   }
 
   private func estimateSerializedTokens(_ value: some Encodable, framing: Int) throws -> Int {
