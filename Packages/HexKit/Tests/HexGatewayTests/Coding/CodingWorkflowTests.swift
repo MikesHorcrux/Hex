@@ -341,7 +341,35 @@ struct CodingWorkflowTests {
       #expect(!page.session.cleanupConfirmed)
       #expect(page.data == Data("saved prefix".utf8))
       #expect(await f.manager.live.isEmpty)
-      try await f.manager.acknowledgeTask(f.scope.taskID, operationID: UUID())
+      let read = try ProcessSessionTool(manager: f.manager, action: "read")
+      let before = ToolCall(
+        name: "process_read", arguments: ["session_id": .string(saved.id.uuidString)])
+      _ = try await read.authorizationRequest(for: before, in: f.context)
+      #expect(try await read.execute(before, in: f.context).requiresUserAttention)
+      let decision = UUID()
+      try await f.manager.acknowledgeTask(f.scope.taskID, operationID: decision)
+      let after = ToolCall(
+        name: "process_read", arguments: ["session_id": .string(saved.id.uuidString)])
+      _ = try await read.authorizationRequest(for: after, in: f.context)
+      let result = try await read.execute(after, in: f.context)
+      #expect(result.status == .success)
+      #expect(!result.requiresUserAttention)
+      let output = try JSONDecoder().decode(
+        [String: JSONValue].self, from: JSONEncoder().encode(result.output))
+      #expect(output["text"] == .string("saved prefix"))
+      let session = try JSONDecoder().decode(
+        ProcessSessionRecord.self, from: JSONEncoder().encode(try #require(output["session"])))
+      #expect(session.phase == "interrupted")
+      #expect(!session.cleanupConfirmed)
+      #expect(session.reconciliationID == decision)
+      await #expect(throws: ProcessSessionError.revisionConflict) {
+        _ = try await f.manager.command(
+          .init(
+            sessionID: saved.id, operationID: UUID().uuidString, expectedSequence: 0,
+            action: .input, data: Data("never replay\n".utf8)),
+          conversationID: f.scope.conversationID)
+      }
+      #expect(await f.manager.live.isEmpty)
       try await f.manager.finishTask(f.scope.taskID, cancelled: true)
       #expect(try await f.journal.processSession(saved.id)?.cleanupConfirmed == false)
     }

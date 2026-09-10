@@ -141,7 +141,10 @@ public struct ProcessSessionTool: HostTool {
       }
       return ToolResult(
         toolCallID: call.id, status: .success, output: output,
-        requiresUserAttention: page.session.terminal && !page.session.cleanupConfirmed)
+        // A durable user reconciliation already acknowledged this old session's uncertainty.
+        // Reading it preserves that evidence and must not demand the same decision again.
+        requiresUserAttention: page.session.terminal && !page.session.cleanupConfirmed
+          && page.session.reconciliationID == nil)
     }
     let commandAction: ProcessSessionCommand.Action
     if action == "input" {
