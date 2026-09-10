@@ -6,6 +6,30 @@ import Testing
 
 @Suite("Durable task mutation guard")
 struct HexTaskGuardedToolExecutorTests {
+  @Test(
+    arguments: [
+      "mac.accessibility.read", "mac.screen.observe", "browser.session.observe",
+      "process.session.read", "mcp.tool.execute", "mac.accessibility.control",
+    ], [false, true])
+  func failedQualifiedReadsAreKnownWithoutSuppressingAttention(
+    capability: String, attention: Bool
+  ) async throws {
+    let output: JSONValue = .object(["dispatched": .boolean(false)])
+    let base = CountingTool(
+      capability: capability, requiresUserAttention: attention, fails: true, output: output)
+    let executor = HexTaskGuardedToolExecutor(base: base, effects: nil)
+    let call = ToolCall(name: "fixture", arguments: [:])
+    let context = ToolExecutionContext(runID: AgentRunID())
+    _ = try await executor.authorizationRequest(for: call, in: context)
+    let result = try await executor.execute(call, in: context)
+    let qualified = capability != "mcp.tool.execute" && capability != "mac.accessibility.control"
+    #expect(result.executionOutcome == (qualified ? .completed : nil))
+    #expect(result.requiresUserAttention == attention)
+    #expect(result.status == .failure)
+    #expect(result.output == output)
+    #expect(await base.executions == 1)
+  }
+
   @Test(arguments: [
     "window-list", "snapshot", "window-focus", "foreground", "output-path", "other-server",
   ])
@@ -225,15 +249,19 @@ struct HexTaskGuardedToolExecutorTests {
     let capability: String
     let operation: String
     let requiresUserAttention: Bool
+    let fails: Bool
+    let output: JSONValue
     var authorizations = 0
     var executions = 0
     init(
       capability: String = "workspace.write", operation: String = "write",
-      requiresUserAttention: Bool = false
+      requiresUserAttention: Bool = false, fails: Bool = false, output: JSONValue = .string("done")
     ) {
       self.capability = capability
       self.operation = operation
       self.requiresUserAttention = requiresUserAttention
+      self.fails = fails
+      self.output = output
     }
     func availableTools() -> [ToolDefinition] { [] }
     func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
@@ -248,8 +276,8 @@ struct HexTaskGuardedToolExecutorTests {
     func execute(_ call: ToolCall, in context: ToolExecutionContext) -> ToolResult {
       executions += 1
       return ToolResult(
-        toolCallID: call.id, status: requiresUserAttention ? .failure : .success,
-        output: .string("done"), requiresUserAttention: requiresUserAttention)
+        toolCallID: call.id, status: requiresUserAttention || fails ? .failure : .success,
+        output: output, requiresUserAttention: requiresUserAttention)
     }
   }
 }

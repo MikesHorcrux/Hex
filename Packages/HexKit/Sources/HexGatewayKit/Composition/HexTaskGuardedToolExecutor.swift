@@ -87,6 +87,16 @@ actor HexTaskGuardedToolExecutor: ToolExecutor {
         ]), requiresUserAttention: !completed,
         executionOutcome: completed ? .completed : nil)
     }
-    return try await base.execute(call, in: context)
+    let result = try await base.execute(call, in: context)
+    // A returned failure from a host-qualified read is a known observation outcome, not
+    // evidence of an unknown mutation. Keep explicit attention and nonexecution metadata;
+    // arbitrary MCP hints or a claimed dispatched:false field cannot grant this status.
+    guard readCapabilities.contains(capability.rawValue), result.toolCallID == call.id,
+      result.status == .failure, result.executionOutcome == nil, result.notExecutedReason == nil
+    else { return result }
+    return ToolResult(
+      toolCallID: result.toolCallID, status: result.status, output: result.output,
+      content: result.content, artifacts: result.artifacts,
+      requiresUserAttention: result.requiresUserAttention, executionOutcome: .completed)
   }
 }
