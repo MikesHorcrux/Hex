@@ -87,6 +87,14 @@ public actor ProcessSessionManager: ProcessSessionControlling {
         // An explicit reconciliation clears this old generation for a fresh, separately
         // authorized call. Preserve its unknown outcome; acknowledgement never replays it.
         if record.terminal && record.reconciliationID != nil { continue }
+        // A retained preview may be explicitly stopped without changing its source. A
+        // fresh authorized call can restart it only after the supervisor confirms cleanup.
+        // The original call above still returns its old receipt, never a second process.
+        if retained && record.retained && record.phase == "exited" && record.cleanupConfirmed
+          && record.explanation == "stopped"
+        {
+          continue
+        }
         guard record.phase == "exited", record.cleanupConfirmed, generation > record.editGeneration
         else {
           throw ProcessSessionError.operationConflict

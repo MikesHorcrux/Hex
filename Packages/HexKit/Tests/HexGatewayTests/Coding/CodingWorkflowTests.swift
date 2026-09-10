@@ -73,21 +73,32 @@ struct CodingWorkflowTests {
         at: directory.deletingLastPathComponent().appendingPathComponent(
           directory.lastPathComponent + "-transactions"))
     }
-    func start(_ executable: String, _ arguments: [String], tty: Bool = false) async throws
+    func start(
+      _ executable: String, _ arguments: [String], tty: Bool = false, retained: Bool = false,
+      callID: ToolCallID = ToolCallID()
+    ) async throws
       -> ProcessSessionRecord
     {
+      let result = try await startResult(
+        executable, arguments, tty: tty, retained: retained, callID: callID)
+      return try JSONDecoder().decode(
+        ProcessSessionRecord.self, from: JSONEncoder().encode(result.output))
+    }
+    func startResult(
+      _ executable: String, _ arguments: [String], tty: Bool = false, retained: Bool = false,
+      callID: ToolCallID = ToolCallID()
+    ) async throws -> ToolResult {
       let tool = try ProcessStartTool(manager: manager)
       let call = ToolCall(
-        name: "process_start",
+        id: callID, name: "process_start",
         arguments: [
           "executable": .string(executable),
           "arguments": .array(arguments.map(JSONValue.string)),
           "transport": .string(tty ? "pty" : "pipe"), "timeout_seconds": .integer(20),
+          "lifetime": .string(retained ? "retained" : "task"),
         ])
       _ = try await tool.authorizationRequest(for: call, in: context)
-      let result = try await tool.execute(call, in: context)
-      return try JSONDecoder().decode(
-        ProcessSessionRecord.self, from: JSONEncoder().encode(result.output))
+      return try await tool.execute(call, in: context)
     }
     func wait(_ id: UUID, contains text: String? = nil) async throws -> ProcessSessionPage {
       let deadline = Date().addingTimeInterval(10)
@@ -123,6 +134,18 @@ struct CodingWorkflowTests {
       try? await f.close()
       throw error
     }
+  }
+
+  func expectStartConflict(_ result: ToolResult) {
+    #expect(result.status == .failure)
+    #expect(!result.requiresUserAttention)
+    #expect(result.notExecutedReason == nil)
+    guard case .object(let output) = result.output else {
+      Issue.record("Expected a structured preflight rejection")
+      return
+    }
+    #expect(output["dispatched"] == .boolean(false))
+    #expect(output["error"] == .string("process_operation_conflict"))
   }
 
   @Test func pipeInputIsExactlyOnceAndReadersHaveIndependentCursors() async throws {
@@ -191,9 +214,8 @@ struct CodingWorkflowTests {
         "old\n", at: "source.txt", expectedRevision: nil, relativeTo: f.workspace)
       let first = try await f.start("/bin/cat", ["source.txt"])
       #expect(try await f.wait(first.id).session.exitCode == 0)
-      await #expect(throws: ProcessSessionError.operationConflict) {
-        try await f.start("/bin/cat", ["source.txt"])
-      }
+      let rejected = try await f.startResult("/bin/cat", ["source.txt"])
+      expectStartConflict(rejected)
       let receipt = try await f.patch(
         "--- a/source.txt\n+++ b/source.txt\n@@ -1 +1 @@\n-old\n+new\n",
         revisions: ["source.txt": old.revision])
@@ -202,6 +224,70 @@ struct CodingWorkflowTests {
       let output = try await f.wait(next.id)
       #expect(String(decoding: output.data, as: UTF8.self) == "new\n")
       #expect(next.editGeneration == 1)
+    }
+  }
+
+  @Test func confirmedStopAllowsFreshRetainedStartWithoutEditingOrReplaying() async throws {
+    try await fixture { f in
+      let callID = ToolCallID()
+      let first = try await f.start("/bin/cat", [], retained: true, callID: callID)
+      expectStartConflict(try await f.startResult("/bin/cat", [], retained: true))
+      #expect(
+        try await f.journal.processSessions(
+          conversationID: f.scope.conversationID, before: nil, limit: 100
+        ).count == 1)
+      _ = try await f.manager.command(
+        .init(
+          sessionID: first.id, operationID: UUID().uuidString, expectedSequence: 0, action: .stop),
+        conversationID: f.scope.conversationID)
+      let stopped = try await f.wait(first.id)
+      #expect(stopped.session.cleanupConfirmed)
+      #expect(stopped.session.explanation == "stopped")
+      let replay = try await f.start("/bin/cat", [], retained: true, callID: callID)
+      #expect(replay.id == first.id)
+      #expect(replay.terminal)
+      let next = try await f.start("/bin/cat", [], retained: true)
+      #expect(next.id != first.id)
+      #expect(next.editGeneration == first.editGeneration)
+      expectStartConflict(try await f.startResult("/bin/cat", [], retained: true))
+      #expect(
+        try await f.journal.processSessions(
+          conversationID: f.scope.conversationID, before: nil, limit: 100
+        ).count == 2)
+      _ = try await f.manager.command(
+        .init(
+          sessionID: next.id, operationID: UUID().uuidString, expectedSequence: 0, action: .input,
+          data: Data("restarted\n".utf8)), conversationID: f.scope.conversationID)
+      #expect(
+        String(decoding: try await f.wait(next.id, contains: "restarted").data, as: UTF8.self)
+          == "restarted\n")
+    }
+  }
+
+  @Test(arguments: [
+    ("blocked", false, true, "stopped"),
+    ("exited", false, true, "stopped"),
+    ("exited", true, true, "completed"),
+    ("exited", true, false, "stopped"),
+  ])
+  func restartExceptionRequiresRetainedConfirmedExplicitStop(
+    phase: String, cleanup: Bool, retained: Bool, explanation: String
+  ) async throws {
+    try await fixture { f in
+      var old = ProcessSessionRecord(
+        scope: f.scope, runID: f.context.runID, callID: ToolCallID(), epoch: UUID(),
+        executable: "/bin/cat", arguments: [], transport: "pipe", retained: retained,
+        deadline: Date().addingTimeInterval(20))
+      old.phase = phase
+      old.cleanupConfirmed = cleanup
+      old.explanation = explanation
+      _ = try await f.journal.saveProcessSession(old)
+      expectStartConflict(try await f.startResult("/bin/cat", [], retained: true))
+      #expect(await f.manager.live.isEmpty)
+      #expect(
+        try await f.journal.processSessions(
+          conversationID: f.scope.conversationID, before: nil, limit: 100
+        ).count == 1)
     }
   }
 
@@ -386,9 +472,8 @@ struct CodingWorkflowTests {
         deadline: Date().addingTimeInterval(20))
       old.phase = "blocked"
       let saved = try await f.journal.saveProcessSession(old)
-      await #expect(throws: ProcessSessionError.operationConflict) {
-        _ = try await f.start(old.executable, old.arguments)
-      }
+      let unresolved = try await f.startResult(old.executable, old.arguments)
+      expectStartConflict(unresolved)
       let decision = UUID()
       try await f.manager.acknowledgeTask(f.scope.taskID, operationID: decision)
       #expect(await f.manager.live.isEmpty)
@@ -402,9 +487,8 @@ struct CodingWorkflowTests {
       #expect(finished.session.exitCode == 0)
       #expect(finished.session.cleanupConfirmed)
       #expect(String(decoding: finished.data, as: UTF8.self) == "reconciled start\n")
-      await #expect(throws: ProcessSessionError.operationConflict) {
-        _ = try await f.start(old.executable, old.arguments)
-      }
+      let repeated = try await f.startResult(old.executable, old.arguments)
+      expectStartConflict(repeated)
     }
   }
 

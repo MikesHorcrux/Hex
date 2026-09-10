@@ -87,14 +87,28 @@ public struct ProcessStartTool: HostTool {
     else { throw ProcessSessionError.unauthorized }
     let scope = try await manager.scope(context)
     try Task.checkCancellation()
-    let record = try await manager.start(
-      request: ProcessSupervisorRequest(
-        executable: snapshot.request.executable.path, arguments: snapshot.request.arguments,
-        directory: snapshot.request.workingDirectory.path,
-        environment: snapshot.request.environment,
-        tty: transport == "pty", timeoutSeconds: snapshot.request.timeoutSeconds,
-        identity: snapshot.identity),
-      scope: scope, context: context, retained: retained, callID: call.id)
+    let record: ProcessSessionRecord
+    do {
+      record = try await manager.start(
+        request: ProcessSupervisorRequest(
+          executable: snapshot.request.executable.path, arguments: snapshot.request.arguments,
+          directory: snapshot.request.workingDirectory.path,
+          environment: snapshot.request.environment,
+          tty: transport == "pty", timeoutSeconds: snapshot.request.timeoutSeconds,
+          identity: snapshot.identity),
+        scope: scope, context: context, retained: retained, callID: call.id)
+    } catch ProcessSessionError.operationConflict {
+      // This error is raised only by start's preflight, before a session is saved or
+      // spawned. Unknown supervisor/IPC failures must still stop with an uncertain outcome.
+      return ToolResult(
+        toolCallID: call.id, status: .failure,
+        output: .object([
+          "error": .string("process_operation_conflict"), "dispatched": .boolean(false),
+          "message": .string(
+            "No process was started. Inspect the existing session before starting again. A live or unresolved command cannot be duplicated; a completed one-shot command requires a committed workspace edit. A retained session may restart after a confirmed explicit stop."
+          ),
+        ]))
+    }
     return ToolResult(
       toolCallID: call.id, status: .success, output: try ProcessSessionTool.value(record),
       requiresUserAttention: record.terminal && !record.cleanupConfirmed)
