@@ -116,10 +116,16 @@ struct AgentRuntimeCompactionTests {
     #expect(checkpoint.estimatedTokensAfter < checkpoint.estimatedTokensBefore)
   }
 
-  @Test
-  func nearFullAdmissionCondensesOldHistoryAndKeepsTheNextFileReadIntact() async throws {
+  @Test(arguments: [false, true])
+  func nearFullAdmissionCondensesOldHistoryAndKeepsTheNextFileReadIntact(
+    oneClosedExchange: Bool
+  ) async throws {
     let original =
-      Array(history().prefix(8)) + [
+      (oneClosedExchange
+        ? [
+          Message(role: .user, content: [.text("Build my site")]),
+          Message(role: .assistant, content: [.text(String(repeating: "x", count: 9_000))]),
+        ] : Array(history().prefix(8))) + [
         Message(role: .user, content: [.text("Finish the current design")])
       ]
     let model = ModelDescriptor(
@@ -155,6 +161,9 @@ struct AgentRuntimeCompactionTests {
     }
     #expect(compactions.count == 1)
     #expect(compactions.first?.boundary == nil)
+    if oneClosedExchange {
+      #expect(compactions.first?.sourceMessageIDs == original.dropLast().map(\.id))
+    }
     #expect(events.contains(.messageAppended(original[0])))
   }
 

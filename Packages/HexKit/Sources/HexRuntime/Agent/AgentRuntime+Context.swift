@@ -51,11 +51,23 @@ extension AgentRuntime {
       // A protected current request that fits the real window is still admitted unchanged.
       let workingWindow = window - min(65_536, window / 4)
       if !tools.isEmpty, request.toolChoice != .none {
-        let preferred = try planner.plan(
+        var preferred = try planner.plan(
           pinnedMessages: pinned, messages: history, tools: tools,
           model: model, outputReserveTokens: reserve,
           maximumPlanningWindowTokens: workingWindow,
           allowLatestClosedExchangeCompaction: allowLatestClosedExchangeCompaction)
+        if case .protectedOverflow(_, reason: .protectedContext) = preferred,
+          !allowLatestClosedExchangeCompaction
+        {
+          // A previous exchange can fit the real window yet leave no room to read a file.
+          // Apply the same closed-history fallback to working-room admission. The planner
+          // still protects the newest user request, trusted instructions and open tool batches.
+          preferred = try planner.plan(
+            pinnedMessages: pinned, messages: history, tools: tools,
+            model: model, outputReserveTokens: reserve,
+            maximumPlanningWindowTokens: workingWindow,
+            allowLatestClosedExchangeCompaction: true)
+        }
         if case .requiresCompaction = preferred {
           plan = preferred
         } else {
