@@ -32,7 +32,8 @@ public struct AgentContextPlanner: Sendable {
     model: ModelDescriptor,
     outputReserveTokens: Int,
     previousProviderResponseID: String? = nil,
-    maximumPlanningWindowTokens: Int? = nil
+    maximumPlanningWindowTokens: Int? = nil,
+    allowLatestClosedExchangeCompaction: Bool = false
   ) throws -> AgentContextPlan {
     guard model.contextWindow.map({ $0 > 0 }) ?? true,
       model.maxOutputTokens.map({ $0 > 0 }) ?? true
@@ -58,7 +59,11 @@ public struct AgentContextPlanner: Sendable {
       return .unestimated(.imageCostUnavailable)
     }
     let historyTokens = try sum(messageCosts)
-    let protectedHistoryTokens = try sum(messageCosts[layout.protectedStart...])
+    // A fresh user request can make the previous whole exchange eligible for a checkpoint.
+    // This explicit fallback never includes the latest user exchange or an active continuation.
+    let protectedStart =
+      allowLatestClosedExchangeCompaction ? layout.latestUserIndex : layout.protectedStart
+    let protectedHistoryTokens = try sum(messageCosts[protectedStart...])
     let fixedTokens = try sum([pinnedTokens, toolTokens, outputReserveTokens, safetyMarginTokens])
     let total = try sum([fixedTokens, historyTokens])
     let protectedTotal = try sum([fixedTokens, protectedHistoryTokens])
@@ -86,7 +91,7 @@ public struct AgentContextPlanner: Sendable {
     }
 
     var removedTokens = 0
-    for exchange in layout.closedExchanges where exchange.upperBound <= layout.protectedStart {
+    for exchange in layout.closedExchanges where exchange.upperBound <= protectedStart {
       removedTokens = try sum([removedTokens, try sum(messageCosts[exchange])])
       let retainedTokens = historyTokens - removedTokens
       if try sum([fixedTokens, retainedTokens, summaryReserveTokens]) <= window {
@@ -104,6 +109,7 @@ public struct AgentContextPlanner: Sendable {
   private struct ExchangeLayout: Sendable {
     let closedExchanges: [Range<Int>]
     let protectedStart: Int
+    let latestUserIndex: Int
     let hasOpenToolChain: Bool
   }
 
@@ -188,6 +194,7 @@ public struct AgentContextPlanner: Sendable {
     return ExchangeLayout(
       closedExchanges: closed,
       protectedStart: protectedStart,
+      latestUserIndex: latestUserIndex,
       hasOpenToolChain: hasOpenToolChain || !pendingCalls.isEmpty
     )
   }

@@ -29,9 +29,22 @@ extension AgentRuntime {
     let planner = try makeContextPlanner(summaryReserve: summaryLimit + 256)
     let plan: AgentContextPlan
     do {
-      let admission = try planner.plan(
+      var admission = try planner.plan(
         pinnedMessages: pinned, messages: history, tools: tools,
         model: model, outputReserveTokens: reserve)
+      let allowLatestClosedExchangeCompaction: Bool
+      if case .protectedOverflow(_, reason: .protectedContext) = admission {
+        // Preserving the previous exchange verbatim is a quality preference, not a reason to
+        // permanently strand every follow-up after a large attempt. At a fresh user boundary,
+        // try a journaled summary of that closed exchange while retaining the new request.
+        allowLatestClosedExchangeCompaction = true
+        admission = try planner.plan(
+          pinnedMessages: pinned, messages: history, tools: tools,
+          model: model, outputReserveTokens: reserve,
+          allowLatestClosedExchangeCompaction: true)
+      } else {
+        allowLatestClosedExchangeCompaction = false
+      }
       // The admitted initial history stays pinned during this attempt. Leaving it just under
       // the limit can force every fresh file read straight into a summary and a reread loop.
       // Prefer room for tool work when an older, fully closed prefix can be condensed safely.
@@ -41,7 +54,8 @@ extension AgentRuntime {
         let preferred = try planner.plan(
           pinnedMessages: pinned, messages: history, tools: tools,
           model: model, outputReserveTokens: reserve,
-          maximumPlanningWindowTokens: workingWindow)
+          maximumPlanningWindowTokens: workingWindow,
+          allowLatestClosedExchangeCompaction: allowLatestClosedExchangeCompaction)
         if case .requiresCompaction = preferred {
           plan = preferred
         } else {
@@ -75,7 +89,10 @@ extension AgentRuntime {
           AgentContextSummaryRequest(
             model: model, sourceMessages: Array(history[prefix]),
             maximumSummaryTokens: summaryLimit,
-            maximumReportedTokens: configuration.budget.maxReportedTokens))
+            maximumReportedTokens: configuration.budget.maxReportedTokens,
+            // A prior exchange can be larger than one summary request. The planner has closed
+            // its user boundary; rolling summaries may divide only complete tool batches.
+            allowsToolBatchBoundaries: true))
       } catch is CancellationError {
         throw CancellationError()
       } catch {
