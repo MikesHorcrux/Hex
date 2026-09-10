@@ -48,7 +48,16 @@ public struct HostToolExecutor: ToolExecutor, Sendable {
     guard let tool = toolsByName[call.name] else {
       throw HostToolExecutorError.unknownTool
     }
-    return try await tool.authorizationRequest(for: call, in: context)
+    do {
+      return try await tool.authorizationRequest(for: call, in: context)
+    } catch ToolCallArgumentsError.invalidArguments {
+      // A parser rejection has no authorization or execution effects. Preserve genuine
+      // filesystem, permission, transport, and authorization failures as terminal errors.
+      throw ToolCallValidationError(
+        recovery: "Arguments did not match this tool's schema or value requirements. "
+          + "Check field names, types, and lengths; copy identifiers and revisions exactly "
+          + "from tool reads. This call was not authorized or dispatched.")
+    }
   }
 
   public func execute(
