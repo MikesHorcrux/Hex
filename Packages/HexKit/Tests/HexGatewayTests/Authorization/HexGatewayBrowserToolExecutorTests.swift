@@ -35,6 +35,24 @@ struct HexGatewayBrowserToolExecutorTests {
   }
 
   @Test
+  func annotationPreservesExistingKnownOutcomes() async throws {
+    let base = Executor()
+    await base.setExecutionOutcome(.completed)
+    let browser = makeBrowser(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let observation = try await browser.execute(call("browser_snapshot"), in: context)
+    #expect(observation.executionOutcome == .completed)
+    guard case .string(let token) = field(observation, "hex_observation_id") else {
+      throw FixtureError.missingObservation
+    }
+    let result = try await browser.execute(
+      call("browser_click", ["target": .string("e1"), "hex_observation_id": .string(token)]),
+      in: context)
+    #expect(result.executionOutcome == .completed)
+    #expect(field(result, "hex_browser_verification_required") == .boolean(true))
+  }
+
+  @Test
   func publishesObservationRequirementWithoutChangingRemoteToolNames() async throws {
     let base = Executor()
     let browser = makeBrowser(base)
@@ -84,6 +102,8 @@ struct HexGatewayBrowserToolExecutorTests {
     let blind = try await browser.execute(
       call("browser_click", ["target": .string("e1")]), in: context)
     #expect(field(blind, "error") == .string("browser_observation_required"))
+    #expect(blind.executionOutcome == .completed)
+    #expect(blind.notExecutedReason == nil)
     #expect(await base.calls.isEmpty)
     let token = try await snapshot(browser, context: context)
     let action = call(
@@ -171,6 +191,7 @@ struct HexGatewayBrowserToolExecutorTests {
     let result = try await browser.execute(call(remote, arguments), in: context)
     #expect(result.status == .failure)
     #expect(field(result, "browser_action_dispatched") == .boolean(false))
+    #expect(result.executionOutcome == .completed)
     #expect(await base.calls.count == 1)
   }
 
@@ -210,6 +231,7 @@ struct HexGatewayBrowserToolExecutorTests {
     let failure = try await browser.execute(action, in: context)
     #expect(field(failure, "error") == .string("browser_reference_stale"))
     #expect(!failure.requiresUserAttention)
+    #expect(failure.executionOutcome == .completed)
     #expect(await base.calls.count == 2)
     #expect(try await browser.execute(action, in: context).status == .failure)
     #expect(await base.calls.count == 2)
@@ -255,6 +277,7 @@ struct HexGatewayBrowserToolExecutorTests {
     arguments["hex_observation_id"] = .string(try await snapshot(browser, context: context))
     let result = try await browser.execute(call(remote, arguments), in: context)
     #expect(result.requiresUserAttention)
+    #expect(result.executionOutcome == nil)
     #expect(field(result, "error") == .string("browser_action_outcome_uncertain"))
     #expect(result.content.contains(.text(error)))
     #expect(await base.calls.count == 2)
@@ -336,6 +359,7 @@ struct HexGatewayBrowserToolExecutorTests {
       in:
         ToolExecutionContext(runID: AgentRunID()))
     #expect(field(result, "error") == .string("browser_connection_unavailable"))
+    #expect(result.executionOutcome == .completed)
     #expect(await base.calls.isEmpty)
   }
 
@@ -356,6 +380,7 @@ struct HexGatewayBrowserToolExecutorTests {
           "target": .string("e1"), "hex_observation_id": .string(token),
         ]), in: context)
     #expect(field(expired, "error") == .string("browser_observation_required"))
+    #expect(expired.executionOutcome == .completed)
     #expect(await base.calls.count == 1)
     let fresh = try await snapshot(browser, context: context)
     clock.advance(by: .seconds(59))
@@ -429,6 +454,9 @@ struct HexGatewayBrowserToolExecutorTests {
     private(set) var authorizedCall: ToolCall?
     private var snapshotText = HexGatewayBrowserToolExecutorTests.fullSnapshot
     private var mutationFailure: String?
+    private var executionOutcome: ToolExecutionOutcome?
+
+    func setExecutionOutcome(_ outcome: ToolExecutionOutcome) { executionOutcome = outcome }
 
     func restart() { sessionID = UUID() }
     func disconnect() { sessionID = nil }
@@ -475,7 +503,8 @@ struct HexGatewayBrowserToolExecutorTests {
       return ToolResult(
         toolCallID: call.id,
         status: !isSnapshot && mutationFailure != nil ? .failure : .success,
-        output: .object(["server": .string("playwright")]), content: [.text(text)])
+        output: .object(["server": .string("playwright")]), content: [.text(text)],
+        executionOutcome: executionOutcome)
     }
   }
 }
