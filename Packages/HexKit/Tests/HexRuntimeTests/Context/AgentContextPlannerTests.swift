@@ -7,6 +7,32 @@ import Testing
 @Suite("Agent context planning")
 struct AgentContextPlannerTests {
   @Test
+  func workingWindowCannotEnlargeTheModelOrWeakenProtectedHistory() throws {
+    let history = [user("old"), assistant("old"), user("recent"), assistant("recent"), user("now")]
+    let planner = try makePlanner()
+    let enlarged = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 70),
+      outputReserveTokens: 20, maximumPlanningWindowTokens: 1_000)
+    guard case .requiresCompaction(let budget, _, _, _) = enlarged else {
+      Issue.record("A requested planning cap must not enlarge the provider window")
+      return
+    }
+    #expect(budget.contextWindowTokens == 70)
+    let reduced = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 70),
+      outputReserveTokens: 20, maximumPlanningWindowTokens: 50)
+    guard case .protectedOverflow(_, reason: .protectedContext) = reduced else {
+      Issue.record("A smaller planning window must still preserve protected history")
+      return
+    }
+    #expect(throws: AgentContextPlanningError.invalidConfiguration) {
+      _ = try planner.plan(
+        pinnedMessages: [], messages: history, tools: [], model: model(window: 70),
+        outputReserveTokens: 20, maximumPlanningWindowTokens: 0)
+    }
+  }
+
+  @Test
   func accountsForPinnedHistoryToolsOutputAndMarginWithoutChangingMessages() throws {
     let planner = try makePlanner()
     let history = [user("old"), assistant("reply"), user("latest")]

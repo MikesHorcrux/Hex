@@ -31,15 +31,21 @@ public struct AgentContextPlanner: Sendable {
     tools: [ToolDefinition],
     model: ModelDescriptor,
     outputReserveTokens: Int,
-    previousProviderResponseID: String? = nil
+    previousProviderResponseID: String? = nil,
+    maximumPlanningWindowTokens: Int? = nil
   ) throws -> AgentContextPlan {
     guard model.contextWindow.map({ $0 > 0 }) ?? true,
       model.maxOutputTokens.map({ $0 > 0 }) ?? true
     else { throw AgentContextPlanningError.invalidModelMetadata }
     guard outputReserveTokens > 0 else { throw AgentContextPlanningError.invalidOutputReserve }
+    guard maximumPlanningWindowTokens.map({ $0 > 0 }) ?? true else {
+      throw AgentContextPlanningError.invalidConfiguration
+    }
     let layout = try exchangeLayout(pinnedMessages: pinnedMessages, messages: messages)
     let estimator = ModelBoundAgentContextTokenEstimator(base: self.estimator, model: model)
-    let window = model.contextWindow ?? fallbackContextWindow
+    // A caller may plan against a smaller working budget, never enlarge the model's window.
+    let window = min(
+      model.contextWindow ?? fallbackContextWindow, maximumPlanningWindowTokens ?? Int.max)
     let pinnedTokens: Int
     let messageCosts: [Int]
     let toolTokens: Int

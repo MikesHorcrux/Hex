@@ -6,6 +6,68 @@ import Testing
 @Suite("Automatic runtime compaction")
 struct AgentRuntimeCompactionTests {
   @Test
+  func nearFullAdmissionCondensesOldHistoryAndKeepsTheNextFileReadIntact() async throws {
+    let original =
+      Array(history().prefix(8)) + [
+        Message(role: .user, content: [.text("Finish the current design")])
+      ]
+    let model = ModelDescriptor(
+      id: RuntimeTestFixture.modelID, providerID: RuntimeTestFixture.providerID,
+      displayName: "Working headroom", capabilities: RuntimeTestFixture.standardCapabilities,
+      contextWindow: 16_384, maxOutputTokens: 4_096)
+    let call = ToolCall(name: "echo", arguments: [:])
+    let file = ToolResult(
+      toolCallID: call.id, status: .success, output: .string(String(repeating: "x", count: 3_000)))
+    let provider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(), models: [model],
+      scripts: [
+        .events(RuntimeTestFixture.toolEvents([call])),
+        .events(RuntimeTestFixture.textEvents()),
+      ])
+    let journal = RecordingEventJournal()
+    let runtime = AgentRuntime(
+      inferenceProvider: provider,
+      toolExecutor: ScriptedToolExecutor(
+        tools: [RuntimeTestFixture.tool()], behaviors: [.result(file)]),
+      authorizationProvider: ScriptedAuthorizationProvider(), journal: journal,
+      contextSummarizer: UsageSummarizer(reportedTokens: 1))
+    _ = try await runtime.run(RuntimeTestFixture.request(messages: original))
+    let requests = await provider.requests()
+    #expect(requests.count == 2)
+    #expect(requests.first?.messages.contains(try #require(original.last)) == true)
+    #expect(
+      requests.last?.messages.contains(where: { $0.content.contains(.toolResult(file)) }) == true)
+    let events = await journal.events()
+    let compactions = events.compactMap { event -> AgentContextCompaction? in
+      if case .contextCompacted(let value) = event { return value }
+      return nil
+    }
+    #expect(compactions.count == 1)
+    #expect(compactions.first?.boundary == nil)
+    #expect(events.contains(.messageAppended(original[0])))
+  }
+
+  @Test
+  func headroomPreferenceDoesNotRejectAnIrreducibleRequestThatFits() async throws {
+    let original = Message(role: .user, content: [.text(String(repeating: "x", count: 10_000))])
+    let provider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(),
+      models: [
+        ModelDescriptor(
+          id: RuntimeTestFixture.modelID, providerID: RuntimeTestFixture.providerID,
+          displayName: "Working headroom", capabilities: RuntimeTestFixture.standardCapabilities,
+          contextWindow: 16_384, maxOutputTokens: 4_096)
+      ], scripts: [.events(RuntimeTestFixture.textEvents())])
+    let journal = RecordingEventJournal()
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider, executor: ScriptedToolExecutor(tools: [RuntimeTestFixture.tool()]),
+      journal: journal)
+    _ = try await runtime.run(RuntimeTestFixture.request(messages: [original]))
+    #expect(await provider.requests().first?.messages == [original])
+    #expect(try !containsEvent("contextCompacted", events: await journal.events()))
+  }
+
+  @Test
   func oversizedHistoryIsSummarizedBeforePrimaryInferenceWithoutDeletingOriginalEvents()
     async throws
   {

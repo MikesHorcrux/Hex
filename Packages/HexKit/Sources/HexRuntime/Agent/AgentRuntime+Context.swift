@@ -29,9 +29,27 @@ extension AgentRuntime {
     let planner = try makeContextPlanner(summaryReserve: summaryLimit + 256)
     let plan: AgentContextPlan
     do {
-      plan = try planner.plan(
+      let admission = try planner.plan(
         pinnedMessages: pinned, messages: history, tools: tools,
         model: model, outputReserveTokens: reserve)
+      // The admitted initial history stays pinned during this attempt. Leaving it just under
+      // the limit can force every fresh file read straight into a summary and a reread loop.
+      // Prefer room for tool work when an older, fully closed prefix can be condensed safely.
+      // A protected current request that fits the real window is still admitted unchanged.
+      let workingWindow = window - min(65_536, window / 4)
+      if !tools.isEmpty, request.toolChoice != .none {
+        let preferred = try planner.plan(
+          pinnedMessages: pinned, messages: history, tools: tools,
+          model: model, outputReserveTokens: reserve,
+          maximumPlanningWindowTokens: workingWindow)
+        if case .requiresCompaction = preferred {
+          plan = preferred
+        } else {
+          plan = admission
+        }
+      } else {
+        plan = admission
+      }
     } catch AgentContextPlanningError.invalidHistory {
       // Some programmatic callers provide a continuation-shaped initial history. It can be used
       // unchanged when it fits, but we never invent a user boundary to make it compactable.
