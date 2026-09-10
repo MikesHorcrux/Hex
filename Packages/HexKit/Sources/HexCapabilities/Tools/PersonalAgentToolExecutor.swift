@@ -53,7 +53,7 @@ public struct PersonalAgentToolExecutor: ToolExecutor, Sendable {
       }
       return tool
     }
-    executor = try HostToolExecutor(tools: [
+    var tools: [any HostTool] = [
       MacAccessibilityActionTool(
         controller: accessibilityController, observationLedger: observationLedger),
       MacAccessibilitySnapshotTool(
@@ -77,7 +77,11 @@ public struct PersonalAgentToolExecutor: ToolExecutor, Sendable {
       tracked(WorkspaceReplaceTextTool(fileSystem: fileSystem)),
       WorkspaceSearchTextTool(fileSystem: fileSystem),
       tracked(WorkspaceWriteTextFileTool(fileSystem: fileSystem)),
-    ])
+    ]
+    if let localURLController = applicationController as? any MacLocalURLControlling {
+      tools.append(MacOpenLocalURLTool(controller: localURLController))
+    }
+    executor = try HostToolExecutor(tools: tools)
   }
 
   public func availableTools() async throws -> [ToolDefinition] {
