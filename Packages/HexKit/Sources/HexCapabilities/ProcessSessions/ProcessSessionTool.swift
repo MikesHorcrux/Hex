@@ -75,13 +75,39 @@ public struct ProcessSessionTool: HostTool {
     case "input": allowed = ["session_id", "expected_sequence", "text"]
     default: allowed = ["session_id", "expected_sequence", "action", "columns", "rows"]
     }
-    return try ToolCallArguments(call.arguments, allowedNames: allowed)
+    let parsed = try ToolCallArguments(call.arguments, allowedNames: allowed)
+    if action == "list" {
+      if let before = try parsed.optionalString(named: "before", maximumBytes: 36),
+        UUID(uuidString: before) == nil
+      {
+        throw ToolCallArgumentsError.invalidArguments
+      }
+    } else {
+      _ = try sessionID(parsed)
+      if action == "read" {
+        _ = try parsed.optionalInteger(named: "offset", range: 0...67_108_864)
+        _ = try parsed.optionalInteger(named: "maximum_bytes", range: 1...65_536)
+      } else {
+        _ = try parsed.requiredInteger(named: "expected_sequence", range: 0...(Int.max - 1))
+        if action == "input" {
+          _ = try parsed.requiredString(named: "text", maximumBytes: 16_384, allowsEmpty: true)
+        } else {
+          let value = try parsed.requiredString(named: "action", maximumBytes: 16)
+          guard ["interrupt", "eof", "resize", "stop"].contains(value) else {
+            throw ToolCallArgumentsError.invalidArguments
+          }
+          _ = try parsed.optionalInteger(named: "columns", range: 1...1_000)
+          _ = try parsed.optionalInteger(named: "rows", range: 1...1_000)
+        }
+      }
+    }
+    return parsed
   }
 
   private func sessionID(_ args: ToolCallArguments) throws -> UUID {
     guard let id = UUID(uuidString: try args.requiredString(named: "session_id", maximumBytes: 36))
     else {
-      throw ProcessSessionError.invalidRequest
+      throw ToolCallArgumentsError.invalidArguments
     }
     return id
   }

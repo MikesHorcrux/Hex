@@ -46,7 +46,7 @@ public struct ProcessStartTool: HostTool {
     let transport = try args.optionalString(named: "transport", maximumBytes: 8) ?? "pipe"
     let lifetime = try args.optionalString(named: "lifetime", maximumBytes: 8) ?? "task"
     guard ["pipe", "pty"].contains(transport), ["task", "retained"].contains(lifetime) else {
-      throw ProcessSessionError.invalidRequest
+      throw ToolCallArgumentsError.invalidArguments
     }
     var values = call.arguments
     values.removeValue(forKey: "transport")

@@ -185,6 +185,59 @@ struct CodingWorkflowTests {
     }
   }
 
+  @Test func malformedProcessArgumentsAreRejectedBeforeAuthorizationAndCanBeCorrected() async throws
+  {
+    try await fixture { f in
+      let session = try await f.start("/bin/cat", [], retained: true)
+      let tools = try ["read", "list", "input", "control"].map {
+        try ProcessSessionTool(manager: f.manager, action: $0)
+      }
+      let executor = try HostToolExecutor(tools: tools)
+      let validID = JSONValue.string(session.id.uuidString)
+      let malformed: [(String, [String: JSONValue])] = [
+        ("read", ["session_id": .string("150478AF-C25B-4FB-BE89-2DC9E70C6FB0")]),
+        ("read", ["session_id": validID, "maximum_bytes": .integer(0)]),
+        ("list", ["before": .string("bad-cursor")]),
+        ("input", ["session_id": validID, "expected_sequence": .integer(0)]),
+        (
+          "control",
+          ["session_id": validID, "expected_sequence": .integer(0), "action": .string("kill")]
+        ),
+        (
+          "control",
+          [
+            "session_id": validID, "expected_sequence": .integer(0), "action": .string("resize"),
+            "columns": .integer(0),
+          ]
+        ),
+      ]
+      for (action, arguments) in malformed {
+        let call = ToolCall(name: "process_" + action, arguments: arguments)
+        await #expect(throws: ToolCallValidationError.self) {
+          _ = try await executor.authorizationRequest(for: call, in: f.context)
+        }
+        await #expect(throws: (any Error).self) {
+          _ = try await executor.execute(call, in: f.context)
+        }
+      }
+      #expect(try await f.journal.processSession(session.id)?.inputSequence == 0)
+      let starts = try HostToolExecutor(tools: [ProcessStartTool(manager: f.manager)])
+      for invalid in ["transport", "lifetime"] {
+        let call = ToolCall(
+          name: "process_start",
+          arguments: [
+            "executable": .string("/bin/cat"), "arguments": .array([]), invalid: .string("unknown"),
+          ])
+        await #expect(throws: ToolCallValidationError.self) {
+          _ = try await starts.authorizationRequest(for: call, in: f.context)
+        }
+      }
+      let corrected = ToolCall(name: "process_read", arguments: ["session_id": validID])
+      _ = try await executor.authorizationRequest(for: corrected, in: f.context)
+      #expect(try await executor.execute(corrected, in: f.context).status == .success)
+    }
+  }
+
   @Test func ptyOwnsAControllingTerminalAndStopsItsGroup() async throws {
     try await fixture { f in
       let session = try await f.start(
