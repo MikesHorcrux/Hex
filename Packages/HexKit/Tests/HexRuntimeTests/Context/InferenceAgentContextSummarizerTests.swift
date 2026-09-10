@@ -35,6 +35,98 @@ struct InferenceAgentContextSummarizerTests {
   }
 
   @Test
+  func passesLargeScreenshotsAsMediaWhilePreservingTheirReceiptMapping() async throws {
+    let first = ImageContent(
+      sourceURL: try #require(
+        URL(string: "data:image/png;base64," + String(repeating: "A", count: 1_000_000))),
+      mediaType: "image/png")
+    let second = ImageContent(
+      sourceURL: try #require(
+        URL(string: "data:image/png;base64," + String(repeating: "B", count: 1_000_000))),
+      mediaType: "image/png")
+    let goal = Message(
+      role: .user, content: [.text("Compare this reference to the site."), .image(first)])
+    let call = ToolCall(name: "screenshot", arguments: [:])
+    let artifact = ArtifactReference(
+      id: UUID(), runID: AgentRunID(), toolCallID: call.id, mediaType: "image/png",
+      byteCount: 750_000, sha256: String(repeating: "a", count: 64), isComplete: true)
+    let receipt = ToolResult(
+      toolCallID: call.id, status: .success, output: .string("Observed the current page."),
+      content: [.text("Site screenshot"), .image(second)], artifacts: [artifact],
+      requiresUserAttention: true, executionOutcome: .completed)
+    let history = [
+      Message(role: .assistant, content: [.toolCall(call)]),
+      Message(role: .tool, content: [.toolResult(receipt)]),
+    ]
+    let imageModel = ModelDescriptor(
+      id: model().id, providerID: model().providerID, displayName: "Vision summary",
+      capabilities: [.textInput, .imageInput, .streaming], contextWindow: 100_000,
+      maxOutputTokens: 2_048)
+    let estimator = ConservativeAgentContextTokenEstimator(
+      imageTokenUpperBounds: [imageModel.providerID: [imageModel.id: 36_001]])
+    let provider = makeProvider([
+      .events(success("The current site was inspected against the reference."))
+    ])
+    let summarizer = InferenceAgentContextSummarizer(provider: provider, estimator: estimator)
+    _ = try await summarizer.summarize(
+      AgentContextSummaryRequest(
+        model: imageModel, sourceMessages: history, maximumSummaryTokens: 1_200,
+        allowsToolBatchBoundaries: true, currentTask: goal))
+    let inference = try #require(await provider.requests().first)
+    #expect(inference.tools.isEmpty && inference.toolChoice == .none)
+    #expect(inference.previousProviderResponseID == nil)
+    let quoted = try textContent(inference.messages[1])
+    #expect(!quoted.contains("data:image"))
+    #expect(quoted.utf8.count < 4_000)
+    #expect(inference.messages[1].content.dropFirst() == [.image(first), .image(second)])
+    let projected = try payload(inference)
+    #expect(projected.currentTask?.id == goal.id)
+    #expect(projected.currentTask?.role == .user)
+    #expect(
+      projected.currentTask?.content.last
+        == .text("Image attachment 1 follows the JSON as original image input."))
+    #expect(projected.exchanges[0][0] == history[0])
+    #expect(projected.exchanges[0][1].id == history[1].id)
+    #expect(projected.exchanges[0][1].role == .tool)
+    #expect(
+      projected.exchanges[0][1].content == [
+        .toolResult(
+          ToolResult(
+            toolCallID: call.id, status: receipt.status, output: receipt.output,
+            content: [
+              .text("Site screenshot"),
+              .text("Image attachment 2 follows the JSON as original image input."),
+            ],
+            artifacts: [artifact], requiresUserAttention: true, executionOutcome: .completed))
+      ])
+    #expect(try summarizer.estimatedInputTokens(inference.messages, model: imageModel) < 98_000)
+
+    // The same media must still respect a smaller physical input budget.
+    await #expect(throws: AgentContextSummarizationError.inputDoesNotFit) {
+      try await summarizer.summarize(
+        AgentContextSummaryRequest(
+          model: imageModel, sourceMessages: history, maximumSummaryTokens: 1_200,
+          maximumInputTokens: 60_000, allowsToolBatchBoundaries: true, currentTask: goal))
+    }
+    #expect(await provider.requests().count == 1)
+  }
+
+  @Test
+  func knownImageCostDoesNotGrantImageInputToATextOnlyModel() async throws {
+    let image = ImageContent(
+      sourceURL: URL(fileURLWithPath: "/not-opened.png"), mediaType: "image/png")
+    let history = [Message(role: .user, content: [.image(image)])]
+    let provider = makeProvider([])
+    let estimator = ConservativeAgentContextTokenEstimator(
+      imageTokenUpperBounds: [model().providerID: [model().id: 100]])
+    await #expect(throws: AgentContextSummarizationError.invalidRequest) {
+      try await InferenceAgentContextSummarizer(provider: provider, estimator: estimator)
+        .summarize(request(history))
+    }
+    #expect(await provider.requests().isEmpty)
+  }
+
+  @Test
   func chunksWholeExchangesAndQuotesIntermediateSummaries() async throws {
     let history = (0..<3).flatMap { index in
       exchange(
