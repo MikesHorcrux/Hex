@@ -47,6 +47,7 @@ struct HexGatewayArtifactWorkflowTests {
     #expect(output["observation_id"] == .string("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"))
     #expect(output["hex_observed_pid"] == .integer(42))
     #expect(output["snapshot"] == .string("fixture-snapshot"))
+    #expect(output["recovery"] == .string("Activate the observed app, then observe again."))
     #expect(output["arbitrary_field"] == nil)
     #expect(output["preview_truncated"] == .boolean(true))
     #expect(try JSONEncoder().encode(fixture.originalResult).count < 32 * 1_024)
@@ -567,6 +568,7 @@ struct HexGatewayArtifactWorkflowTests {
           "hex_observation_id": .string("11111111-2222-3333-4444-555555555555"),
           "observation_id": .string("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
           "hex_observed_pid": .integer(42), "snapshot": .string("fixture-snapshot"),
+          "recovery": .string("Activate the observed app, then observe again."),
           "arbitrary_field": .string("do not promote arbitrary data"),
           "payload": .string(
             String(repeating: "x", count: 2 * 1_024 * 1_024 + 1) + "oversized-marker"),

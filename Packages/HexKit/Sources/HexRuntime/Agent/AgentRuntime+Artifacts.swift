@@ -147,7 +147,7 @@ extension AgentRuntime {
         "observation_id", "hex_observation_id", "snapshot", "hex_observed_pid",
         "hex_observed_window_id", "hex_process_start_identity_decimal",
         "hex_observation_expires_after_seconds", "hex_observation_actionable",
-        "bundle_id", "process_id", "is_truncated",
+        "bundle_id", "process_id", "is_truncated", "recovery",
       ] {
         guard let value = output[key] else { continue }
         switch value {

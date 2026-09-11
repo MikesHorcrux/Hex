@@ -210,6 +210,8 @@ struct HexGatewayPeekabooToolExecutorTests {
       #expect(field(result, "error") == .string("screen_permissions_required"))
     } else if mode == "target_unavailable" {
       #expect(field(result, "error") == .string("native_reference_stale"))
+      let recovery = try #require(field(result, "recovery"))
+      #expect(String(describing: recovery).contains("mac_activate_application"))
     } else {
       #expect(result.status == .success)
     }

@@ -235,7 +235,9 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
                 ? "The helper refused input before dispatch because a required Mac permission is missing. Restore the permission before continuing."
                 : reason == "foreground_consent_required"
                   ? "No input was dispatched. Use mac_activate_application for the observed app bundle ID, then take a fresh exact PID/window observation and use supported background input. Do not request foreground=true or background=false."
-                  : "The helper refused input before dispatch. Correct the request, observe the exact PID/window again, and use the new observation ID."
+                  : reason == "target_unavailable"
+                    ? "No input was dispatched. If the focused field is outside the window bounds or the capture is a thumbnail, activate the observed app with mac_activate_application, then observe its exact PID/window again before input."
+                    : "The helper refused input before dispatch. Correct the request, observe the exact PID/window again, and use the new observation ID."
             ),
           ], attention: permissionDenied, executionOutcome: .completed)
       case .uncertain:
@@ -256,7 +258,10 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
             "outcome_verified": .boolean(false),
             "verification_required": .boolean(true),
             "recovery": .string(
-              "Observe the same exact PID/window again and verify the requested visible change."),
+              name == "set_value"
+                ? "Observe the saved form state. Accessibility text alone does not prove the app committed it. If text reverts or Save stays disabled, activate the app and use type with a fresh observation instead of repeating set_value."
+                : "Observe the same exact PID/window again and verify the requested visible change."
+            ),
           ], executionOutcome: .completed)
       }
     }
@@ -277,6 +282,9 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
           "hex_observed_window_id": .integer(captured.windowID),
           "hex_process_start_identity_decimal": .string(captured.processStartIdentity),
           "hex_observation_expires_after_seconds": .integer(30),
+          "recovery": .string(
+            "If this capture is a thumbnail or input is outside window bounds, use mac_activate_application for the observed app, then see again. Repeating background captures or increasing image resolution will not bring the window forward."
+          ),
         ])
     }
     if kind == .observation, result.status == .success {
