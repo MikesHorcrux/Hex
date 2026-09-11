@@ -125,7 +125,7 @@ The built-in resident tool graph includes:
 
 Playwright and Peekaboo are replaceable MCP adapters, not separate agent runtimes. The managed layout
 is `~/Library/Application Support/Hex/Tools` and currently pins Node `24.20.0`, `@playwright/mcp`
-`0.0.80`, Chromium revision `1243`, and Peekaboo `4.2.2`. Hex validates the expected executable
+`0.0.80`, Chromium revision `1243`, and Peekaboo `4.3.3`. Hex validates the expected executable
 paths, versions/manifest, ownership, link count, permissions, and file shape before enabling an
 adapter. Playwright uses an isolated browser profile, disables code generation, and bounds artifacts
 to 50 MiB. Peekaboo runs `mcp serve --input-strategy actionFirst`; its separate agent mode is not

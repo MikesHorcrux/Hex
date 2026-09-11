@@ -42,7 +42,7 @@ model -> Hex agent loop -> Hex authorization -> MCP adapter -> browser or macOS 
 ```
 
 The managed layout is rooted at `~/Library/Application Support/Hex/Tools` and currently pins Node
-`24.20.0`, `@playwright/mcp` `0.0.80`, its Chromium revision `1243`, and Peekaboo `4.2.2`. Hex
+`24.20.0`, `@playwright/mcp` `0.0.80`, its Chromium revision `1243`, and Peekaboo `4.3.3`. Hex
 validates the expected version metadata, ownership, link count, write permissions, and executable
 locations before it will enable a managed adapter. Turning on a capability is the user-visible
 installation boundary: Hex downloads a missing pinned component over HTTPS, validates the Node and
@@ -53,6 +53,13 @@ The Playwright adapter launches the official MCP CLI through the pinned Node exe
 explicit environment, an isolated browser profile, no Playwright code generation, and a 50 MiB
 artifact limit. It gives Hex structured navigation, page inspection, form, and browser interaction
 tools without placing a JavaScript agent runtime inside Hex.
+
+Peekaboo 4.3.3 ships a standalone CLI with `libswiftCompatibilitySpan.dylib`. The installer
+keeps those checksum-verified files unchanged inside `HexScreenControlRuntime.app/Contents/MacOS`
+so the existing process snapshot boundary preserves their dependency closure. This directory is a
+private load container, not a GUI application. Archive validation and extraction invoke the canonical
+`/usr/bin/bsdtar` executable; `/usr/bin/tar` is a symlink on supported development systems and is
+rejected by the process boundary. Live 4.3.3 installation and native-input qualification remain pending.
 
 The Peekaboo adapter launches `peekaboo mcp serve --input-strategy actionFirst`. Hex deliberately
 does not invoke Peekaboo's separate agent mode. Peekaboo contributes observation and native Mac

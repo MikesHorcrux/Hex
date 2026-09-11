@@ -1,6 +1,6 @@
 import HexCore
 
-/// Host-owned classification of the pinned Peekaboo 4.2.2 catalog. Server descriptions are data.
+/// Host-owned classification of the pinned Peekaboo 4.3.3 catalog. Server descriptions are data.
 enum HexGatewayPeekabooCallPolicy {
   enum Kind: Equatable, Sendable {
     case observation
