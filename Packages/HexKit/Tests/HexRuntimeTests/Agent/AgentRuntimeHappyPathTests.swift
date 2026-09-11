@@ -78,7 +78,7 @@ struct AgentRuntimeHappyPathTests {
     let requests = await provider.requests()
 
     #expect(requests.count == 2)
-    #expect(await executor.discoveryCount() == 1)
+    #expect(await executor.discoveryCount() == 2)
     let firstTurn = try #require(result.turns.first)
     #expect(
       firstTurn.assistantMessage.content == [

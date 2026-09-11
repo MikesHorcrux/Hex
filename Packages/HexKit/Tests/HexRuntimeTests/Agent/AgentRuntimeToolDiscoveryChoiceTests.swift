@@ -116,6 +116,62 @@ struct AgentRuntimeToolDiscoveryChoiceTests {
     #expect(requests.map(\.tools) == [tools, tools])
   }
 
+  @Test
+  func newlyReadyToolIsAdvertisedAtNextBoundaryAndResetsProviderContinuation() async throws {
+    let first = ToolCall(name: "echo", arguments: [:])
+    let late = ToolCall(name: "type", arguments: [:])
+    let initial = [RuntimeTestFixture.tool()]
+    let ready = initial + [RuntimeTestFixture.tool("type")]
+    let provider = provider(scripts: [
+      .events(RuntimeTestFixture.toolEvents([first])),
+      .events(RuntimeTestFixture.toolEvents([late])),
+      .events(RuntimeTestFixture.textEvents("Done.")),
+    ])
+    let executor = ScriptedToolExecutor(tools: ready, discoverySnapshots: [initial, ready])
+    let runtime = RuntimeTestFixture.runtime(provider: provider, executor: executor)
+    _ = try await runtime.run(RuntimeTestFixture.request())
+    let requests = await provider.requests()
+    #expect(requests.map(\.tools) == [initial, ready, ready])
+    #expect(requests[1].previousProviderResponseID == nil)
+    #expect(requests[2].previousProviderResponseID == "tool-response")
+    #expect(await executor.calls() == [first, late])
+  }
+
+  @Test
+  func removedToolCannotBeCalledUsingThePriorCatalog() async throws {
+    let first = ToolCall(name: "echo", arguments: [:])
+    let stale = ToolCall(name: "echo", arguments: [:])
+    let provider = provider(scripts: [
+      .events(RuntimeTestFixture.toolEvents([first])),
+      .events(RuntimeTestFixture.toolEvents([stale])),
+    ])
+    let executor = ScriptedToolExecutor(
+      tools: [], discoverySnapshots: [[RuntimeTestFixture.tool()], []])
+    let runtime = RuntimeTestFixture.runtime(provider: provider, executor: executor)
+    await #expect(throws: AgentRuntimeError.self) {
+      try await runtime.run(RuntimeTestFixture.request())
+    }
+    #expect(await executor.calls() == [first])
+    #expect(await provider.requests().last?.tools.isEmpty == true)
+  }
+
+  @Test
+  func invalidRefreshedCatalogStopsBeforeAnotherInferenceOrAction() async throws {
+    let first = ToolCall(name: "echo", arguments: [:])
+    let provider = provider(scripts: [.events(RuntimeTestFixture.toolEvents([first]))])
+    let executor = ScriptedToolExecutor(
+      tools: [],
+      discoverySnapshots: [
+        [RuntimeTestFixture.tool()], [RuntimeTestFixture.tool(), RuntimeTestFixture.tool()],
+      ])
+    let runtime = RuntimeTestFixture.runtime(provider: provider, executor: executor)
+    await #expect(throws: AgentRuntimeError.self) {
+      try await runtime.run(RuntimeTestFixture.request())
+    }
+    #expect(await executor.calls() == [first])
+    #expect(await provider.requests().count == 1)
+  }
+
   private func provider(scripts: [InferenceScript]) -> ScriptedInferenceProvider {
     ScriptedInferenceProvider(
       descriptor: RuntimeTestFixture.descriptor(), models: [RuntimeTestFixture.model()],

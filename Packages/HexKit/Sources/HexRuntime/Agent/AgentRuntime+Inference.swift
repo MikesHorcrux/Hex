@@ -7,10 +7,10 @@ extension AgentRuntime {
   ) async throws -> AgentRunResult {
     // A caller that explicitly disables tools must not acquire optional dependencies. Keep the
     // snapshot for tool-enabled runs intact, including a named call's no-more-tools continuation.
-    let tools = request.toolChoice == .none ? [] : try await discoverTools()
+    var tools = request.toolChoice == .none ? [] : try await discoverTools()
     try validateToolSnapshot(tools, request: request, model: model)
 
-    let prepared = try await inferenceAtBoundary(request.runID) {
+    let prepared = try await inferenceAtBoundary(request.runID) { [tools] in
       try await self.prepareInitialContext(request, model: model, tools: tools)
     }
     var conversation = prepared.messages
@@ -37,8 +37,18 @@ extension AgentRuntime {
       }
       try validateConversationSize(conversation)
       if !turns.isEmpty {
+        // Optional integrations can finish starting while a tool batch runs. Refresh only at
+        // a completed batch boundary; named/no-tools continuations retain their fixed contract.
+        if effectiveToolChoice == .automatic || effectiveToolChoice == .required {
+          let currentTools = try await discoverTools()
+          try validateToolSnapshot(currentTools, request: request, model: model)
+          if currentTools != tools {
+            tools = currentTools
+            previousProviderResponseID = nil
+          }
+        }
         let compacted = try await inferenceAtBoundary(request.runID) {
-          [conversation, totalReportedTokens] in
+          [conversation, totalReportedTokens, tools] in
           try await self.prepareActiveContext(
             conversation, protectedCount: prepared.messages.count, request: request,
             model: model, tools: tools,
