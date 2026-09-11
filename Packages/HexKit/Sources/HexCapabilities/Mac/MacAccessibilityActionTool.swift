@@ -12,7 +12,11 @@ public struct MacAccessibilityActionTool: HostTool, Sendable {
       + "Use observation_id and a path or exact attributes from a fresh "
       + "mac_accessibility_snapshot in this run. Each observation permits only one action and "
       + "expires after 60 seconds. Success acknowledges dispatch, not visible completion: observe "
-      + "again to verify the result before continuing. Never blindly repeat an uncertain action. "
+      + "again to verify the result before continuing. Setting AXValue is not keyboard input: some "
+      + "controls expose the new Accessibility value without committing it to the app. If text "
+      + "reverts or Save stays disabled, do not repeat set_value; use an available screen typing "
+      + "tool with a fresh exact-window observation, then verify the saved content. "
+      + "Never blindly repeat an uncertain action. "
       + "Secure text fields are not writable because tool arguments may be journaled. macOS "
       + "Accessibility permission is required.",
     inputSchema: HostToolSchema.object(
