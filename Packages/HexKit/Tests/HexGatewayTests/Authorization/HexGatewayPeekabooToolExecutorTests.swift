@@ -102,6 +102,24 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(try await wrapper.execute(see(), in: context), "hex_observation_id") != nil)
   }
 
+  @Test
+  func foregroundInputRefusalExplainsSupportedActivationWithoutDispatch() async throws {
+    let base = Executor()
+    let wrapper = makeWrapper(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let result = try await wrapper.execute(
+      call("click", ["foreground": .boolean(true)]), in: context)
+    #expect(field(result, "error") == .string("native_foreground_unsupported"))
+    #expect(field(result, "dispatched") == .boolean(false))
+    #expect(!result.requiresUserAttention)
+    #expect(await base.calls.isEmpty)
+    guard case .string(let recovery) = field(result, "recovery") else {
+      Issue.record("Missing supported recovery route")
+      return
+    }
+    #expect(recovery.contains("mac_activate_application"))
+  }
+
   @Test(arguments: [
     "pid", "window", "snapshot", "foreground", "process_reused", "old_run", "restart", "expired",
   ])
