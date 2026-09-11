@@ -3,7 +3,7 @@ import Foundation
 enum HTMLTextSanitizer {
   static func text(from html: String) -> String {
     var value = replacing(
-      #"(?is)<(script|style|noscript)[^>]*>.*?</\1>"#,
+      #"(?is)<(script|style|noscript)\b[^>]*>.*?(?:</\1\s*>|\z)"#,
       in: html,
       with: " "
     )
