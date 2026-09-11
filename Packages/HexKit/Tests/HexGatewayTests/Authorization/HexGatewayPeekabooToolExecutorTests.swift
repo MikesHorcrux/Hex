@@ -81,6 +81,27 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(await base.calls.count == 2)
   }
 
+  @Test
+  func unverifiedErrorReceiptAllowsObservationButNeverBlindReplay() async throws {
+    let base = Executor()
+    await base.setActionMode("delivered_error")
+    let wrapper = makeWrapper(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let token = try await observe(wrapper, context: context)
+    let action = call("click", ["on": .string("B1"), "hex_observation_id": token])
+    let result = try await wrapper.execute(action, in: context)
+    #expect(result.status == .failure)
+    #expect(field(result, "dispatched") == .boolean(true))
+    #expect(field(result, "outcome_verified") == .boolean(false))
+    #expect(field(result, "verification_required") == .boolean(true))
+    #expect(!result.requiresUserAttention)
+    #expect(result.content == [.text("Known helper receipt")])
+    let repeated = try await wrapper.execute(action, in: context)
+    #expect(field(repeated, "error") == .string("native_observation_required"))
+    #expect(await base.calls.count == 2)
+    #expect(field(try await wrapper.execute(see(), in: context), "hex_observation_id") != nil)
+  }
+
   @Test(arguments: [
     "pid", "window", "snapshot", "foreground", "process_reused", "old_run", "restart", "expired",
   ])
@@ -394,11 +415,14 @@ struct HexGatewayPeekabooToolExecutorTests {
         if captureMode == "prose_only" { metadata = [:] }
         captureHook()
       }
-      if !capture, actionMode == "successful_unknown" { metadata = [:] }
+      if !capture, ["successful_unknown", "returned_error"].contains(actionMode) { metadata = [:] }
       let failure =
         !capture
-        && ["returned_error", "target_unavailable", "permission_denied", "contradictory_refusal"]
-          .contains(actionMode)
+        && [
+          "delivered_error", "returned_error", "target_unavailable", "permission_denied",
+          "contradictory_refusal",
+        ]
+        .contains(actionMode)
       return ToolResult(
         toolCallID: call.id, status: failure ? .failure : .success,
         output: .object([

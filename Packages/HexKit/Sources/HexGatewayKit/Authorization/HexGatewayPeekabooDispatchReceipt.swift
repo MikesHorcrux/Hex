@@ -34,16 +34,19 @@ enum HexGatewayPeekabooDispatchReceipt: Equatable {
       }
       return .uncertain
     }
-    guard result.status == .success, meta["dispatch_state"] == .string("dispatched"),
+    guard meta["dispatch_state"] == .string("dispatched"),
       meta["mutation_dispatched"] == .boolean(true), meta["retry_safe"] == .boolean(false)
     else { return .uncertain }
-    if meta["state"] == .string("confirmed_change"), meta["effect"] == .string("confirmed"),
+    if result.status == .success, meta["state"] == .string("confirmed_change"),
+      meta["effect"] == .string("confirmed"),
       meta["evidence"] == .string("verified_change"),
       meta["retry_safety"] == .string("not_applicable"), meta["escalation"] == .string("none"),
       meta["requires_fresh_observation"] == .boolean(false)
     {
       return .dispatched
     }
+    // Peekaboo reports unverified delivery with isError=true. The canonical receipt
+    // still proves dispatch and explicitly permits observation, never blind replay.
     if meta["state"] == .string("dispatched_unverified"), meta["effect"] == .string("unverifiable"),
       meta["evidence"] == .string("delivery_accepted")
         || meta["evidence"] == .string("operation_still_running"),
