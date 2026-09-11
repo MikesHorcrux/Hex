@@ -257,7 +257,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
             "verification_required": .boolean(true),
             "recovery": .string(
               "Observe the same exact PID/window again and verify the requested visible change."),
-          ])
+          ], executionOutcome: .completed)
       }
     }
     if kind == .observation,

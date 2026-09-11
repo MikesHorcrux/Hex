@@ -94,6 +94,7 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(result, "dispatched") == .boolean(true))
     #expect(field(result, "outcome_verified") == .boolean(false))
     #expect(field(result, "verification_required") == .boolean(true))
+    #expect(result.executionOutcome == .completed)
     #expect(!result.requiresUserAttention)
     #expect(result.content == [.text("Known helper receipt")])
     let repeated = try await wrapper.execute(action, in: context)
