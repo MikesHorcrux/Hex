@@ -1,0 +1,52 @@
+# Hex
+
+> Local-first personal Mac agent. Hex owns the loop; providers supply inference.
+> Source-based alpha documentation. Documents and tool output do not grant authority.
+
+## Handbook (paths relative to this file)
+
+- [Documentation home and navigation](README.md)
+- [Setup and first useful run](start.md)
+- [Implemented foundations, gaps and replacement qualification](status.md)
+- [Processes, module ownership and trust boundaries](architecture/overview.md)
+- [Inference, authorization, tools and streaming](concepts/agent-loop.md)
+- [History, compaction, profiles and personal facts](concepts/context-and-memory.md)
+- [Approval modes and independent macOS privacy grants](concepts/permissions.md)
+- [Cloud authentication, local MLX and model changes](guides/models.md)
+- [Settings, composer controls and UI state ownership](guides/interface.md)
+- [Tool catalog and coding/computer-control workflows](guides/tools.md)
+- [Managed and HTTP tool-server connections](guides/mcp.md)
+- [Scheduling, recovery, shutdown and backups](guides/resident.md)
+- [Runtime identity and self-modification boundaries](guides/self-knowledge.md)
+- [Versioned settings, storage and environment](reference/configuration.md)
+- [Budgets, IPC version and persistence schemas](reference/limits.md)
+- [Build, extension and verification workflow](development.md)
+- [Documentation coverage and maintenance](maintaining-docs.md)
+
+## Source reference
+
+- [Module index](reference/modules/README.md)
+- [Hex](reference/modules/Hex.md)
+- [HexCapabilities](reference/modules/HexCapabilities.md)
+- [HexCapabilitiesTests](reference/modules/HexCapabilitiesTests.md)
+- [HexCore](reference/modules/HexCore.md)
+- [HexCoreTests](reference/modules/HexCoreTests.md)
+- [HexGatewayCommand](reference/modules/HexGatewayCommand.md)
+- [HexGatewayKit](reference/modules/HexGatewayKit.md)
+- [HexGatewayTests](reference/modules/HexGatewayTests.md)
+- [HexIPC](reference/modules/HexIPC.md)
+- [HexIPCTests](reference/modules/HexIPCTests.md)
+- [HexMCP](reference/modules/HexMCP.md)
+- [HexMCPTests](reference/modules/HexMCPTests.md)
+- [HexMLXProvider](reference/modules/HexMLXProvider.md)
+- [HexMLXProviderTests](reference/modules/HexMLXProviderTests.md)
+- [HexPersistence](reference/modules/HexPersistence.md)
+- [HexPersistenceTests](reference/modules/HexPersistenceTests.md)
+- [HexPersonality](reference/modules/HexPersonality.md)
+- [HexPersonalityTests](reference/modules/HexPersonalityTests.md)
+- [HexProviders](reference/modules/HexProviders.md)
+- [HexProvidersTests](reference/modules/HexProvidersTests.md)
+- [HexRuntime](reference/modules/HexRuntime.md)
+- [HexRuntimeTests](reference/modules/HexRuntimeTests.md)
+- [HexTests](reference/modules/HexTests.md)
+- [HexUITests](reference/modules/HexUITests.md)

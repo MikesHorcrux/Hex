@@ -1,0 +1,37 @@
+# Local developer and agent state
+.DS_Store
+.codex/
+.claude/
+.openclaw/
+.idea/
+.vscode/
+**/xcuserdata/
+*.xcuserstate
+
+# Build output (dependency resolution files are intentionally tracked)
+.build/
+dist/
+DerivedData/
+**/.swiftpm/
+
+# Local configuration, credentials, and signing material
+.env
+.env.*
+!.env.example
+*.local.xcconfig
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+
+# Runtime data and diagnostics
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log
+*.xcresult/
+__pycache__/
+*.pyc

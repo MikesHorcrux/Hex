@@ -1,0 +1,2 @@
+// Copy to Developer.local.xcconfig and replace with your 10-character team ID.
+DEVELOPMENT_TEAM = YOURTEAMID

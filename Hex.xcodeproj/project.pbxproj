@@ -1,0 +1,718 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		484558424C44000000000001 /* HexCore in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000001 /* HexCore */; };
+		484558424C44000000000002 /* HexRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000002 /* HexRuntime */; };
+		484558424C44000000000003 /* HexPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000003 /* HexPersistence */; };
+		484558424C44000000000004 /* HexProviders in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000004 /* HexProviders */; };
+		484558424C44000000000005 /* HexCapabilities in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000005 /* HexCapabilities */; };
+		484558424C44000000000006 /* HexPersonality in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000006 /* HexPersonality */; };
+		484558424C44000000000007 /* HexIPC in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000007 /* HexIPC */; };
+		484558424C44000000000008 /* HexMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000008 /* HexMCP */; };
+		484558424C44000000000009 /* HexGatewayKit in Frameworks */ = {isa = PBXBuildFile; productRef = 484558505244000000000009 /* HexGatewayKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7FCF29593044FB770069F58B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7FCF29413044FB760069F58B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7FCF29483044FB760069F58B;
+			remoteInfo = Hex;
+		};
+		7FCF29633044FB770069F58B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7FCF29413044FB760069F58B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7FCF29483044FB760069F58B;
+			remoteInfo = Hex;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		484558434F4E464947000001 /* Developer.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Developer.xcconfig; sourceTree = SOURCE_ROOT; };
+		7FCF29493044FB760069F58B /* Hex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hex.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7FCF29583044FB770069F58B /* HexTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HexTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7FCF29623044FB770069F58B /* HexUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HexUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		7FCF294B3044FB760069F58B /* Hex */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Hex;
+			sourceTree = "<group>";
+		};
+		7FCF295B3044FB770069F58B /* HexTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HexTests;
+			sourceTree = "<group>";
+		};
+		7FCF29653044FB770069F58B /* HexUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HexUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7FCF29463044FB760069F58B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				484558424C44000000000001 /* HexCore in Frameworks */,
+				484558424C44000000000002 /* HexRuntime in Frameworks */,
+				484558424C44000000000003 /* HexPersistence in Frameworks */,
+				484558424C44000000000004 /* HexProviders in Frameworks */,
+				484558424C44000000000005 /* HexCapabilities in Frameworks */,
+				484558424C44000000000006 /* HexPersonality in Frameworks */,
+				484558424C44000000000007 /* HexIPC in Frameworks */,
+				484558424C44000000000008 /* HexMCP in Frameworks */,
+				484558424C44000000000009 /* HexGatewayKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7FCF29553044FB770069F58B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7FCF295F3044FB770069F58B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		7FCF29403044FB760069F58B = {
+			isa = PBXGroup;
+			children = (
+				7FCF294B3044FB760069F58B /* Hex */,
+				7FCF295B3044FB770069F58B /* HexTests */,
+				7FCF29653044FB770069F58B /* HexUITests */,
+				7FCF294A3044FB760069F58B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7FCF294A3044FB760069F58B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7FCF29493044FB760069F58B /* Hex.app */,
+				7FCF29583044FB770069F58B /* HexTests.xctest */,
+				7FCF29623044FB770069F58B /* HexUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7FCF29483044FB760069F58B /* Hex */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7FCF296C3044FB770069F58B /* Build configuration list for PBXNativeTarget "Hex" */;
+			buildPhases = (
+				7FCF29453044FB760069F58B /* Sources */,
+				7FCF29463044FB760069F58B /* Frameworks */,
+				7FCF29473044FB760069F58B /* Resources */,
+				484558B10000000000000001 /* Stage Hex Gateway */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7FCF294B3044FB760069F58B /* Hex */,
+			);
+			name = Hex;
+			packageProductDependencies = (
+				484558505244000000000001 /* HexCore */,
+				484558505244000000000002 /* HexRuntime */,
+				484558505244000000000003 /* HexPersistence */,
+				484558505244000000000004 /* HexProviders */,
+				484558505244000000000005 /* HexCapabilities */,
+				484558505244000000000006 /* HexPersonality */,
+				484558505244000000000007 /* HexIPC */,
+				484558505244000000000008 /* HexMCP */,
+				484558505244000000000009 /* HexGatewayKit */,
+			);
+			productName = Hex;
+			productReference = 7FCF29493044FB760069F58B /* Hex.app */;
+			productType = "com.apple.product-type.application";
+		};
+		7FCF29573044FB770069F58B /* HexTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7FCF296F3044FB770069F58B /* Build configuration list for PBXNativeTarget "HexTests" */;
+			buildPhases = (
+				7FCF29543044FB770069F58B /* Sources */,
+				7FCF29553044FB770069F58B /* Frameworks */,
+				7FCF29563044FB770069F58B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7FCF295A3044FB770069F58B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				7FCF295B3044FB770069F58B /* HexTests */,
+			);
+			name = HexTests;
+			packageProductDependencies = (
+			);
+			productName = HexTests;
+			productReference = 7FCF29583044FB770069F58B /* HexTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		7FCF29613044FB770069F58B /* HexUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7FCF29723044FB770069F58B /* Build configuration list for PBXNativeTarget "HexUITests" */;
+			buildPhases = (
+				7FCF295E3044FB770069F58B /* Sources */,
+				7FCF295F3044FB770069F58B /* Frameworks */,
+				7FCF29603044FB770069F58B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7FCF29643044FB770069F58B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				7FCF29653044FB770069F58B /* HexUITests */,
+			);
+			name = HexUITests;
+			packageProductDependencies = (
+			);
+			productName = HexUITests;
+			productReference = 7FCF29623044FB770069F58B /* HexUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7FCF29413044FB760069F58B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					7FCF29483044FB760069F58B = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					7FCF29573044FB770069F58B = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 7FCF29483044FB760069F58B;
+					};
+					7FCF29613044FB770069F58B = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 7FCF29483044FB760069F58B;
+					};
+				};
+			};
+			buildConfigurationList = 7FCF29443044FB760069F58B /* Build configuration list for PBXProject "Hex" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 7FCF29403044FB760069F58B;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 7FCF294A3044FB760069F58B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7FCF29483044FB760069F58B /* Hex */,
+				7FCF29573044FB770069F58B /* HexTests */,
+				7FCF29613044FB770069F58B /* HexUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7FCF29473044FB760069F58B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7FCF29563044FB770069F58B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7FCF29603044FB770069F58B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		484558B10000000000000001 /* Stage Hex Gateway */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/script/stage_gateway.sh",
+				"$(PROJECT_DIR)/Packages/HexKit",
+				"$(PROJECT_DIR)/Resources/LaunchAgent/com.lunarmothstudios.hex.gateway.plist",
+			);
+			name = "Stage Hex Gateway";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Resources/HexGateway.app",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchAgents/com.lunarmothstudios.hex.gateway.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "if [[ \"$CONFIGURATION\" != \"Debug\" ]]; then\n    echo \"HexGateway staging is currently supported only for Debug builds.\" >&2\n    exit 1\nfi\nif [[ \"$CODE_SIGNING_ALLOWED\" != \"YES\" ]]; then\n    echo \"A usable Hex Debug app requires signing so its resident gateway can share protected credentials.\" >&2\n    exit 1\nfi\n\"$PROJECT_DIR/script/stage_gateway.sh\" \\\n    \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" \\\n    \"$MARKETING_VERSION\" \\\n    \"$CURRENT_PROJECT_VERSION\" \\\n    \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n    \"$PRODUCT_BUNDLE_IDENTIFIER\" \\\n    \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		7FCF29453044FB760069F58B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7FCF29543044FB770069F58B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7FCF295E3044FB770069F58B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7FCF295A3044FB770069F58B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7FCF29483044FB760069F58B /* Hex */;
+			targetProxy = 7FCF29593044FB770069F58B /* PBXContainerItemProxy */;
+		};
+		7FCF29643044FB770069F58B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7FCF29483044FB760069F58B /* Hex */;
+			targetProxy = 7FCF29633044FB770069F58B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		7FCF296A3044FB770069F58B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		7FCF296B3044FB770069F58B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		7FCF296D3044FB770069F58B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/Hex.Debug.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.Hex;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		7FCF296E3044FB770069F58B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.Hex;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		7FCF29703044FB770069F58B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.HexTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hex.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hex";
+			};
+			name = Debug;
+		};
+		7FCF29713044FB770069F58B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.HexTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hex.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hex";
+			};
+			name = Release;
+		};
+		7FCF29733044FB770069F58B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.HexUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Hex;
+			};
+			name = Debug;
+		};
+		7FCF29743044FB770069F58B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.HexUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Hex;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		7FCF29443044FB760069F58B /* Build configuration list for PBXProject "Hex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7FCF296A3044FB770069F58B /* Debug */,
+				7FCF296B3044FB770069F58B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7FCF296C3044FB770069F58B /* Build configuration list for PBXNativeTarget "Hex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7FCF296D3044FB770069F58B /* Debug */,
+				7FCF296E3044FB770069F58B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7FCF296F3044FB770069F58B /* Build configuration list for PBXNativeTarget "HexTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7FCF29703044FB770069F58B /* Debug */,
+				7FCF29713044FB770069F58B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7FCF29723044FB770069F58B /* Build configuration list for PBXNativeTarget "HexUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7FCF29733044FB770069F58B /* Debug */,
+				7FCF29743044FB770069F58B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/HexKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		484558505244000000000001 /* HexCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexCore;
+		};
+		484558505244000000000002 /* HexRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexRuntime;
+		};
+		484558505244000000000003 /* HexPersistence */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexPersistence;
+		};
+		484558505244000000000004 /* HexProviders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexProviders;
+		};
+		484558505244000000000005 /* HexCapabilities */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexCapabilities;
+		};
+		484558505244000000000006 /* HexPersonality */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexPersonality;
+		};
+		484558505244000000000007 /* HexIPC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexIPC;
+		};
+		484558505244000000000008 /* HexMCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexMCP;
+		};
+		484558505244000000000009 /* HexGatewayKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 484558504B47000000000001 /* XCLocalSwiftPackageReference "Packages/HexKit" */;
+			productName = HexGatewayKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 7FCF29413044FB760069F58B /* Project object */;
+}

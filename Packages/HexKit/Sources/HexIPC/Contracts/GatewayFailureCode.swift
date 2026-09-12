@@ -1,0 +1,33 @@
+public enum GatewayFailureCode: String, Codable, Equatable, Sendable {
+  case conversationChanged
+  case taskRequestRejected
+
+  case incompatibleProtocolVersion
+  case malformedVersionRange
+  case notConnected
+  case staleSession
+  case capacityExceeded
+  case toolMaintenanceInProgress
+  case conflictingRunRequest
+  case runNotFound
+  case staleRunInvocation
+  case replayUnavailable
+  case recoveryUnavailable
+  case artifactUnavailable
+  case invalidCursor
+  case invalidEventSequence
+  case wrongRun
+  case eventAfterTerminal
+  case unsupportedEventSchema
+  case producerEndedWithoutTerminalEvent
+  case runDriverFailed
+  case consumerTooSlow
+  case malformedPayload
+  case payloadTooLarge
+  case authorizationRequestNotPending
+  case authorizationRequestMismatch
+  case authorizationRequestAlreadyPending
+  case disconnected
+  case transportUnavailable
+  case supersededOperation
+}

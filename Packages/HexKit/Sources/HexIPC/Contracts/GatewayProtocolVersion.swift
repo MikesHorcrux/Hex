@@ -1,0 +1,33 @@
+public struct GatewayProtocolVersion: Codable, Comparable, Sendable {
+  /// Version 1.12 requires acknowledged XPC event admission. Reject older binaries during the
+  /// Data-only handshake, before calling the incompatible event-sink selector. Approval choices,
+  /// nonexecution receipts, and bounded scheduled-run history remain part of this contract.
+  /// Version 1.13 also identifies non-admission during idle tool maintenance. Older peers cannot
+  /// safely interpret that new outcome, so both endpoints must implement the current contract.
+  /// Version 1.14 requires an approval inbox for scheduled work that waits for a human decision.
+  /// Version 1.15 requires custom stdio identity and actionable MCP authentication status.
+  /// Version 1.16 requires resident conversation storage and revision-checked paged history.
+  /// Version 1.17 requires durable task admission, recovery and ordered controls.
+  /// Version 1.18 links durable execution to stable conversations and a resident-owned timeline.
+  /// Version 1.19 requires durable coding sessions, acknowledged input and change review.
+  public static let minimumSupported = GatewayProtocolVersion(major: 1, minor: 19)
+  public static let current = GatewayProtocolVersion(major: 1, minor: 19)
+
+  public let major: UInt16
+  public let minor: UInt16
+
+  public init(major: UInt16, minor: UInt16) {
+    self.major = major
+    self.minor = minor
+  }
+
+  public static func < (
+    lhs: GatewayProtocolVersion,
+    rhs: GatewayProtocolVersion
+  ) -> Bool {
+    if lhs.major != rhs.major {
+      return lhs.major < rhs.major
+    }
+    return lhs.minor < rhs.minor
+  }
+}

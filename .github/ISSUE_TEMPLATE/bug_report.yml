@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible alpha problem using sanitized information.
+body:
+  - type: markdown
+    attributes:
+      value: "For vulnerabilities use private Security reporting. Do not attach credentials, private conversations, or unredacted screenshots."
+  - type: input
+    id: revision
+    attributes:
+      label: Source commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: macOS, Xcode, Mac architecture, and selected provider/model
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce with disposable data
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs or screenshots

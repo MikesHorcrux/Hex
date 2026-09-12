@@ -1,0 +1,67 @@
+import Foundation
+
+extension SQLiteAgentEventJournal {
+  func validateBoundedForeignKeyData(
+    connection: SQLiteConnection,
+    checksCancellation: Bool
+  ) throws {
+    var recordCount = 0
+    try validateBoundedRunReferences(
+      table: "event_records",
+      connection: connection,
+      checksCancellation: checksCancellation,
+      recordCount: &recordCount
+    )
+    try validateBoundedRunReferences(
+      table: "journal_checkpoints",
+      connection: connection,
+      checksCancellation: checksCancellation,
+      recordCount: &recordCount
+    )
+  }
+
+  private func validateBoundedRunReferences(
+    table: String,
+    connection: SQLiteConnection,
+    checksCancellation: Bool,
+    recordCount: inout Int
+  ) throws {
+    let remainingCapacity = configuration.auditRecordLimit - recordCount
+    let statement = try connection.prepare("SELECT run_id FROM \(table) LIMIT ?")
+    try statement.bind(Int64(remainingCapacity + 1), at: 1)
+    while true {
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
+      let stepResult = try statement.step()
+      if checksCancellation {
+        try Task.checkCancellation()
+      }
+      guard stepResult == .row else {
+        break
+      }
+      guard recordCount < configuration.auditRecordLimit else {
+        throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
+          maximum: configuration.auditRecordLimit
+        )
+      }
+      let runID = try statement.columnText(
+        at: 0,
+        maximumBytes: configuration.maximumTextBytes
+      )
+      guard let uuid = UUID(uuidString: runID), runID == uuid.uuidString else {
+        throw SQLiteAgentEventJournalError.corruptSchema(
+          "\(table).run_id is not stored as canonical UUID text."
+        )
+      }
+      let referencedRun = try connection.prepare("SELECT 1 FROM runs WHERE run_id = ? LIMIT 1")
+      try referencedRun.bind(runID, at: 1)
+      guard try referencedRun.step() == .row else {
+        throw SQLiteAgentEventJournalError.corruptSchema(
+          "\(table) contains a foreign-key violation."
+        )
+      }
+      recordCount += 1
+    }
+  }
+}
