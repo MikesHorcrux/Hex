@@ -15,22 +15,6 @@ actor HexLiveAgentClient: HexAgentClient, HexGatewayProcessSessionClient, HexGat
   HexAccessibilityPermissionServicing, HexScreenControlPermissionServicing,
   HexResidentGatewayConnectionResetting, HexToolServerHealthServicing, HexPermissionManaging
 {
-  enum ClientError: Error, Equatable, LocalizedError, Sendable {
-    case applicationSupportUnavailable
-    case workspaceUnavailable
-    case modelMismatch(expected: String)
-
-    var errorDescription: String? {
-      switch self {
-      case .applicationSupportUnavailable:
-        "Hex could not locate Application Support for its local event journal."
-      case .workspaceUnavailable:
-        "The in-process developer gateway needs an absolute workspace folder. Set HEX_WORKSPACE_ROOT and try again."
-      case .modelMismatch(let expected):
-        "The selected model must match HEX_OPENAI_MODEL (\(expected))."
-      }
-    }
-  }
 
   private let configuration: HexDeveloperConfiguration
   private let authorizationBroker: HexAuthorizationBroker
@@ -47,8 +31,7 @@ actor HexLiveAgentClient: HexAgentClient, HexGatewayProcessSessionClient, HexGat
       id: UUID,
       task: Task<GatewayConnectionResult, any Error>
     )?
-  private var resolvedInProcessInferenceConfiguration:
-    HexInProcessInferenceConfigurationResolver.Resolution?
+  private var resolvedInProcessInferenceConfiguration: HexInProcessInferenceResolution?
 
   init(
     configuration: HexDeveloperConfiguration,
@@ -222,17 +205,17 @@ actor HexLiveAgentClient: HexAgentClient, HexGatewayProcessSessionClient, HexGat
   }
 
   func processSession(_ request: GatewayProcessSessionRequest) async throws
-    -> GatewayProcessSessionRequest.Response
+    -> GatewayProcessSessionResponse
   {
     try await connectedGatewayAdapter().client.processSession(request)
   }
 
-  func taskOperation(_ request: GatewayTaskRequest) async throws -> GatewayTaskRequest.Response {
+  func taskOperation(_ request: GatewayTaskRequest) async throws -> GatewayTaskResponse {
     try await connectedGatewayAdapter().client.taskOperation(request)
   }
 
   func conversationStorage(_ request: ConversationStorageRequest) async throws
-    -> ConversationStorageRequest.Response
+    -> ConversationStorageResponse
   {
     try await connectedGatewayAdapter().client.conversationStorage(request)
   }
@@ -669,7 +652,7 @@ actor HexLiveAgentClient: HexAgentClient, HexGatewayProcessSessionClient, HexGat
   }
 
   private func inProcessInferenceConfiguration() async throws
-    -> HexInProcessInferenceConfigurationResolver.Resolution
+    -> HexInProcessInferenceResolution
   {
     if let resolvedInProcessInferenceConfiguration {
       return resolvedInProcessInferenceConfiguration
@@ -681,7 +664,7 @@ actor HexLiveAgentClient: HexAgentClient, HexGatewayProcessSessionClient, HexGat
 
   private func inProcessWorkspaceRoot() throws -> URL {
     guard let workspaceRoot = configuration.workspaceRoot else {
-      throw ClientError.workspaceUnavailable
+      throw HexLiveAgentClientError.workspaceUnavailable
     }
     return workspaceRoot
   }
@@ -693,7 +676,7 @@ actor HexLiveAgentClient: HexAgentClient, HexGatewayProcessSessionClient, HexGat
         in: .userDomainMask
       ).first
     else {
-      throw ClientError.applicationSupportUnavailable
+      throw HexLiveAgentClientError.applicationSupportUnavailable
     }
     return
       applicationSupport

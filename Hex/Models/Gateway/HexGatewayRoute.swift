@@ -2,14 +2,9 @@
 /// provider or tool composition happens so the UI never presents an in-process fallback as a
 /// resident gateway.
 nonisolated struct HexGatewayRoute: Equatable, Sendable {
-  enum Kind: String, Equatable, Sendable {
-    case residentXPC
-    case developerInProcess
-  }
-
   static let defaultMachServiceName = "com.lunarmothstudios.hex.gateway"
 
-  let kind: Kind
+  let kind: HexGatewayRouteKind
   let machServiceName: String
 
   static func residentXPC(

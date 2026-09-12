@@ -10,7 +10,7 @@ public final class InferenceStream: Sendable {
   private let cancellation: InferenceStreamCancellation
   private let events: AsyncThrowingStream<InferenceStreamEvent, any Error>
   private let termination: Task<Void, Never>
-  private let state = Mutex(State.idle)
+  private let state = Mutex(InferenceStreamState.idle)
 
   public init(
     events: AsyncThrowingStream<InferenceStreamEvent, any Error>,
@@ -121,10 +121,4 @@ public final class InferenceStream: Sendable {
     }
   }
 
-  private enum State: Sendable {
-    case idle
-    case consuming(InferenceStreamCursorControl)
-    case cancelled
-    case finished
-  }
 }

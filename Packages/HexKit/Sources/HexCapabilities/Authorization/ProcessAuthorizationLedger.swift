@@ -5,23 +5,11 @@ import HexCore
 /// authorization provider still decides whether a request is allowed; this ledger only carries the
 /// exact file snapshot from the displayed authorization request to the subsequent execution.
 public actor ProcessAuthorizationLedger {
-  private struct Key: Hashable, Sendable {
-    let runID: AgentRunID
-    let toolCallID: ToolCallID
-  }
-
-  struct Snapshot: Sendable {
-    let request: ProcessExecutionRequest
-    let identity: ProcessExecutionIdentity
-    let storageBytes: Int
-    let expiresAt: UInt64
-  }
-
   private static let maximumEntries = 4_096
   private static let maximumBytes = 8 * 1_024 * 1_024
   private static let snapshotLifetimeNanoseconds: UInt64 = 60 * 1_000_000_000
 
-  private var pending: [Key: Snapshot] = [:]
+  private var pending: [ProcessAuthorizationLedgerKey: ProcessAuthorizationLedgerSnapshot] = [:]
   private var pendingBytes = 0
 
   public init() {}
@@ -38,7 +26,7 @@ public actor ProcessAuthorizationLedger {
   ) throws {
     let now = DispatchTime.now().uptimeNanoseconds
     purgeExpired(at: now)
-    let key = Key(runID: runID, toolCallID: toolCallID)
+    let key = ProcessAuthorizationLedgerKey(runID: runID, toolCallID: toolCallID)
     if let existing = pending[key] {
       guard existing.request == request, existing.identity == identity else {
         throw ProcessExecutionError.authorizationStateUnavailable
@@ -63,7 +51,7 @@ public actor ProcessAuthorizationLedger {
       Self.snapshotLifetimeNanoseconds
     )
     let expiration = overflowed ? UInt64.max : candidateExpiration
-    pending[key] = Snapshot(
+    pending[key] = ProcessAuthorizationLedgerSnapshot(
       request: request,
       identity: identity,
       storageBytes: storageBytes,
@@ -77,16 +65,16 @@ public actor ProcessAuthorizationLedger {
   func take(
     runID: AgentRunID,
     toolCallID: ToolCallID
-  ) -> Snapshot? {
+  ) -> ProcessAuthorizationLedgerSnapshot? {
     purgeExpired(at: DispatchTime.now().uptimeNanoseconds)
-    return remove(Key(runID: runID, toolCallID: toolCallID))
+    return remove(ProcessAuthorizationLedgerKey(runID: runID, toolCallID: toolCallID))
   }
 
   /// Discards one pending request. Tool control uses this on cancellation and validation failure
   /// so a malformed retry cannot leave an old approval waiting for accidental reuse.
   func remove(runID: AgentRunID, toolCallID: ToolCallID) {
     purgeExpired(at: DispatchTime.now().uptimeNanoseconds)
-    _ = remove(Key(runID: runID, toolCallID: toolCallID))
+    _ = remove(ProcessAuthorizationLedgerKey(runID: runID, toolCallID: toolCallID))
   }
 
   /// Allows a host to discard pending requests when a run ends or an authorization is denied.
@@ -114,7 +102,7 @@ public actor ProcessAuthorizationLedger {
   }
 
   @discardableResult
-  private func remove(_ key: Key) -> Snapshot? {
+  private func remove(_ key: ProcessAuthorizationLedgerKey) -> ProcessAuthorizationLedgerSnapshot? {
     guard let snapshot = pending.removeValue(forKey: key) else {
       return nil
     }

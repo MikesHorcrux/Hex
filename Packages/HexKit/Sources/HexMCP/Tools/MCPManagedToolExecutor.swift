@@ -13,61 +13,6 @@ public actor MCPManagedToolExecutor: ToolExecutor {
   private static let maximumStartupTimeout: Duration = .seconds(30)
   private static let productionRetryDelay: Duration = .seconds(30)
 
-  private actor StartupRace {
-    enum Outcome: Sendable {
-      case started(availableToolCount: Int)
-      case failed(MCPManagedToolFailure)
-      case timedOut
-      case cancelled
-    }
-
-    private enum State {
-      case pending
-      case stopping(Outcome)
-      case resolved(Outcome)
-    }
-
-    private var state = State.pending
-    private var continuation: CheckedContinuation<Outcome, Never>?
-
-    func waitForOutcome() async -> Outcome {
-      switch state {
-      case .resolved(let outcome):
-        return outcome
-      case .pending, .stopping:
-        return await withCheckedContinuation { continuation in
-          if case .resolved(let outcome) = state {
-            continuation.resume(returning: outcome)
-          } else {
-            self.continuation = continuation
-          }
-        }
-      }
-    }
-
-    func resolve(_ outcome: Outcome) {
-      guard case .pending = state else { return }
-      finish(outcome)
-    }
-
-    func stopAndResolve(
-      _ outcome: Outcome,
-      executor: MCPToolExecutor
-    ) async {
-      guard case .pending = state else { return }
-      state = .stopping(outcome)
-      await executor.requestStop()
-      finish(outcome)
-    }
-
-    private func finish(_ outcome: Outcome) {
-      state = .resolved(outcome)
-      let continuation = self.continuation
-      self.continuation = nil
-      continuation?.resume(returning: outcome)
-    }
-  }
-
   public nonisolated let serverID: String
 
   private let executor: MCPToolExecutor
@@ -306,7 +251,7 @@ public actor MCPManagedToolExecutor: ToolExecutor {
     return attempt
   }
 
-  private func finishStartup(id: UUID, outcome: StartupRace.Outcome) -> Bool {
+  private func finishStartup(id: UUID, outcome: MCPManagedToolExecutorStartupRaceOutcome) -> Bool {
     // A stopped or replaced attempt must never publish a late ready catalog.
     guard startup?.id == id, shutdown == nil else { return false }
     startup = nil
@@ -400,9 +345,9 @@ public actor MCPManagedToolExecutor: ToolExecutor {
     }
   }
 
-  private func startBeforeDeadline() async throws -> StartupRace.Outcome {
+  private func startBeforeDeadline() async throws -> MCPManagedToolExecutorStartupRaceOutcome {
     try Task.checkCancellation()
-    let race = StartupRace()
+    let race = MCPManagedToolExecutorStartupRace()
     let executor = self.executor
     let startupTimeout = self.startupTimeout
     let startupTask = Task {

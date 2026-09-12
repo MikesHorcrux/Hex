@@ -69,7 +69,7 @@ struct SQLiteConversationTaskTests {
     #expect(try await journal.conversationTasks(parent, before: nil, limit: 20).count == 20)
     #expect(try await journal.activeConversationTask(parent)?.id == first?.id)
     var paused = try #require(first)
-    let instruction = AgentTaskRecord.Instruction(id: UUID(), text: "Keep this once")
+    let instruction = AgentTaskInstruction(id: UUID(), text: "Keep this once")
     paused.instructions.append(instruction)
     let saved = try await journal.saveTask(paused)
     _ = try await journal.saveTask(saved)

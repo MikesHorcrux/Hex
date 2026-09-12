@@ -289,7 +289,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "if [[ \"$CONFIGURATION\" != \"Debug\" ]]; then\n    echo \"HexGateway staging is currently supported only for Debug builds.\" >&2\n    exit 1\nfi\nif [[ \"$CODE_SIGNING_ALLOWED\" != \"YES\" ]]; then\n    echo \"A usable Hex Debug app requires signing so its resident gateway can share protected credentials.\" >&2\n    exit 1\nfi\n\"$PROJECT_DIR/script/stage_gateway.sh\" \\\n    \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" \\\n    \"$MARKETING_VERSION\" \\\n    \"$CURRENT_PROJECT_VERSION\" \\\n    \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n    \"$PRODUCT_BUNDLE_IDENTIFIER\" \\\n    \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\n";
+			shellScript = "if [[ \"$CODE_SIGNING_ALLOWED\" != \"YES\" ]]; then\n    echo \"A usable Hex app requires signing so its resident gateway can share protected credentials.\" >&2\n    exit 1\nfi\n\"$PROJECT_DIR/script/stage_gateway.sh\" \\\n    \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" \\\n    \"$MARKETING_VERSION\" \\\n    \"$CURRENT_PROJECT_VERSION\" \\\n    \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n    \"$PRODUCT_BUNDLE_IDENTIFIER\" \\\n    \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -460,6 +460,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Config/Hex.Debug.entitlements;
@@ -477,7 +478,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.Hex;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -495,12 +496,14 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 484558434F4E464947000001 /* Developer.xcconfig */;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/Hex.Release.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -513,6 +516,7 @@
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -520,7 +524,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lunarmothstudios.Hex;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

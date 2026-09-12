@@ -128,7 +128,7 @@ struct HexConversationTurnTests {
       "pendingRun": ["request": source, "firstEventID": first]
     ])
     let id = UUID()
-    let document = ConversationStorageRequest.Document(
+    let document = ConversationStorageDocument(
       id: id, title: "Legacy", createdAt: Date(), updatedAt: Date(), state: state)
     _ = try await journal.conversationStorage(.write(.init(document: document, entries: [])))
     try await journal.close()

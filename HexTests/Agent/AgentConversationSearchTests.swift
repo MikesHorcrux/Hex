@@ -9,7 +9,7 @@ struct AgentConversationSearchTests {
   @Test
   func matchesVisibleTitlesAndEveryTranscriptRoleIgnoringCaseAndDiacritics() async throws {
     let titleMatch = AgentConversation(title: "Café planning")
-    let rowMatches = [ConversationItem.Role.user, .assistant, .tool, .event].map { role in
+    let rowMatches = [ConversationItemRole.user, .assistant, .tool, .event].map { role in
       AgentConversation(
         title: "Another conversation",
         transcript: [ConversationItem(role: role, text: "Résumé ready")])

@@ -36,7 +36,8 @@ public actor JSONPersonalityProfileStore: PersonalityProfileStore {
           return nil
         }
         do {
-          let snapshot = try JSONDecoder().decode(PersistedProfile.self, from: data)
+          let snapshot = try JSONDecoder().decode(
+            JSONPersonalityProfileStorePersistedProfile.self, from: data)
           guard snapshot.schemaVersion == Self.schemaVersion else {
             throw PersonalityProfileStoreError.malformedProfile
           }
@@ -54,7 +55,8 @@ public actor JSONPersonalityProfileStore: PersonalityProfileStore {
 
   public func save(_ profile: PersonalityProfile) async throws {
     try Task.checkCancellation()
-    let snapshot = PersistedProfile(schemaVersion: Self.schemaVersion, profile: profile)
+    let snapshot = JSONPersonalityProfileStorePersistedProfile(
+      schemaVersion: Self.schemaVersion, profile: profile)
     let data: Data
     do {
       let encoder = JSONEncoder()
@@ -88,7 +90,7 @@ public actor JSONPersonalityProfileStore: PersonalityProfileStore {
       return try operation()
     } catch let error as PersonalityProfileStoreError {
       throw error
-    } catch let error as JSONPersonalityStoreFileSupport.Failure {
+    } catch let error as JSONPersonalityStoreFileSupportFailure {
       switch error {
       case .invalidFileURL:
         throw PersonalityProfileStoreError.invalidFileURL
@@ -102,11 +104,6 @@ public actor JSONPersonalityProfileStore: PersonalityProfileStore {
         throw PersonalityProfileStoreError.profileTooLarge
       }
     }
-  }
-
-  private struct PersistedProfile: Codable, Sendable {
-    let schemaVersion: Int
-    let profile: PersonalityProfile
   }
 
   private static let schemaVersion = 1

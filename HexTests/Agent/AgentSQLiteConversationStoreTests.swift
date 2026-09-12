@@ -25,7 +25,7 @@ struct AgentSQLiteConversationStoreTests {
     try await first.saveChanges([original], selected: original.id)
     _ = try await second.listConversations(.init())
     stale.title = "Stale replacement"
-    await #expect(throws: ConversationStorageRequest.Failure.revisionConflict) {
+    await #expect(throws: ConversationStorageFailure.revisionConflict) {
       try await second.saveChanges([stale], selected: stale.id)
     }
     #expect(try await first.readConversation(original.id).title == "Newer saved work")

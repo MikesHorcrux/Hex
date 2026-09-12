@@ -322,7 +322,7 @@ struct HexDurableTaskTests {
   }
 
   private func wait(
-    _ id: UUID, phase: AgentTaskRecord.Phase, _ composition: HexGatewayComposition,
+    _ id: UUID, phase: AgentTaskPhase, _ composition: HexGatewayComposition,
     _ session: GatewaySessionID
   ) async throws -> AgentTaskRecord {
     for _ in 0..<2000 {

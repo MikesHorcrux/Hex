@@ -105,7 +105,7 @@ extension AgentWorkspaceModel {
     return true
   }
 
-  func updateHistoryOutcome(_ outcome: AgentConversationExchange.Outcome) {
+  func updateHistoryOutcome(_ outcome: AgentConversationExchangeOutcome) {
     guard let index = conversations.firstIndex(where: { $0.id == selectedConversationID }),
       var history = conversations[index].history,
       let exchangeIndex = history.exchanges.firstIndex(where: { $0.runID == currentRunID })

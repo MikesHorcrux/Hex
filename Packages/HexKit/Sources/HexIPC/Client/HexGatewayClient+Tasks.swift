@@ -1,6 +1,6 @@
 extension HexGatewayClient: HexGatewayTaskClient {
   public func taskOperation(_ request: GatewayTaskRequest) async throws
-    -> GatewayTaskRequest.Response
+    -> GatewayTaskResponse
   {
     try Task.checkCancellation()
     let connection = try requireConnectedGeneration()

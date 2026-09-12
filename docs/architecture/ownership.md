@@ -53,7 +53,7 @@ concrete provider products are linked when their composition is enabled.
 `HexGateway` remains a SwiftPM executable instead of duplicating it as an Xcode native target. Xcode
 automatically exposes its `HexGateway` package scheme from the local package reference, while
 command-line and service builds use the Xcode-selected Swift toolchain to build the `HexGateway`
-product. The `Hex` target's Debug build invokes `script/stage_gateway.sh` after resources are copied;
+product. The `Hex` target's Debug and Release builds invoke `script/stage_gateway.sh` after resources are copied;
 that finalizer builds the product serially and stages it inside the same app bundle that Xcode runs at
 `Hex.app/Contents/Resources/HexGateway.app/Contents/MacOS/HexGateway`, with its development
 provisioning profile at
@@ -65,9 +65,11 @@ the outer target, embeds the profile that authorizes the helper's restricted ent
 the helper first with the same Apple Development identity and hardened runtime. Xcode then performs
 its final outer-app signing step. The Debug target and project-local `script/build_and_run.sh` share
 the project's canonical Xcode DerivedData product; the script validates its layout, versions,
-signatures, entitlements, and LaunchAgent without copying or re-signing a second gateway. Debug is limited to the resident
-keychain group declared in `Config/Hex.Debug.entitlements`; Release staging remains fail-closed until
-its distribution signing and helper provisioning are deliberately designed.
+signatures, entitlements, and LaunchAgent without copying or re-signing a second gateway. Both configurations use only the resident
+Keychain group, declared in `Config/Hex.Debug.entitlements` and `Config/Hex.Release.entitlements`.
+Release archives target Apple Silicon and stage an optimized gateway with the same architecture.
+These archives use the development signing identity; public distribution still requires Developer ID
+export, appropriate provisioning, notarization, and installation verification.
 
 ## Contributor coordination
 

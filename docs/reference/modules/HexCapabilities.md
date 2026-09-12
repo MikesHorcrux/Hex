@@ -4,7 +4,7 @@
 
 Native file, process, web, Mac and artifact capability execution.
 
-**156 Swift files.** Generated; do not edit by hand.
+**167 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexCapabilities/Artifacts
 
@@ -34,6 +34,8 @@ Native file, process, web, Mac and artifact capability execution.
 | [DenyingAuthorizationPrompter.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/DenyingAuthorizationPrompter.swift) | A fail-closed fallback for headless or incompletely composed runtimes. |
 | [LowRiskAuthorizationPolicy.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/LowRiskAuthorizationPolicy.swift) | Host-owned allowlist for built-in, scoped local observation. Never classify from descriptions, model arguments or MCP read-only hints. MCP authorization uses namespaced mcp_* capabilities with operation "call", so it cannot collide with the… |
 | [ProcessAuthorizationLedger.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/ProcessAuthorizationLedger.swift) | Actor-owned, bounded pending authorization state for process identities. The external authorization provider still decides whether a request is allowed; this ledger only carries the exact file snapshot from the displayed authorization reque… |
+| [ProcessAuthorizationLedgerKey.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/ProcessAuthorizationLedgerKey.swift) | — |
+| [ProcessAuthorizationLedgerSnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/ProcessAuthorizationLedgerSnapshot.swift) | — |
 | [ProcessAuthorizationResource.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/ProcessAuthorizationResource.swift) | — |
 | [RunAuthorizationGrantKey.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/RunAuthorizationGrantKey.swift) | — |
 | [UnavailableAuthorizationGrantStore.swift](../../../Packages/HexKit/Sources/HexCapabilities/Authorization/UnavailableAuthorizationGrantStore.swift) | Fail-closed default that prevents a UI choice labeled persistent from silently becoming a process-memory grant when durable storage has not been composed. |
@@ -51,6 +53,7 @@ Native file, process, web, Mac and artifact capability execution.
 | [GitWorkspaceReader.swift](../../../Packages/HexKit/Sources/HexCapabilities/Coding/GitWorkspaceReader.swift) | Fixed Git read operations with optional locks, helpers, pager, textconv and configured filters disabled. The model cannot select commands, configuration or environment. |
 | [UnifiedPatch.swift](../../../Packages/HexKit/Sources/HexCapabilities/Coding/UnifiedPatch.swift) | Deliberately small unified-diff dialect: UTF-8 text, exact hunks, a/ and b/ paths, /dev/null. No fuzzy offsets, rename/mode/binary records, quoted paths, timestamps or implicit directories. |
 | [UnifiedPatchFile.swift](../../../Packages/HexKit/Sources/HexCapabilities/Coding/UnifiedPatchFile.swift) | — |
+| [UnifiedPatchFileHunk.swift](../../../Packages/HexKit/Sources/HexCapabilities/Coding/UnifiedPatchFileHunk.swift) | — |
 | [WorkspaceChangesTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Coding/WorkspaceChangesTool.swift) | — |
 | [WorkspacePatchError.swift](../../../Packages/HexKit/Sources/HexCapabilities/Coding/WorkspacePatchError.swift) | — |
 | [WorkspacePatchTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Coding/WorkspacePatchTool.swift) | — |
@@ -72,7 +75,9 @@ Native file, process, web, Mac and artifact capability execution.
 | [MacAccessibilityControlling.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityControlling.swift) | — |
 | [MacAccessibilityElementSnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityElementSnapshot.swift) | — |
 | [MacAccessibilityObservationLedger.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityObservationLedger.swift) | Binds a bounded, single-use observation to the run that obtained it. This is not an approval. |
+| [MacAccessibilityObservationLedgerEntry.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityObservationLedgerEntry.swift) | — |
 | [MacAccessibilityReadError.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityReadError.swift) | Structural AX failures contain only the requested attribute, generated path, and API status. |
+| [MacAccessibilityReadErrorReason.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilityReadErrorReason.swift) | — |
 | [MacAccessibilitySelector.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySelector.swift) | — |
 | [MacAccessibilitySnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshot.swift) | — |
 | [MacAccessibilitySnapshotTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacAccessibilitySnapshotTool.swift) | — |
@@ -90,6 +95,8 @@ Native file, process, web, Mac and artifact capability execution.
 | [MacToolResult.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/MacToolResult.swift) | — |
 | [SystemMacAccessibilityController+Traversal.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController+Traversal.swift) | — |
 | [SystemMacAccessibilityController.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityController.swift) | Retains native AX identities on the main actor; public values crossing the boundary are Sendable. |
+| [SystemMacAccessibilityControllerObservation.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityControllerObservation.swift) | — |
+| [SystemMacAccessibilityControllerObservedElement.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacAccessibilityControllerObservedElement.swift) | — |
 | [SystemMacApplicationController+LocalURL.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacApplicationController+LocalURL.swift) | — |
 | [SystemMacApplicationController.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacApplicationController.swift) | — |
 | [SystemMacInteractionSessionChecker.swift](../../../Packages/HexKit/Sources/HexCapabilities/Mac/SystemMacInteractionSessionChecker.swift) | Reads local WindowServer session availability without requesting permissions or changing state. |
@@ -109,6 +116,7 @@ Native file, process, web, Mac and artifact capability execution.
 | [ProcessExecutionRequest.swift](../../../Packages/HexKit/Sources/HexCapabilities/Process/ProcessExecutionRequest.swift) | — |
 | [ProcessExecutionRequestValidator.swift](../../../Packages/HexKit/Sources/HexCapabilities/Process/ProcessExecutionRequestValidator.swift) | — |
 | [ProcessExecutionResult.swift](../../../Packages/HexKit/Sources/HexCapabilities/Process/ProcessExecutionResult.swift) | — |
+| [ProcessFileIdentity.swift](../../../Packages/HexKit/Sources/HexCapabilities/Process/ProcessFileIdentity.swift) | — |
 | [ProcessOutputCapture.swift](../../../Packages/HexKit/Sources/HexCapabilities/Process/ProcessOutputCapture.swift) | One invocation's capture state. The monitor task owns this value; the injected session owns disk state. No producer task or unbounded queue can outrun the awaited append boundary. |
 | [ProcessOutputCaptureFailure.swift](../../../Packages/HexKit/Sources/HexCapabilities/Process/ProcessOutputCaptureFailure.swift) | Capture failures do not replace an already-known process exit code. |
 | [ProcessPromptText.swift](../../../Packages/HexKit/Sources/HexCapabilities/Process/ProcessPromptText.swift) | Projects process text into a representation safe to place in an authorization prompt or a model-visible result. Ordinary Unicode remains readable; terminal controls, format characters, and ambiguous separators become explicit escapes. |
@@ -142,6 +150,7 @@ Native file, process, web, Mac and artifact capability execution.
 | Source file | Leading source documentation |
 | --- | --- |
 | [CompositeToolExecutor.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/CompositeToolExecutor.swift) | Presents multiple independently owned tool executors as one runtime surface.  Definitions are rebuilt on every discovery boundary so reconnecting dynamic executors can add or remove tools without mutating the agent runtime or its provider a… |
+| [CompositeToolExecutorDiscoverySnapshot.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/CompositeToolExecutorDiscoverySnapshot.swift) | — |
 | [CompositeToolExecutorError.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/CompositeToolExecutorError.swift) | — |
 | [HostTool.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/HostTool.swift) | — |
 | [HostToolExecutor.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/HostToolExecutor.swift) | — |
@@ -149,7 +158,9 @@ Native file, process, web, Mac and artifact capability execution.
 | [HostToolSchema.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/HostToolSchema.swift) | — |
 | [PersonalAgentToolExecutor.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/PersonalAgentToolExecutor.swift) | Provider-neutral personal-agent tool surface. Inference providers only see tool definitions; every host action still flows through the runtime's authorization provider before execution. |
 | [ToolAuthorizationLedger.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/ToolAuthorizationLedger.swift) | Carries the exact validated call shown to the authorization provider into execution. It is not a grant store: the runtime still owns the allow or deny decision. |
+| [ToolAuthorizationLedgerEntry.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/ToolAuthorizationLedgerEntry.swift) | — |
 | [ToolAuthorizationLedgerError.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/ToolAuthorizationLedgerError.swift) | — |
+| [ToolAuthorizationLedgerKey.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/ToolAuthorizationLedgerKey.swift) | — |
 | [ToolCallArguments.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/ToolCallArguments.swift) | — |
 | [ToolCallArgumentsError.swift](../../../Packages/HexKit/Sources/HexCapabilities/Tools/ToolCallArgumentsError.swift) | — |
 

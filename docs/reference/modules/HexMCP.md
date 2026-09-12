@@ -4,7 +4,7 @@
 
 MCP protocol, transports, managed adapters and discovery.
 
-**90 Swift files.** Generated; do not edit by hand.
+**115 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexMCP/Client
 
@@ -18,6 +18,7 @@ MCP protocol, transports, managed adapters and discovery.
 | [MCPConnectionShutdown.swift](../../../Packages/HexKit/Sources/HexMCP/Client/MCPConnectionShutdown.swift) | — |
 | [MCPConnectionState.swift](../../../Packages/HexKit/Sources/HexMCP/Client/MCPConnectionState.swift) | — |
 | [MCPDeferredClientSession.swift](../../../Packages/HexKit/Sources/HexMCP/Client/MCPDeferredClientSession.swift) | Retains an enabled optional server even when its local runtime cannot yet be constructed.  The factory runs at the managed executor's connection boundary, so installation checks still fail closed for that server without preventing core gate… |
+| [MCPDeferredClientSessionConnection.swift](../../../Packages/HexKit/Sources/HexMCP/Client/MCPDeferredClientSessionConnection.swift) | — |
 
 ## Packages/HexKit/Sources/HexMCP/Configuration
 
@@ -76,6 +77,10 @@ MCP protocol, transports, managed adapters and discovery.
 | [MCPManagedToolLayout.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPManagedToolLayout.swift) | Versioned, non-secret locations for optional MCP runtimes installed outside Hex.app.  Keeping these dependencies in Application Support avoids importing another agent runtime into Hex or adding Node packages to the Swift dependency graph. E… |
 | [MCPManagedToolLayoutError.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPManagedToolLayoutError.swift) | — |
 | [MCPPeekabooPermissionController.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPPeekabooPermissionController.swift) | — |
+| [MCPPeekabooPermissionControllerAcknowledgement.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPPeekabooPermissionControllerAcknowledgement.swift) | — |
+| [MCPPeekabooPermissionControllerPermission.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPPeekabooPermissionControllerPermission.swift) | — |
+| [MCPPeekabooPermissionControllerStatusPayload.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPPeekabooPermissionControllerStatusPayload.swift) | — |
+| [MCPPeekabooPermissionControllerStatusResponse.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPPeekabooPermissionControllerStatusResponse.swift) | — |
 | [MCPPeekabooPermissionStatus.swift](../../../Packages/HexKit/Sources/HexMCP/Managed/MCPPeekabooPermissionStatus.swift) | — |
 
 ## Packages/HexKit/Sources/HexMCP/Process
@@ -84,6 +89,7 @@ MCP protocol, transports, managed adapters and discovery.
 | --- | --- |
 | [MCPBoundedProcessResult.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPBoundedProcessResult.swift) | The bounded output and normalized exit status from one local process invocation. |
 | [MCPBoundedProcessRunner.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPBoundedProcessRunner.swift) | Runs a single local command through Hex's hardened executable-snapshot process boundary. |
+| [MCPBoundedProcessRunnerDrainResult.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPBoundedProcessRunnerDrainResult.swift) | — |
 | [MCPExecutableSnapshot+Bundle.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshot+Bundle.swift) | — |
 | [MCPExecutableSnapshot+Cleanup.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshot+Cleanup.swift) | — |
 | [MCPExecutableSnapshot+Copy.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshot+Copy.swift) | — |
@@ -94,11 +100,27 @@ MCP protocol, transports, managed adapters and discovery.
 | [MCPExecutableSnapshotAdmission+SlotLease.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotAdmission+SlotLease.swift) | — |
 | [MCPExecutableSnapshotAdmission.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotAdmission.swift) | — |
 | [MCPExecutableSnapshotAdmissionError.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotAdmissionError.swift) | — |
+| [MCPExecutableSnapshotBundleLayout.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotBundleLayout.swift) | — |
+| [MCPExecutableSnapshotCopyState.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotCopyState.swift) | — |
+| [MCPExecutableSnapshotCreatedEntry.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotCreatedEntry.swift) | — |
+| [MCPExecutableSnapshotCreatedEntryKind.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotCreatedEntryKind.swift) | — |
+| [MCPExecutableSnapshotEntry.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotEntry.swift) | — |
+| [MCPExecutableSnapshotExpandedRunpath.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotExpandedRunpath.swift) | — |
+| [MCPExecutableSnapshotFrameworkSymlinkBinding.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotFrameworkSymlinkBinding.swift) | — |
+| [MCPExecutableSnapshotImageRecord.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotImageRecord.swift) | — |
 | [MCPExecutableSnapshotNamespaceUsage.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotNamespaceUsage.swift) | — |
 | [MCPExecutableSnapshotOwnedFile.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotOwnedFile.swift) | — |
 | [MCPExecutableSnapshotPolicy.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotPolicy.swift) | Persistent namespace and per-snapshot admission limits for mutable MCP executables. |
 | [MCPExecutableSnapshotPolicyError.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotPolicyError.swift) | — |
+| [MCPExecutableSnapshotPrivateDirectory.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotPrivateDirectory.swift) | — |
+| [MCPExecutableSnapshotResolvedDependency.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotResolvedDependency.swift) | — |
+| [MCPExecutableSnapshotSourceDirectoryFrame.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotSourceDirectoryFrame.swift) | — |
+| [MCPExecutableSnapshotTrustedXcodeBundle.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPExecutableSnapshotTrustedXcodeBundle.swift) | — |
 | [MCPMachOImage.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPMachOImage.swift) | — |
+| [MCPMachOImageByteOrder.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPMachOImageByteOrder.swift) | — |
+| [MCPMachOImageDependency.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPMachOImageDependency.swift) | — |
+| [MCPMachOImageFatFormat.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPMachOImageFatFormat.swift) | — |
+| [MCPMachOImageThinFormat.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPMachOImageThinFormat.swift) | — |
 | [MCPProcessCleanupSystemCalls.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPProcessCleanupSystemCalls.swift) | Immutable syscall boundary for owned-child cleanup, with errno captured before other work. |
 | [MCPProcessEnvironment.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPProcessEnvironment.swift) | — |
 | [MCPSpawnedProcess.swift](../../../Packages/HexKit/Sources/HexMCP/Process/MCPSpawnedProcess.swift) | — |
@@ -126,6 +148,9 @@ MCP protocol, transports, managed adapters and discovery.
 | [MCPExposedToolName.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPExposedToolName.swift) | — |
 | [MCPManagedToolExecutor.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutor.swift) | Keeps one MCP server optional at the runtime boundary.  Cold discovery may wait or return the current catalog while an owned startup runs. Once unavailable, discovery returns without waiting and may start one cooldown-limited background ret… |
 | [MCPManagedToolExecutorSnapshot.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutorSnapshot.swift) | Cached managed-server health, without starting a connection or reading remote state. |
+| [MCPManagedToolExecutorStartupRace.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutorStartupRace.swift) | — |
+| [MCPManagedToolExecutorStartupRaceOutcome.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutorStartupRaceOutcome.swift) | — |
+| [MCPManagedToolExecutorStartupRaceState.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutorStartupRaceState.swift) | — |
 | [MCPManagedToolExecutorState.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolExecutorState.swift) | — |
 | [MCPManagedToolFailure.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPManagedToolFailure.swift) | A bounded, host-owned health category. Never carries server output or configuration values. |
 | [MCPRemoteTool.swift](../../../Packages/HexKit/Sources/HexMCP/Tools/MCPRemoteTool.swift) | — |

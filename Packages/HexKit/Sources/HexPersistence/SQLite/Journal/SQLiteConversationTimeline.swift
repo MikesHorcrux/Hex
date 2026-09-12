@@ -46,7 +46,7 @@ enum SQLiteConversationTimeline {
     _ event: AgentEvent, eventID: UUID, taskID: UUID, timestamp: Date,
     includeMessages: Bool
   ) -> ConversationTimelineEntry? {
-    let content: ConversationTimelineEntry.Content
+    let content: ConversationTimelineEntryContent
     var id = eventID
     switch event {
     case .messageAppended(let message) where includeMessages:

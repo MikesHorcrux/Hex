@@ -304,7 +304,7 @@ extension HexGatewayService {
   private func enqueue(
     _ envelope: GatewayEventEnvelope,
     wireBytes: Int,
-    into continuation: GatewayBufferedStream<GatewayEventEnvelope>.Continuation
+    into continuation: GatewayBufferedStreamContinuation<GatewayEventEnvelope>
   ) -> Bool {
     switch continuation.yield(envelope, wireBytes: wireBytes) {
     case .enqueued:

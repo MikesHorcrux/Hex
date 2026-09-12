@@ -3,20 +3,12 @@ import HexCore
 
 /// Binds native MCP input to one fresh observation in this run and managed connection.
 public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
-  private struct Receipt {
-    let id: String
-    let runID: AgentRunID
-    let sessionID: UUID
-    let capturedAt: ContinuousClock.Instant
-    let target: HexGatewayPeekabooObservation
-  }
-
   private let base: any ToolExecutor
   private let sessionIdentity: @Sendable () async -> UUID?
   private let now: @Sendable () -> ContinuousClock.Instant
   private let maximumAge: Duration
   private let targetIsCurrent: @Sendable (Int64, Int64, String) -> Bool
-  private var observation: Receipt?
+  private var observation: HexGatewayPeekabooToolExecutorReceipt?
   private var isExecuting = false
 
   public init(base: any ToolExecutor, sessionIdentity: @escaping @Sendable () async -> UUID?) {
@@ -271,7 +263,7 @@ public actor HexGatewayPeekabooToolExecutor: ToolExecutor {
       now() >= observationStartedAt, now() - observationStartedAt <= maximumAge
     {
       let id = UUID().uuidString.lowercased()
-      observation = Receipt(
+      observation = HexGatewayPeekabooToolExecutorReceipt(
         id: id, runID: context.runID, sessionID: session, capturedAt: observationStartedAt,
         target: captured)
       return annotated(

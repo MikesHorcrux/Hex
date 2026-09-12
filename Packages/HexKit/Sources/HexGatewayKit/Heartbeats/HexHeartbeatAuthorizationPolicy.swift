@@ -4,20 +4,8 @@ import HexCore
 /// Applied only after the authorization center has checked Full Access and exact grants. Scheduled
 /// runs wait in the resident approval inbox. Human waiting time does not consume execution time.
 public actor HexHeartbeatAuthorizationPolicy: AuthorizationPrompting {
-  public enum PolicyError: Error, Equatable, Sendable {
-    case registrationUnavailable
-  }
-
-  private struct Registration {
-    let startedAt = ContinuousClock.now
-    var waitingSince: ContinuousClock.Instant?
-    var completedWait: Duration = .zero
-    var observerReleased = false
-    var runtimeEnded = false
-  }
-
   private let interactivePrompter: any AuthorizationPrompting
-  private var registrations: [AgentRunID: Registration] = [:]
+  private var registrations: [AgentRunID: HexHeartbeatAuthorizationPolicyRegistration] = [:]
 
   public init(interactivePrompter: any AuthorizationPrompting) {
     self.interactivePrompter = interactivePrompter
@@ -28,9 +16,9 @@ public actor HexHeartbeatAuthorizationPolicy: AuthorizationPrompting {
     // Lost admission acknowledgements may leave a conservative tombstone until the runtime exits.
     // Bound those explicitly rather than allowing unlimited retention or guessing that work stopped.
     guard registrations[runID] == nil, registrations.count < 16 else {
-      throw PolicyError.registrationUnavailable
+      throw HexHeartbeatAuthorizationPolicyError.registrationUnavailable
     }
-    registrations[runID] = Registration()
+    registrations[runID] = HexHeartbeatAuthorizationPolicyRegistration()
   }
 
   func release(_ runID: AgentRunID, confirmedNotAdmitted: Bool = false) {

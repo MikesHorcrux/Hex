@@ -4,7 +4,7 @@
 
 Gateway wire contracts, clients, services, XPC and recovery.
 
-**153 Swift files.** Generated; do not edit by hand.
+**169 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexIPC/Artifacts
 
@@ -23,6 +23,8 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | [GatewayAuthorizationDecisionRequest.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/GatewayAuthorizationDecisionRequest.swift) | A bounded, exact authorization response payload. The full request is echoed back intentionally: the resident broker compares every field, rather than trusting only the request identifier. |
 | [GatewaySessionGrant.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/GatewaySessionGrant.swift) | An exact grant in one resident lifetime, never a wildcard or a grant after restart. |
 | [HexGatewayAuthorizationCommitGate.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationCommitGate.swift) | Excludes authorization invalidation from the final broker commit for one XPC connection.  The gate is deliberately synchronous: the caller holds the lock while it validates and consumes the pending request, so connection invalidation cannot… |
+| [HexGatewayAuthorizationCommitGateError.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationCommitGateError.swift) | — |
+| [HexGatewayAuthorizationCommitGateState.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationCommitGateState.swift) | — |
 | [HexGatewayAuthorizationDecisionFailure.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationDecisionFailure.swift) | Optional error seam for authorization brokers crossing the XPC boundary. The wire codec maps these errors to a bounded `GatewayFailure` without exposing provider or credential details. |
 | [HexGatewayAuthorizationDecisionTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Authorization/HexGatewayAuthorizationDecisionTransport.swift) | Optional extension to the gateway transport for interactive authorization responses. It is a separate protocol so preview and in-process transports do not acquire a fake XPC requirement. |
 
@@ -72,6 +74,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | [GatewayEventEnvelope.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayEventEnvelope.swift) | A gateway event bound to the exact server-issued invocation that produced it.  `AgentEventRecord` identifies a logical run but intentionally has no gateway-generation field. The envelope prevents a delayed or hostile transport from relabell… |
 | [GatewayFailure.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayFailure.swift) | — |
 | [GatewayFailureCode.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayFailureCode.swift) | — |
+| [GatewayFolderAccessMode.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayFolderAccessMode.swift) | — |
 | [GatewayFolderAccessStatus.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayFolderAccessStatus.swift) | An actual directory read in the resident process, not a claim of Full Disk Access. |
 | [GatewayHandshakeRequest.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayHandshakeRequest.swift) | — |
 | [GatewayHandshakeResponse.swift](../../../Packages/HexKit/Sources/HexIPC/Contracts/GatewayHandshakeResponse.swift) | — |
@@ -124,6 +127,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | Source file | Leading source documentation |
 | --- | --- |
 | [GatewayProcessSessionRequest.swift](../../../Packages/HexKit/Sources/HexIPC/Processes/GatewayProcessSessionRequest.swift) | — |
+| [GatewayProcessSessionResponse.swift](../../../Packages/HexKit/Sources/HexIPC/Processes/GatewayProcessSessionResponse.swift) | — |
 | [HexGatewayProcessSessionClient.swift](../../../Packages/HexKit/Sources/HexIPC/Processes/HexGatewayProcessSessionClient.swift) | — |
 | [HexGatewayProcessSessionTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Processes/HexGatewayProcessSessionTransport.swift) | — |
 
@@ -175,8 +179,10 @@ Gateway wire contracts, clients, services, XPC and recovery.
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [GatewayTaskAction.swift](../../../Packages/HexKit/Sources/HexIPC/Tasks/GatewayTaskAction.swift) | — |
 | [GatewayTaskCheckpoint.swift](../../../Packages/HexKit/Sources/HexIPC/Tasks/GatewayTaskCheckpoint.swift) | Reconstructs only proven journal facts. Original records are never modified by continuation. |
 | [GatewayTaskRequest.swift](../../../Packages/HexKit/Sources/HexIPC/Tasks/GatewayTaskRequest.swift) | — |
+| [GatewayTaskResponse.swift](../../../Packages/HexKit/Sources/HexIPC/Tasks/GatewayTaskResponse.swift) | — |
 | [HexGatewayBoundaryStopping.swift](../../../Packages/HexKit/Sources/HexIPC/Tasks/HexGatewayBoundaryStopping.swift) | — |
 | [HexGatewayTaskClient.swift](../../../Packages/HexKit/Sources/HexIPC/Tasks/HexGatewayTaskClient.swift) | — |
 | [HexGatewayTaskTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Tasks/HexGatewayTaskTransport.swift) | — |
@@ -186,6 +192,10 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | Source file | Leading source documentation |
 | --- | --- |
 | [GatewayBufferedStream.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/GatewayBufferedStream.swift) | A bounded stream charged for actual wire bytes, not the maximum possible size of every token. The unfolding adapter only pulls: it creates no forwarding task or second event queue. |
+| [GatewayBufferedStreamAdmission.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/GatewayBufferedStreamAdmission.swift) | — |
+| [GatewayBufferedStreamContinuation.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/GatewayBufferedStreamContinuation.swift) | — |
+| [GatewayBufferedStreamEntry.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/GatewayBufferedStreamEntry.swift) | — |
+| [GatewayBufferedStreamState.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/GatewayBufferedStreamState.swift) | — |
 | [GatewayTransportConnectionLease.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/GatewayTransportConnectionLease.swift) | A client-issued ownership token for one logical transport connection generation. Transports must bind every operation to the exact lease that completed its handshake. A stale disconnect must never mutate or close a physical connection owned… |
 | [HexGatewayAccessibilityPermissionTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayAccessibilityPermissionTransport.swift) | Optional transport capability for querying and requesting Accessibility in the resident gateway process. Every call is bound to the authenticated connection lease owned by the client. |
 | [HexGatewayArtifactReadTransport.swift](../../../Packages/HexKit/Sources/HexIPC/Transport/HexGatewayArtifactReadTransport.swift) | Optional, session-bound read-only access to immutable output already stored by the resident. |
@@ -212,6 +222,7 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | Source file | Leading source documentation |
 | --- | --- |
 | [GatewayXPCEventSinkBridge.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/GatewayXPCEventSinkBridge.swift) | Owns one in-flight XPC payload until the receiver acknowledges bounded admission. A missing reply, failed admission, or cancellation seals this bridge; late replies cannot admit more work. |
+| [GatewayXPCEventSinkBridgePendingAcknowledgement.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/GatewayXPCEventSinkBridgePendingAcknowledgement.swift) | — |
 | [GatewayXPCEventSubscription.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/GatewayXPCEventSubscription.swift) | A bounded event stream returned by an injected XPC connection. Cancellation is idempotent and sends the corresponding lease-bound cancellation request to the remote endpoint. |
 | [GatewayXPCSubscriptionID.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/GatewayXPCSubscriptionID.swift) | The client-issued identity of one physical event subscription. It is scoped by the lease and session in the enclosing request, so an old connection cannot cancel a newer subscription. |
 | [HexGatewayXPCConnection.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/HexGatewayXPCConnection.swift) | Dependency-injected physical XPC connection seam. Production uses `NativeHexGatewayXPCConnection`; tests provide an actor fake without installing an XPC service. |
@@ -220,6 +231,11 @@ Gateway wire contracts, clients, services, XPC and recovery.
 | [HexGatewayXPCListenerDelegate.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/HexGatewayXPCListenerDelegate.swift) | Minimal listener delegate for a gateway process that already owns an NSXPCListener. It only configures accepted connections; creating the listener, advertising its Mach service, and keeping the gateway process alive remain composition-root … |
 | [HexGatewayXPCService.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/HexGatewayXPCService.swift) | Exported-object adapter for a single NSXPCConnection. It translates bounded Data envelopes into the existing `HexGatewayService` API and owns the connection's lease, session, and subscriptions. A listener should create one instance per acce… |
 | [HexGatewayXPCServiceProtocol.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/HexGatewayXPCServiceProtocol.swift) | The Data-only Objective-C protocol spoken over a local NSXPCConnection. The protocol deliberately carries no Hex model classes: all values are bounded Codable envelopes validated independently at each process boundary. |
+| [HexGatewayXPCServiceState.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/HexGatewayXPCServiceState.swift) | — |
 | [NativeHexGatewayXPCConnection.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/NativeHexGatewayXPCConnection.swift) | Native Foundation XPC client connection. NSXPCConnection is kept entirely inside this actor; only bounded Data and Sendable stream values cross the Swift concurrency boundary. |
+| [NativeHexGatewayXPCConnectionEventSink.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/NativeHexGatewayXPCConnectionEventSink.swift) | — |
+| [NativeHexGatewayXPCConnectionEventState.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/NativeHexGatewayXPCConnectionEventState.swift) | — |
 | [NativeHexGatewayXPCConnectionFactory.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/NativeHexGatewayXPCConnectionFactory.swift) | Production factory for local user-session Mach-service connections. Constructing this value is inert; the service name is contacted only when `makeConnection()` is called by a handshake. |
 | [XPCGatewayTransport.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/XPCGatewayTransport.swift) | App-facing HexGatewayTransport backed by a fresh local XPC connection per handshake. The transport owns no gateway state: the connection factory and the Data-only XPC endpoint are injected, which keeps lifecycle tests independent of launchd… |
+| [XPCGatewayTransportConnectionState.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/XPCGatewayTransportConnectionState.swift) | — |
+| [XPCGatewayTransportHandshakeState.swift](../../../Packages/HexKit/Sources/HexIPC/XPC/XPCGatewayTransportHandshakeState.swift) | — |

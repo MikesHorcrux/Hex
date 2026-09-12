@@ -15,9 +15,9 @@ struct AgentCodingWorkspaceTests {
     var commands: [ProcessSessionCommand] = []
     init(record: ProcessSessionRecord) { self.record = record }
     func processSession(_ request: GatewayProcessSessionRequest) async throws
-      -> GatewayProcessSessionRequest.Response
+      -> GatewayProcessSessionResponse
     {
-      var response = GatewayProcessSessionRequest.Response()
+      var response = GatewayProcessSessionResponse()
       switch request {
       case .list: response.sessions = [record]
       case .read(_, _, let offset, _):

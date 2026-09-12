@@ -41,7 +41,7 @@ struct HexGatewayAuthorizationBrokerTests {
     do {
       try await broker.submit(mismatched, choice: .allowOnce, gate: gate)
       Issue.record("Expected an exact authorization request mismatch.")
-    } catch let error as HexGatewayAuthorizationBroker.BrokerError {
+    } catch let error as HexGatewayAuthorizationBrokerError {
       #expect(error == .requestMismatch)
     }
 
@@ -52,7 +52,7 @@ struct HexGatewayAuthorizationBrokerTests {
     do {
       try await broker.submit(request, choice: .allowForSession, gate: gate)
       Issue.record("Expected a consumed authorization request to reject duplicates.")
-    } catch let error as HexGatewayAuthorizationBroker.BrokerError {
+    } catch let error as HexGatewayAuthorizationBrokerError {
       #expect(error == .requestNotPending)
     }
   }
@@ -81,7 +81,7 @@ struct HexGatewayAuthorizationBrokerTests {
     do {
       try await broker.submit(request, choice: .allowOnce, gate: gate)
       Issue.record("Expected an invalidated authorization commit gate to reject the response.")
-    } catch let error as HexGatewayAuthorizationBroker.BrokerError {
+    } catch let error as HexGatewayAuthorizationBrokerError {
       #expect(error == .requestNotPending)
     }
     #expect(await broker.isPending(request.id))

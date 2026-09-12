@@ -347,12 +347,12 @@ public actor HexHeartbeatScheduler {
 
   private func execute(
     _ request: HexHeartbeatExecutionRequest
-  ) async -> Execution {
+  ) async -> HexHeartbeatSchedulerExecution {
     do {
       let result = try await runner.run(request)
       switch result {
       case .succeeded:
-        return Execution(
+        return HexHeartbeatSchedulerExecution(
           outcome: HexHeartbeatOutcome(
             occurrence: request.occurrence,
             kind: .succeeded,
@@ -361,7 +361,7 @@ public actor HexHeartbeatScheduler {
           wasCancelled: false
         )
       case .failed(let failure):
-        return Execution(
+        return HexHeartbeatSchedulerExecution(
           outcome: HexHeartbeatOutcome(
             occurrence: request.occurrence,
             kind: .failed,
@@ -372,7 +372,7 @@ public actor HexHeartbeatScheduler {
         )
       }
     } catch is CancellationError {
-      return Execution(
+      return HexHeartbeatSchedulerExecution(
         outcome: HexHeartbeatOutcome(
           occurrence: request.occurrence,
           kind: .cancelled,
@@ -386,7 +386,7 @@ public actor HexHeartbeatScheduler {
         wasCancelled: true
       )
     } catch {
-      return Execution(
+      return HexHeartbeatSchedulerExecution(
         outcome: HexHeartbeatOutcome(
           occurrence: request.occurrence,
           kind: .failed,
@@ -563,8 +563,4 @@ public actor HexHeartbeatScheduler {
     }
   }
 
-  private struct Execution: Sendable {
-    let outcome: HexHeartbeatOutcome
-    let wasCancelled: Bool
-  }
 }

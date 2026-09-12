@@ -108,19 +108,19 @@ struct AgentContextCompactionTests {
   func constructionEnforcesUsagePairAndBounds() throws {
     #expect(try make(reportedTokens: 0, inferenceCalls: 1).reportedTokens == 0)
     #expect(try make(reportedTokens: 1_000_000_000, inferenceCalls: 32).inferenceCalls == 32)
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 104)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(inferenceCalls: 1)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 1_000_000_001, inferenceCalls: 1)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 104, inferenceCalls: 0)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 104, inferenceCalls: 33)
     }
   }

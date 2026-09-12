@@ -14,12 +14,20 @@ struct OpenAIResponsesStreamProcessor {
   private var outputItemIDs = Set<String>()
   private var functionCalls: [String: OpenAIFunctionCallAssembly] = [:]
   private var completedToolCalls: [Int: ToolCall] = [:]
-  private var textParts: [OpenAITextPartKey: OpenAITextPartAssembly] = [:]
-  private var textAnnotations: [OpenAITextPartKey: [Int: JSONValue]] = [:]
+  private var textAccumulator: OpenAIResponsesTextAccumulator
+  private var reasoningAccumulator: OpenAIResponsesReasoningAccumulator
+  private let fields = OpenAIResponsesStreamFields()
+
   private var callIDs = Set<String>()
   private var sawRefusal = false
   private var sawDoneSentinel = false
   private(set) var rejectionCode = "unspecified"
+
+  private var streamContext: OpenAIResponsesStreamContext {
+    .init(
+      lifecycle: lifecycle, addedOutputItems: addedOutputItems,
+      completedOutputItems: completedOutputItems)
+  }
 
   init(
     configuration: OpenAIResponsesConfiguration,
@@ -28,6 +36,8 @@ struct OpenAIResponsesStreamProcessor {
     allowsParallelToolCalls: Bool
   ) {
     self.configuration = configuration
+    textAccumulator = OpenAIResponsesTextAccumulator(configuration: configuration)
+    reasoningAccumulator = OpenAIResponsesReasoningAccumulator(configuration: configuration)
     self.toolChoice = toolChoice
     self.allowsParallelToolCalls = allowsParallelToolCalls
     declaredToolNames = Set(tools.map(\.name))
@@ -76,7 +86,7 @@ struct OpenAIResponsesStreamProcessor {
       throw OpenAIResponsesProviderError.streamLimitExceeded
     }
 
-    let type = try requiredString("type", in: object)
+    let type = try fields.requiredString("type", in: object)
     guard
       type.utf8.count <= 128,
       event.name == nil || event.name == "message" || event.name == type
@@ -105,42 +115,46 @@ struct OpenAIResponsesStreamProcessor {
       try processOutputItemAdded(object)
       return emptyResult()
     case "response.content_part.added":
-      try processContentPartAdded(object)
+      try textAccumulator.processContentPartAdded(object, context: streamContext)
       return emptyResult()
     case "response.content_part.done":
-      try processContentPartDone(object)
+      try textAccumulator.processContentPartDone(object, context: streamContext)
       return emptyResult()
     case "response.output_text.delta":
-      return try processTextDelta(object, partType: "output_text")
+      return try textAccumulator.processTextDelta(
+        object, context: streamContext, partType: "output_text")
     case "response.output_text.done":
-      try processTextDone(object, partType: "output_text", valueKey: "text")
+      try textAccumulator.processTextDone(
+        object, context: streamContext, partType: "output_text", valueKey: "text")
       return emptyResult()
     case "response.output_text.annotation.added":
-      try processTextAnnotation(object)
+      try textAccumulator.processTextAnnotation(object, context: streamContext)
       return emptyResult()
     case "response.refusal.delta":
       sawRefusal = true
-      return try processTextDelta(object, partType: "refusal")
+      return try textAccumulator.processTextDelta(
+        object, context: streamContext, partType: "refusal")
     case "response.refusal.done":
       sawRefusal = true
-      try processTextDone(object, partType: "refusal", valueKey: "refusal")
+      try textAccumulator.processTextDone(
+        object, context: streamContext, partType: "refusal", valueKey: "refusal")
       return emptyResult()
     case "response.reasoning_summary_part.added":
-      try processReasoningPartAdded(object)
+      try reasoningAccumulator.processReasoningPartAdded(object, context: streamContext)
       return emptyResult()
     case "response.reasoning_summary_part.done":
-      try processReasoningPartDone(object)
+      try reasoningAccumulator.processReasoningPartDone(object, context: streamContext)
       return emptyResult()
     case "response.reasoning_summary_text.delta":
-      return try processReasoningSummaryDelta(object)
+      return try reasoningAccumulator.processReasoningSummaryDelta(object, context: streamContext)
     case "response.reasoning_summary_text.done":
-      try processReasoningSummaryDone(object)
+      try reasoningAccumulator.processReasoningSummaryDone(object, context: streamContext)
       return emptyResult()
     case "response.reasoning_text.delta":
-      try processReasoningTextDelta(object)
+      try reasoningAccumulator.processReasoningTextDelta(object, context: streamContext)
       return emptyResult()
     case "response.reasoning_text.done":
-      try processReasoningTextDone(object)
+      try reasoningAccumulator.processReasoningTextDone(object, context: streamContext)
       return emptyResult()
     case "response.function_call_arguments.delta":
       try processFunctionArgumentsDelta(object)
@@ -179,9 +193,9 @@ struct OpenAIResponsesStreamProcessor {
     guard lifecycle == .awaitingStart else {
       throw OpenAIResponsesProviderError.malformedStream
     }
-    let response = try requiredObject("response", in: object)
-    let identifier = try requiredString("id", in: response)
-    let status = try requiredString("status", in: response)
+    let response = try fields.requiredObject("response", in: object)
+    let identifier = try fields.requiredString("id", in: response)
+    let status = try fields.requiredString("status", in: response)
     guard
       isValidIdentifier(identifier),
       status == "in_progress" || status == "queued"
@@ -271,10 +285,10 @@ struct OpenAIResponsesStreamProcessor {
     case .awaitingStart, .terminal:
       throw OpenAIResponsesProviderError.malformedStream
     }
-    let response = try requiredObject("response", in: object)
+    let response = try fields.requiredObject("response", in: object)
     guard
-      try requiredString("id", in: response) == responseID,
-      try requiredString("status", in: response) == expectedStatus
+      try fields.requiredString("id", in: response) == responseID,
+      try fields.requiredString("status", in: response) == expectedStatus
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
@@ -285,19 +299,19 @@ struct OpenAIResponsesStreamProcessor {
     _ object: [String: JSONValue],
     expectedStatus: String
   ) throws {
-    try requireStreaming()
-    let response = try requiredObject("response", in: object)
+    try streamContext.requireStreaming()
+    let response = try fields.requiredObject("response", in: object)
     guard
-      try requiredString("id", in: response) == responseID,
-      try requiredString("status", in: response) == expectedStatus
+      try fields.requiredString("id", in: response) == responseID,
+      try fields.requiredString("status", in: response) == expectedStatus
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
   }
 
   private mutating func processOutputItemAdded(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let outputIndex = try requiredIndex("output_index", in: object)
+    try streamContext.requireStreaming()
+    let outputIndex = try fields.requiredIndex("output_index", in: object)
     guard
       outputIndex < configuration.maximumOutputItems,
       outputIndex == addedOutputItems.count,
@@ -307,12 +321,12 @@ struct OpenAIResponsesStreamProcessor {
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
-    let itemValue = try requiredValue("item", in: object)
+    let itemValue = try fields.requiredValue("item", in: object)
     guard case .object(let item) = itemValue else {
       throw OpenAIResponsesProviderError.malformedStream
     }
-    let itemID = try requiredString("id", in: item)
-    let itemType = try requiredString("type", in: item)
+    let itemID = try fields.requiredString("id", in: item)
+    let itemType = try fields.requiredString("type", in: item)
     guard isValidIdentifier(itemID), ["message", "reasoning", "function_call"].contains(itemType)
     else {
       throw OpenAIResponsesProviderError.malformedStream
@@ -324,29 +338,29 @@ struct OpenAIResponsesStreamProcessor {
     switch itemType {
     case "message":
       guard
-        try requiredString("role", in: item) == "assistant",
-        try requiredString("status", in: item) == "in_progress",
-        try requiredArray("content", in: item).isEmpty
+        try fields.requiredString("role", in: item) == "assistant",
+        try fields.requiredString("status", in: item) == "in_progress",
+        try fields.requiredArray("content", in: item).isEmpty
       else {
         throw OpenAIResponsesProviderError.malformedStream
       }
     case "reasoning":
       guard
-        try requiredArray("summary", in: item).isEmpty,
-        try optionalArray("content", in: item)?.isEmpty ?? true,
-        try optionalString("status", in: item).map({ $0 == "in_progress" }) ?? true
+        try fields.requiredArray("summary", in: item).isEmpty,
+        try fields.optionalArray("content", in: item)?.isEmpty ?? true,
+        try fields.optionalString("status", in: item).map({ $0 == "in_progress" }) ?? true
       else {
         throw OpenAIResponsesProviderError.malformedStream
       }
     case "function_call":
-      let callID = try requiredString("call_id", in: item)
-      let name = try requiredString("name", in: item)
-      let arguments = try requiredString("arguments", in: item)
+      let callID = try fields.requiredString("call_id", in: item)
+      let name = try fields.requiredString("name", in: item)
+      let arguments = try fields.requiredString("arguments", in: item)
       guard
         isValidIdentifier(callID),
         isValidToolName(name),
         isAllowedToolName(name),
-        try optionalString("status", in: item).map({ $0 == "in_progress" }) ?? true,
+        try fields.optionalString("status", in: item).map({ $0 == "in_progress" }) ?? true,
         arguments.utf8.count <= configuration.maximumToolArgumentBytes,
         callIDs.insert(callID).inserted,
         functionCalls[itemID] == nil
@@ -369,430 +383,11 @@ struct OpenAIResponsesStreamProcessor {
     addedOutputItems[outputIndex] = itemValue
   }
 
-  private mutating func processContentPartAdded(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let contentIndex = try requiredIndex("content_index", in: object)
-    guard contentIndex < configuration.maximumOutputItems else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    try requireOutputItem(id: itemID, index: outputIndex, type: "message")
-    let part = try requiredObject("part", in: object)
-    let partType = try requiredString("type", in: part)
-    guard partType == "output_text" || partType == "refusal" else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let valueKey = partType == "output_text" ? "text" : "refusal"
-    let initialText = try requiredString(valueKey, in: part)
-    let initialBytes = Data(initialText.utf8)
-    guard initialBytes.count <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    let key = OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex)
-    let existingPartCount = textParts.keys.lazy.filter { key in
-      key.channel == "message" && key.itemID == itemID
-    }.count
-    let previousPartCompleted =
-      contentIndex == 0
-      || textParts[
-        OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex - 1)
-      ]?.partCompleted == true
-    guard
-      contentIndex == existingPartCount,
-      previousPartCompleted,
-      initialText.isEmpty,
-      textParts[key] == nil
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    if partType == "output_text" {
-      guard try requiredArray("annotations", in: part).isEmpty else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-    }
-    textParts[key] = OpenAITextPartAssembly(
-      outputIndex: outputIndex,
-      partType: partType,
-      textBytes: initialBytes,
-      finalText: nil,
-      partCompleted: false
-    )
-  }
-
-  private mutating func processContentPartDone(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let contentIndex = try requiredIndex("content_index", in: object)
-    try requireOutputItem(id: itemID, index: outputIndex, type: "message")
-    let key = OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex)
-    guard var assembly = textParts[key], assembly.outputIndex == outputIndex else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let part = try requiredObject("part", in: object)
-    let partType = try requiredString("type", in: part)
-    let valueKey = partType == "output_text" ? "text" : "refusal"
-    guard
-      partType == assembly.partType,
-      let finalText = assembly.finalText,
-      !assembly.partCompleted,
-      try requiredString(valueKey, in: part) == finalText
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    if partType == "output_text" {
-      try validateAnnotations(in: part, for: key)
-    }
-    assembly.partCompleted = true
-    textParts[key] = assembly
-  }
-
-  private mutating func processTextDelta(
-    _ object: [String: JSONValue],
-    partType: String
-  ) throws -> OpenAIResponsesProcessedEvent {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let contentIndex = try requiredIndex("content_index", in: object)
-    try requireOutputItem(id: itemID, index: outputIndex, type: "message")
-    let delta = try requiredString("delta", in: object)
-    let key = OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex)
-    guard
-      var assembly = textParts[key],
-      assembly.outputIndex == outputIndex,
-      assembly.partType == partType,
-      assembly.finalText == nil,
-      !assembly.partCompleted
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let deltaBytes = Data(delta.utf8)
-    let (newCount, overflowed) = assembly.textBytes.count.addingReportingOverflow(
-      deltaBytes.count
-    )
-    guard !overflowed, newCount <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    assembly.textBytes.append(deltaBytes)
-    textParts[key] = assembly
-    return OpenAIResponsesProcessedEvent(
-      events: delta.isEmpty ? [] : [.textDelta(delta)],
-      terminalResult: nil
-    )
-  }
-
-  private mutating func processTextDone(
-    _ object: [String: JSONValue],
-    partType: String,
-    valueKey: String
-  ) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let contentIndex = try requiredIndex("content_index", in: object)
-    try requireOutputItem(id: itemID, index: outputIndex, type: "message")
-    let text = try requiredString(valueKey, in: object)
-    let key = OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex)
-    guard
-      var assembly = textParts[key],
-      assembly.outputIndex == outputIndex,
-      assembly.partType == partType,
-      assembly.finalText == nil,
-      !assembly.partCompleted,
-      assembly.textBytes == Data(text.utf8)
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    guard text.utf8.count <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    assembly.finalText = text
-    textParts[key] = assembly
-  }
-
-  private mutating func processTextAnnotation(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let contentIndex = try requiredIndex("content_index", in: object)
-    let annotationIndex = try requiredIndex("annotation_index", in: object)
-    guard annotationIndex < configuration.maximumOutputItems else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    try requireOutputItem(id: itemID, index: outputIndex, type: "message")
-    let key = OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex)
-    guard
-      let assembly = textParts[key],
-      assembly.outputIndex == outputIndex,
-      assembly.partType == "output_text",
-      assembly.finalText == nil,
-      !assembly.partCompleted
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let annotation = try requiredValue("annotation", in: object)
-    guard
-      case .object(let annotationObject) = annotation,
-      try requiredString("type", in: annotationObject).utf8.count <= 128,
-      OpenAIJSONValidator.measuredBytes(
-        for: annotation,
-        maximumDepth: configuration.maximumJSONDepth,
-        maximumNodes: configuration.maximumJSONNodes,
-        maximumStringBytes: configuration.maximumSSEEventBytes
-      ) != nil
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    var annotations = textAnnotations[key] ?? [:]
-    guard annotations[annotationIndex] == nil else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    annotations[annotationIndex] = annotation
-    textAnnotations[key] = annotations
-  }
-
-  private mutating func processReasoningPartAdded(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let summaryIndex = try requiredIndex("summary_index", in: object)
-    guard summaryIndex < configuration.maximumOutputItems else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    try requireOutputItem(id: itemID, index: outputIndex, type: "reasoning")
-    let part = try requiredObject("part", in: object)
-    guard try requiredString("type", in: part) == "summary_text" else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let initialText = try requiredString("text", in: part)
-    let initialBytes = Data(initialText.utf8)
-    guard initialBytes.count <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    let key = OpenAITextPartKey(
-      channel: "reasoning_summary",
-      itemID: itemID,
-      index: summaryIndex
-    )
-    let existingPartCount = textParts.keys.lazy.filter { key in
-      key.channel == "reasoning_summary" && key.itemID == itemID
-    }.count
-    let previousPartCompleted =
-      summaryIndex == 0
-      || textParts[
-        OpenAITextPartKey(
-          channel: "reasoning_summary",
-          itemID: itemID,
-          index: summaryIndex - 1
-        )
-      ]?.partCompleted == true
-    guard
-      summaryIndex == existingPartCount,
-      previousPartCompleted,
-      initialText.isEmpty,
-      textParts[key] == nil
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    textParts[key] = OpenAITextPartAssembly(
-      outputIndex: outputIndex,
-      partType: "summary_text",
-      textBytes: initialBytes,
-      finalText: nil,
-      partCompleted: false
-    )
-  }
-
-  private mutating func processReasoningPartDone(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let summaryIndex = try requiredIndex("summary_index", in: object)
-    try requireOutputItem(id: itemID, index: outputIndex, type: "reasoning")
-    let key = OpenAITextPartKey(
-      channel: "reasoning_summary",
-      itemID: itemID,
-      index: summaryIndex
-    )
-    guard var assembly = textParts[key], assembly.outputIndex == outputIndex else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let part = try requiredObject("part", in: object)
-    guard
-      try requiredString("type", in: part) == assembly.partType,
-      let finalText = assembly.finalText,
-      !assembly.partCompleted,
-      try requiredString("text", in: part) == finalText
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    assembly.partCompleted = true
-    textParts[key] = assembly
-  }
-
-  private mutating func processReasoningSummaryDelta(
-    _ object: [String: JSONValue]
-  ) throws -> OpenAIResponsesProcessedEvent {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let summaryIndex = try requiredIndex("summary_index", in: object)
-    try requireOutputItem(id: itemID, index: outputIndex, type: "reasoning")
-    let delta = try requiredString("delta", in: object)
-    let key = OpenAITextPartKey(
-      channel: "reasoning_summary",
-      itemID: itemID,
-      index: summaryIndex
-    )
-    guard
-      var assembly = textParts[key],
-      assembly.outputIndex == outputIndex,
-      assembly.partType == "summary_text",
-      assembly.finalText == nil,
-      !assembly.partCompleted
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let deltaBytes = Data(delta.utf8)
-    let (newCount, overflowed) = assembly.textBytes.count.addingReportingOverflow(
-      deltaBytes.count
-    )
-    guard !overflowed, newCount <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    assembly.textBytes.append(deltaBytes)
-    textParts[key] = assembly
-    return OpenAIResponsesProcessedEvent(
-      events: delta.isEmpty ? [] : [.reasoningSummaryDelta(delta)],
-      terminalResult: nil
-    )
-  }
-
-  private mutating func processReasoningSummaryDone(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let summaryIndex = try requiredIndex("summary_index", in: object)
-    try requireOutputItem(id: itemID, index: outputIndex, type: "reasoning")
-    let text = try requiredString("text", in: object)
-    let key = OpenAITextPartKey(
-      channel: "reasoning_summary",
-      itemID: itemID,
-      index: summaryIndex
-    )
-    guard
-      var assembly = textParts[key],
-      assembly.outputIndex == outputIndex,
-      assembly.partType == "summary_text",
-      assembly.finalText == nil,
-      !assembly.partCompleted,
-      assembly.textBytes == Data(text.utf8)
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    guard text.utf8.count <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    assembly.finalText = text
-    textParts[key] = assembly
-  }
-
-  private mutating func processReasoningTextDelta(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let contentIndex = try requiredIndex("content_index", in: object)
-    guard contentIndex < configuration.maximumOutputItems else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    try requireOutputItem(id: itemID, index: outputIndex, type: "reasoning")
-    let delta = try requiredString("delta", in: object)
-    let key = OpenAITextPartKey(
-      channel: "reasoning_text",
-      itemID: itemID,
-      index: contentIndex
-    )
-    var assembly: OpenAITextPartAssembly
-    if let existing = textParts[key] {
-      assembly = existing
-    } else {
-      let existingPartCount = textParts.keys.lazy.filter { key in
-        key.channel == "reasoning_text" && key.itemID == itemID
-      }.count
-      let previousPartCompleted =
-        contentIndex == 0
-        || textParts[
-          OpenAITextPartKey(
-            channel: "reasoning_text",
-            itemID: itemID,
-            index: contentIndex - 1
-          )
-        ]?.partCompleted == true
-      guard contentIndex == existingPartCount, previousPartCompleted else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-      assembly = OpenAITextPartAssembly(
-        outputIndex: outputIndex,
-        partType: "reasoning_text",
-        textBytes: Data(),
-        finalText: nil,
-        partCompleted: false
-      )
-    }
-    guard
-      assembly.outputIndex == outputIndex,
-      assembly.finalText == nil,
-      !assembly.partCompleted
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let deltaBytes = Data(delta.utf8)
-    let (newCount, overflowed) = assembly.textBytes.count.addingReportingOverflow(
-      deltaBytes.count
-    )
-    guard !overflowed, newCount <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    assembly.textBytes.append(deltaBytes)
-    textParts[key] = assembly
-  }
-
-  private mutating func processReasoningTextDone(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let contentIndex = try requiredIndex("content_index", in: object)
-    try requireOutputItem(id: itemID, index: outputIndex, type: "reasoning")
-    let text = try requiredString("text", in: object)
-    let key = OpenAITextPartKey(
-      channel: "reasoning_text",
-      itemID: itemID,
-      index: contentIndex
-    )
-    guard
-      var assembly = textParts[key],
-      assembly.outputIndex == outputIndex,
-      assembly.finalText == nil,
-      !assembly.partCompleted,
-      assembly.textBytes == Data(text.utf8)
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    guard text.utf8.count <= configuration.maximumSSEEventBytes else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    assembly.finalText = text
-    assembly.partCompleted = true
-    textParts[key] = assembly
-  }
-
   private mutating func processFunctionArgumentsDelta(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let delta = try requiredString("delta", in: object)
+    try streamContext.requireStreaming()
+    let itemID = try fields.requiredString("item_id", in: object)
+    let outputIndex = try fields.requiredIndex("output_index", in: object)
+    let delta = try fields.requiredString("delta", in: object)
     guard var assembly = functionCalls[itemID], assembly.outputIndex == outputIndex else {
       throw OpenAIResponsesProviderError.malformedStream
     }
@@ -811,12 +406,12 @@ struct OpenAIResponsesStreamProcessor {
   }
 
   private mutating func processFunctionArgumentsDone(_ object: [String: JSONValue]) throws {
-    try requireStreaming()
+    try streamContext.requireStreaming()
     rejectionCode = "arguments_done_identity"
-    let itemID = try requiredString("item_id", in: object)
-    let outputIndex = try requiredIndex("output_index", in: object)
-    let name = try object["name"].map { _ in try requiredString("name", in: object) }
-    let arguments = try requiredString("arguments", in: object)
+    let itemID = try fields.requiredString("item_id", in: object)
+    let outputIndex = try fields.requiredIndex("output_index", in: object)
+    let name = try object["name"].map { _ in try fields.requiredString("name", in: object) }
+    let arguments = try fields.requiredString("arguments", in: object)
     guard var assembly = functionCalls[itemID], assembly.outputIndex == outputIndex else {
       throw OpenAIResponsesProviderError.malformedStream
     }
@@ -837,7 +432,7 @@ struct OpenAIResponsesStreamProcessor {
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
-    if let callID = try optionalString("call_id", in: object) {
+    if let callID = try fields.optionalString("call_id", in: object) {
       rejectionCode = "arguments_done_call_id"
       guard callID == assembly.callID else {
         throw OpenAIResponsesProviderError.malformedStream
@@ -858,8 +453,8 @@ struct OpenAIResponsesStreamProcessor {
   private mutating func processOutputItemDone(
     _ object: [String: JSONValue]
   ) throws -> OpenAIResponsesProcessedEvent {
-    try requireStreaming()
-    let outputIndex = try requiredIndex("output_index", in: object)
+    try streamContext.requireStreaming()
+    let outputIndex = try fields.requiredIndex("output_index", in: object)
     guard
       outputIndex < configuration.maximumOutputItems,
       let addedValue = addedOutputItems[outputIndex],
@@ -867,23 +462,23 @@ struct OpenAIResponsesStreamProcessor {
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
-    let completedValue = try requiredValue("item", in: object)
+    let completedValue = try fields.requiredValue("item", in: object)
     guard
       case .object(let added) = addedValue,
       case .object(let completed) = completedValue,
-      try requiredString("id", in: added) == requiredString("id", in: completed),
-      try requiredString("type", in: added) == requiredString("type", in: completed)
+      try fields.requiredString("id", in: added) == fields.requiredString("id", in: completed),
+      try fields.requiredString("type", in: added) == fields.requiredString("type", in: completed)
     else {
       throw OpenAIResponsesProviderError.malformedStream
     }
 
-    let type = try requiredString("type", in: completed)
+    let type = try fields.requiredString("type", in: completed)
     switch type {
     case "function_call":
-      let itemID = try requiredString("id", in: completed)
-      let callID = try requiredString("call_id", in: completed)
-      let name = try requiredString("name", in: completed)
-      let arguments = try requiredString("arguments", in: completed)
+      let itemID = try fields.requiredString("id", in: completed)
+      let callID = try fields.requiredString("call_id", in: completed)
+      let name = try fields.requiredString("name", in: completed)
+      let arguments = try fields.requiredString("arguments", in: completed)
       guard var assembly = functionCalls[itemID] else {
         throw OpenAIResponsesProviderError.malformedStream
       }
@@ -893,7 +488,7 @@ struct OpenAIResponsesStreamProcessor {
         assembly.name == name,
         assembly.finalArguments == arguments,
         !assembly.emitted,
-        try optionalString("status", in: completed).map({ $0 == "completed" }) ?? true
+        try fields.optionalString("status", in: completed).map({ $0 == "completed" }) ?? true
       else {
         throw OpenAIResponsesProviderError.malformedStream
       }
@@ -906,16 +501,16 @@ struct OpenAIResponsesStreamProcessor {
         arguments: argumentsObject
       )
     case "reasoning":
-      try validateCompletedReasoning(completed, outputIndex: outputIndex)
-      let reasoningStatus = try optionalString("status", in: completed)
+      try reasoningAccumulator.validateCompletedReasoning(completed, outputIndex: outputIndex)
+      let reasoningStatus = try fields.optionalString("status", in: completed)
       guard
         reasoningStatus == nil || reasoningStatus == "completed" || reasoningStatus == "incomplete"
       else {
         throw OpenAIResponsesProviderError.malformedStream
       }
     case "message":
-      try validateCompletedMessage(completed, outputIndex: outputIndex)
-      let messageStatus = try requiredString("status", in: completed)
+      try textAccumulator.validateCompletedMessage(completed, outputIndex: outputIndex)
+      let messageStatus = try fields.requiredString("status", in: completed)
       guard messageStatus == "completed" || messageStatus == "incomplete" else {
         throw OpenAIResponsesProviderError.malformedStream
       }
@@ -925,139 +520,6 @@ struct OpenAIResponsesStreamProcessor {
 
     completedOutputItems[outputIndex] = completedValue
     return OpenAIResponsesProcessedEvent(events: [], terminalResult: nil)
-  }
-
-  private func validateCompletedMessage(
-    _ item: [String: JSONValue],
-    outputIndex: Int
-  ) throws {
-    let itemID = try requiredString("id", in: item)
-    guard try requiredString("role", in: item) == "assistant" else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    let content = try requiredArray("content", in: item)
-    guard content.count <= configuration.maximumOutputItems else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    let assemblyCount = textParts.keys.lazy.filter { key in
-      key.channel == "message" && key.itemID == itemID
-    }.count
-    guard assemblyCount == content.count else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-
-    for (contentIndex, value) in content.enumerated() {
-      guard case .object(let part) = value else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-      let key = OpenAITextPartKey(channel: "message", itemID: itemID, index: contentIndex)
-      guard
-        let assembly = textParts[key],
-        assembly.outputIndex == outputIndex,
-        assembly.partCompleted,
-        let finalText = assembly.finalText,
-        try requiredString("type", in: part) == assembly.partType
-      else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-      let valueKey = assembly.partType == "output_text" ? "text" : "refusal"
-      guard try requiredString(valueKey, in: part) == finalText else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-      if assembly.partType == "output_text" {
-        try validateAnnotations(in: part, for: key)
-      }
-    }
-  }
-
-  private func validateAnnotations(
-    in part: [String: JSONValue],
-    for key: OpenAITextPartKey
-  ) throws {
-    let completedAnnotations = try requiredArray("annotations", in: part)
-    let streamedAnnotations = textAnnotations[key] ?? [:]
-    guard
-      completedAnnotations.count <= configuration.maximumOutputItems,
-      streamedAnnotations.count == completedAnnotations.count
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    for (annotationIndex, annotation) in completedAnnotations.enumerated() {
-      guard streamedAnnotations[annotationIndex] == annotation else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-    }
-  }
-
-  private func validateCompletedReasoning(
-    _ item: [String: JSONValue],
-    outputIndex: Int
-  ) throws {
-    let itemID = try requiredString("id", in: item)
-    let summary = try requiredArray("summary", in: item)
-    guard summary.count <= configuration.maximumOutputItems else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    let assemblyCount = textParts.keys.lazy.filter { key in
-      key.channel == "reasoning_summary" && key.itemID == itemID
-    }.count
-    guard assemblyCount == summary.count else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-
-    for (summaryIndex, value) in summary.enumerated() {
-      guard case .object(let part) = value else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-      let key = OpenAITextPartKey(
-        channel: "reasoning_summary",
-        itemID: itemID,
-        index: summaryIndex
-      )
-      guard
-        let assembly = textParts[key],
-        assembly.outputIndex == outputIndex,
-        assembly.partType == "summary_text",
-        assembly.partCompleted,
-        let finalText = assembly.finalText,
-        try requiredString("type", in: part) == "summary_text",
-        try requiredString("text", in: part) == finalText
-      else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-    }
-
-    let content = try optionalArray("content", in: item) ?? []
-    guard content.count <= configuration.maximumOutputItems else {
-      throw OpenAIResponsesProviderError.streamLimitExceeded
-    }
-    let reasoningTextCount = textParts.keys.lazy.filter { key in
-      key.channel == "reasoning_text" && key.itemID == itemID
-    }.count
-    guard reasoningTextCount == content.count else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    for (contentIndex, value) in content.enumerated() {
-      guard case .object(let part) = value else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-      let key = OpenAITextPartKey(
-        channel: "reasoning_text",
-        itemID: itemID,
-        index: contentIndex
-      )
-      guard
-        let assembly = textParts[key],
-        assembly.outputIndex == outputIndex,
-        assembly.partType == "reasoning_text",
-        assembly.partCompleted,
-        let finalText = assembly.finalText,
-        try requiredString("type", in: part) == "reasoning_text",
-        try requiredString("text", in: part) == finalText
-      else {
-        throw OpenAIResponsesProviderError.malformedStream
-      }
-    }
   }
 
   private mutating func processTerminal(
@@ -1070,7 +532,7 @@ struct OpenAIResponsesStreamProcessor {
     case .awaitingStart, .createdQueued, .queued, .terminal:
       throw reject("terminal.lifecycle")
     }
-    let response = try requiredObject("response", in: object)
+    let response = try fields.requiredObject("response", in: object)
     do {
       try validateResponse(response, expectedStatus: expectedStatus)
     } catch {
@@ -1086,7 +548,7 @@ struct OpenAIResponsesStreamProcessor {
       {
         // Reasoning status is optional in Responses. A validated output_item.done establishes
         // completion when absent; an explicit incomplete/in-progress status still fails here.
-        let status = try optionalString("status", in: item)
+        let status = try fields.optionalString("status", in: item)
         let completed =
           status == "completed" || (status == nil && item["type"] == .string("reasoning"))
         guard completed else {
@@ -1207,7 +669,7 @@ struct OpenAIResponsesStreamProcessor {
       return try streamedOutputItemsInOrder()
     }
 
-    let terminalOutput = try requiredArray("output", in: response)
+    let terminalOutput = try fields.requiredArray("output", in: response)
     guard terminalOutput.count == completedOutputItems.count else {
       let completedIndices = completedOutputItems.keys.sorted().prefix(8).map(String.init)
       throw reject(
@@ -1244,8 +706,8 @@ struct OpenAIResponsesStreamProcessor {
     _ response: [String: JSONValue],
     expectedStatus: String
   ) throws {
-    let terminalID = try requiredString("id", in: response)
-    let status = try requiredString("status", in: response)
+    let terminalID = try fields.requiredString("id", in: response)
+    let status = try fields.requiredString("status", in: response)
     guard terminalID == responseID, status == expectedStatus else {
       throw OpenAIResponsesProviderError.malformedStream
     }
@@ -1260,7 +722,7 @@ struct OpenAIResponsesStreamProcessor {
     guard case .object(let details)? = response["incomplete_details"] else {
       return .other("incomplete")
     }
-    let reason = try requiredString("reason", in: details)
+    let reason = try fields.requiredString("reason", in: details)
     switch reason {
     case "max_output_tokens":
       return .length
@@ -1278,15 +740,15 @@ struct OpenAIResponsesStreamProcessor {
     guard case .object(let usage) = usageValue else {
       throw OpenAIResponsesProviderError.malformedStream
     }
-    let inputTokens = try requiredUnsigned("input_tokens", in: usage)
-    let outputTokens = try requiredUnsigned("output_tokens", in: usage)
+    let inputTokens = try fields.requiredUnsigned("input_tokens", in: usage)
+    let outputTokens = try fields.requiredUnsigned("output_tokens", in: usage)
 
     var cachedTokens: UInt64 = 0
     if let detailsValue = usage["input_tokens_details"], detailsValue != .null {
       guard case .object(let details) = detailsValue else {
         throw OpenAIResponsesProviderError.malformedStream
       }
-      cachedTokens = try optionalUnsigned("cached_tokens", in: details) ?? 0
+      cachedTokens = try fields.optionalUnsigned("cached_tokens", in: details) ?? 0
     }
 
     var reasoningTokens: UInt64 = 0
@@ -1294,7 +756,7 @@ struct OpenAIResponsesStreamProcessor {
       guard case .object(let details) = detailsValue else {
         throw OpenAIResponsesProviderError.malformedStream
       }
-      reasoningTokens = try optionalUnsigned("reasoning_tokens", in: details) ?? 0
+      reasoningTokens = try fields.optionalUnsigned("reasoning_tokens", in: details) ?? 0
     }
 
     guard cachedTokens <= inputTokens, reasoningTokens <= outputTokens else {
@@ -1374,25 +836,6 @@ struct OpenAIResponsesStreamProcessor {
     return object
   }
 
-  private func requireStreaming() throws {
-    guard lifecycle.isStreaming else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-  }
-
-  private func requireOutputItem(id: String, index: Int, type: String) throws {
-    guard let value = addedOutputItems[index], case .object(let item) = value else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    guard
-      try requiredString("id", in: item) == id,
-      try requiredString("type", in: item) == type,
-      completedOutputItems[index] == nil
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-  }
-
   private mutating func validateSequence(in object: [String: JSONValue]) throws {
     guard case .integer(let sequenceNumber)? = object["sequence_number"], sequenceNumber >= 0 else {
       throw OpenAIResponsesProviderError.malformedStream
@@ -1408,103 +851,6 @@ struct OpenAIResponsesStreamProcessor {
   private mutating func validateOptionalSequence(in object: [String: JSONValue]) throws {
     guard object["sequence_number"] != nil else { return }
     try validateSequence(in: object)
-  }
-
-  private func requiredValue(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> JSONValue {
-    guard let value = object[key] else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return value
-  }
-
-  private func requiredString(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> String {
-    guard case .string(let value)? = object[key] else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return value
-  }
-
-  private func optionalString(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> String? {
-    guard let value = object[key], value != .null else { return nil }
-    guard case .string(let string) = value else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return string
-  }
-
-  private func requiredObject(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> [String: JSONValue] {
-    guard case .object(let value)? = object[key] else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return value
-  }
-
-  private func requiredArray(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> [JSONValue] {
-    guard case .array(let value)? = object[key] else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return value
-  }
-
-  private func optionalArray(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> [JSONValue]? {
-    guard let value = object[key], value != .null else { return nil }
-    guard case .array(let array) = value else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return array
-  }
-
-  private func requiredIndex(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> Int {
-    guard
-      case .integer(let value)? = object[key],
-      value >= 0,
-      let index = Int(exactly: value)
-    else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return index
-  }
-
-  private func requiredUnsigned(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> UInt64 {
-    guard case .integer(let value)? = object[key], value >= 0 else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return UInt64(value)
-  }
-
-  private func optionalUnsigned(
-    _ key: String,
-    in object: [String: JSONValue]
-  ) throws -> UInt64? {
-    guard let value = object[key], value != .null else { return nil }
-    guard case .integer(let integer) = value, integer >= 0 else {
-      throw OpenAIResponsesProviderError.malformedStream
-    }
-    return UInt64(integer)
   }
 
   private func isValidToolName(_ value: String) -> Bool {
@@ -1549,11 +895,7 @@ struct OpenAIResponsesStreamProcessor {
     if !completedToolCalls.isEmpty {
       return true
     }
-    return textParts.contains { entry in
-      entry.key.channel == "message"
-        && entry.value.partCompleted
-        && entry.value.finalText?.isEmpty == false
-    }
+    return textAccumulator.hasAssistantContent
   }
 
   private func isValidIdentifier(_ value: String) -> Bool {

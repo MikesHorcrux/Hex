@@ -479,7 +479,7 @@ struct XPCGatewayTransportTests {
           do {
             try gate.withValidCommit {}
             await coordinator.recordCommit()
-          } catch HexGatewayAuthorizationCommitGate.GateError.closed {
+          } catch HexGatewayAuthorizationCommitGateError.closed {
             await coordinator.recordRejection()
           }
         }

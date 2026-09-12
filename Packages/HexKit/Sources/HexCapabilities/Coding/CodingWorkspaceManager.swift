@@ -112,7 +112,7 @@ public actor CodingWorkspaceManager: CodingWorkspaceControlling {
       throw WorkspacePatchError.invalidPatch
     }
     var contents: [String] = []
-    var files: [WorkspacePatchReceipt.File] = []
+    var files: [WorkspacePatchFileReceipt] = []
     let metadata = ArtifactMetadata(
       runID: context.runID, toolCallID: call.id, mediaType: "text/plain")
     // Complete preflight and preserve all proposed images before the first file is published.

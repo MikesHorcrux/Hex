@@ -8,12 +8,4 @@ public enum GatewayProcessSessionRequest: Codable, Sendable {
   case patchFile(taskID: UUID, receiptID: String, index: Int)
   case command(conversationID: UUID, command: ProcessSessionCommand)
 
-  public struct Response: Codable, Sendable {
-    public var filePreview: WorkspaceFileChangePreview?
-    public var review: WorkspaceChangesReview?
-    public var sessions: [ProcessSessionRecord] = []
-    public var page: ProcessSessionPage?
-    public var operation: ProcessSessionOperation?
-    public init() {}
-  }
 }

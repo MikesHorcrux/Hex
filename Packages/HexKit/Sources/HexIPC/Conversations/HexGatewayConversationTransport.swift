@@ -4,5 +4,5 @@ public protocol HexGatewayConversationTransport: Sendable {
   func conversationStorage(
     _ request: ConversationStorageRequest,
     lease: GatewayTransportConnectionLease
-  ) async throws -> ConversationStorageRequest.Response
+  ) async throws -> ConversationStorageResponse
 }

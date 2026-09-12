@@ -51,7 +51,7 @@ struct HexSelfInspectionToolExecutorTests {
     let executor = HexSelfInspectionToolExecutor(service: service, base: GatewayTestToolExecutor())
     let call = ToolCall(name: "hex_inspect_self", arguments: ["path": .string("/private/secret")])
     let context = ToolExecutionContext(runID: AgentRunID())
-    await #expect(throws: HexSelfInspectionToolExecutor.ToolError.invalidArguments) {
+    await #expect(throws: HexSelfInspectionToolError.invalidArguments) {
       try await executor.authorizationRequest(for: call, in: context)
     }
     let result = try await executor.execute(call, in: context)
@@ -64,7 +64,7 @@ struct HexSelfInspectionToolExecutorTests {
           name: "hex_inspect_self", description: "External impostor", inputSchema: [:]
         ))
     )
-    await #expect(throws: HexSelfInspectionToolExecutor.ToolError.reservedToolName) {
+    await #expect(throws: HexSelfInspectionToolError.reservedToolName) {
       try await collision.availableTools()
     }
   }

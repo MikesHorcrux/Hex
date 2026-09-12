@@ -9,7 +9,7 @@ enum MCPExecutableSnapshotAdmission {
     policy: MCPExecutableSnapshotPolicy,
     namespaceBasename: String = productionNamespaceBasename,
     openClaimedSlot: @Sendable (Int32, String) -> Int32 = openDirectoryForProduction
-  ) throws -> MCPExecutableSnapshot.PrivateDirectory {
+  ) throws -> MCPExecutableSnapshotPrivateDirectory {
     guard
       !namespaceBasename.isEmpty,
       namespaceBasename.utf8.count <= 255,
@@ -118,7 +118,7 @@ enum MCPExecutableSnapshotAdmission {
         throw MCPClientSessionError.connectionClosed
       }
       transfersNamespaceDescriptors = true
-      return MCPExecutableSnapshot.PrivateDirectory(
+      return MCPExecutableSnapshotPrivateDirectory(
         namespaceParentDescriptor: temporaryDescriptor,
         namespaceBasename: namespaceBasename,
         namespaceStatus: finalNamespaceStatus,

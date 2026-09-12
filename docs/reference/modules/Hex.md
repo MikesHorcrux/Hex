@@ -4,7 +4,7 @@
 
 macOS app composition, observable models, services and SwiftUI views.
 
-**251 Swift files.** Generated; do not edit by hand.
+**273 Swift files.** Generated; do not edit by hand.
 
 ## Hex/App
 
@@ -17,9 +17,11 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [AgentArtifactPreviewModel.swift](../../../Hex/Models/Agent/AgentArtifactPreviewModel.swift) | — |
+| [AgentChangesSection.swift](../../../Hex/Models/Agent/AgentChangesSection.swift) | — |
 | [AgentChatWorkspaceModel+Sending.swift](../../../Hex/Models/Agent/AgentChatWorkspaceModel+Sending.swift) | — |
 | [AgentChatWorkspaceModel+Timeline.swift](../../../Hex/Models/Agent/AgentChatWorkspaceModel+Timeline.swift) | — |
 | [AgentChatWorkspaceModel.swift](../../../Hex/Models/Agent/AgentChatWorkspaceModel.swift) | Window-scoped projection and drafts. The resident owns conversation identity, order and execution. |
+| [AgentCodingTab.swift](../../../Hex/Models/Agent/AgentCodingTab.swift) | — |
 | [AgentCodingWorkspaceModel.swift](../../../Hex/Models/Agent/AgentCodingWorkspaceModel.swift) | — |
 | [AgentComposerEffort.swift](../../../Hex/Models/Agent/AgentComposerEffort.swift) | — |
 | [AgentComposerModelOption.swift](../../../Hex/Models/Agent/AgentComposerModelOption.swift) | — |
@@ -31,7 +33,9 @@ macOS app composition, observable models, services and SwiftUI views.
 | [AgentConversationArchive.swift](../../../Hex/Models/Agent/AgentConversationArchive.swift) | — |
 | [AgentConversationArtifactSource.swift](../../../Hex/Models/Agent/AgentConversationArtifactSource.swift) | Source identity for an output whose original tool-call message is retained in SQLite. Keeping this compact provenance lets a context checkpoint release the call's potentially large arguments. |
 | [AgentConversationContextProjection.swift](../../../Hex/Models/Agent/AgentConversationContextProjection.swift) | Non-destructive inference projection. Native history and superseded retry metadata stay intact. Validation uses the context that actually existed before each owning attempt, not today's tail. |
+| [AgentConversationContextProjectionSnapshot.swift](../../../Hex/Models/Agent/AgentConversationContextProjectionSnapshot.swift) | — |
 | [AgentConversationExchange.swift](../../../Hex/Models/Agent/AgentConversationExchange.swift) | One actual run attempt: the latest user message and subsequent committed native messages, never the request's repeated prior context. The workspace model owns mutations to these values. |
+| [AgentConversationExchangeOutcome.swift](../../../Hex/Models/Agent/AgentConversationExchangeOutcome.swift) | — |
 | [AgentConversationHistory+RunRequest.swift](../../../Hex/Models/Agent/AgentConversationHistory+RunRequest.swift) | — |
 | [AgentConversationHistory.swift](../../../Hex/Models/Agent/AgentConversationHistory.swift) | Provider-neutral durable history. Legacy messages are explicitly text-only projections, not recovered native tool records; exchanges retain the committed messages of each new attempt. |
 | [AgentConversationHistoryValidator.swift](../../../Hex/Models/Agent/AgentConversationHistoryValidator.swift) | — |
@@ -48,6 +52,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [AgentConversationStoring.swift](../../../Hex/Models/Agent/AgentConversationStoring.swift) | Save completion acknowledges an atomic file replacement, not power-loss durability. An implementation must not report cancellation after committing the supplied snapshot. |
 | [AgentMessagePresentation.swift](../../../Hex/Models/Agent/AgentMessagePresentation.swift) | Shared, side-effect-free text presentation for live and retained run output. |
 | [AgentPagedConversationStoring.swift](../../../Hex/Models/Agent/AgentPagedConversationStoring.swift) | — |
+| [AgentProcessActivityModel.swift](../../../Hex/Models/Agent/AgentProcessActivityModel.swift) | — |
 | [AgentRunState.swift](../../../Hex/Models/Agent/AgentRunState.swift) | — |
 | [AgentSQLiteConversationStore+Migration.swift](../../../Hex/Models/Agent/AgentSQLiteConversationStore+Migration.swift) | — |
 | [AgentSQLiteConversationStore+Writes.swift](../../../Hex/Models/Agent/AgentSQLiteConversationStore+Writes.swift) | — |
@@ -75,6 +80,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [AgentWorkspaceModel.swift](../../../Hex/Models/Agent/AgentWorkspaceModel.swift) | — |
 | [AuthorizationDecisionChoice.swift](../../../Hex/Models/Agent/AuthorizationDecisionChoice.swift) | — |
 | [ConversationItem.swift](../../../Hex/Models/Agent/ConversationItem.swift) | — |
+| [ConversationItemRole.swift](../../../Hex/Models/Agent/ConversationItemRole.swift) | — |
 
 ## Hex/Models/Gateway
 
@@ -84,6 +90,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [HexGatewayLifecycleStatus.swift](../../../Hex/Models/Gateway/HexGatewayLifecycleStatus.swift) | App-facing projection of SMAppService status. `.notFound` means ServiceManagement has no service record; it does not prove that the bundled helper is absent. Activation readiness validates the bundle independently before Hex offers registra… |
 | [HexGatewayMode.swift](../../../Hex/Models/Gateway/HexGatewayMode.swift) | Environment-selectable gateway modes. Resident XPC is the safe default; the in-process mode requires a separate explicit opt-in and a complete valid developer configuration. |
 | [HexGatewayRoute.swift](../../../Hex/Models/Gateway/HexGatewayRoute.swift) | Describes which gateway boundary the app is allowed to use. The route is selected before any provider or tool composition happens so the UI never presents an in-process fallback as a resident gateway. |
+| [HexGatewayRouteKind.swift](../../../Hex/Models/Gateway/HexGatewayRouteKind.swift) | — |
 | [HexResidentGatewayModel.swift](../../../Hex/Models/Gateway/HexResidentGatewayModel.swift) | — |
 | [HexResidentGatewayStatus.swift](../../../Hex/Models/Gateway/HexResidentGatewayStatus.swift) | The small status vocabulary a control surface needs from the resident gateway. Runtime details remain behind the gateway protocol; the app only renders lifecycle state and whether pausing is actually available. |
 | [HexResidentReloadError.swift](../../../Hex/Models/Gateway/HexResidentReloadError.swift) | — |
@@ -147,6 +154,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | --- | --- |
 | [HexHTTPMCPServer.swift](../../../Hex/Models/Resident/HexHTTPMCPServer.swift) | — |
 | [HexMCPSecretChange.swift](../../../Hex/Models/Resident/HexMCPSecretChange.swift) | A transient edit; the value is never encoded into resident settings or diagnostics. |
+| [HexResidentSettingsSaveRequest.swift](../../../Hex/Models/Resident/HexResidentSettingsSaveRequest.swift) | — |
 | [HexResidentSetupModel.swift](../../../Hex/Models/Resident/HexResidentSetupModel.swift) | — |
 | [HexStdioMCPServer.swift](../../../Hex/Models/Resident/HexStdioMCPServer.swift) | — |
 | [HexToolConnectionPresentation.swift](../../../Hex/Models/Resident/HexToolConnectionPresentation.swift) | Only vetted local strings become action guidance; server errors are never rendered verbatim. |
@@ -163,13 +171,17 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [AgentComposerPreferenceStoring.swift](../../../Hex/Services/Agent/AgentComposerPreferenceStoring.swift) | — |
+| [AgentWorkspaceRefreshLoop.swift](../../../Hex/Services/Agent/AgentWorkspaceRefreshLoop.swift) | The caller owns the task lifetime; models own which state each refresh reads. |
 | [HexAgentClient+Artifacts.swift](../../../Hex/Services/Agent/HexAgentClient+Artifacts.swift) | — |
 | [HexAgentClient+ModelCatalog.swift](../../../Hex/Services/Agent/HexAgentClient+ModelCatalog.swift) | — |
 | [HexAgentClient+Recovery.swift](../../../Hex/Services/Agent/HexAgentClient+Recovery.swift) | — |
 | [HexAgentClient.swift](../../../Hex/Services/Agent/HexAgentClient.swift) | The app-facing seam for a gateway-backed agent run. The UI depends on this small protocol so a preview client can drive the same state machine without credentials, a running process, or an XPC connection. |
 | [HexInProcessInferenceConfigurationResolver.swift](../../../Hex/Services/Agent/HexInProcessInferenceConfigurationResolver.swift) | Resolves the in-process inference boundary from the same protected settings and secret stores used by the resident route. The resolver has no provider fallback: a selected backend without an app-linked adapter is an actionable failure. |
+| [HexInProcessInferenceResolution.swift](../../../Hex/Services/Agent/HexInProcessInferenceResolution.swift) | — |
+| [HexInProcessInferenceResolutionError.swift](../../../Hex/Services/Agent/HexInProcessInferenceResolutionError.swift) | — |
 | [HexLiveAgentClient+Conversations.swift](../../../Hex/Services/Agent/HexLiveAgentClient+Conversations.swift) | — |
 | [HexLiveAgentClient.swift](../../../Hex/Services/Agent/HexLiveAgentClient.swift) | Lazily selects the resident XPC gateway first. The in-process composition is retained only as an explicit developer fallback, so a missing or unavailable resident service never becomes a silently privileged app-local agent. |
+| [HexLiveAgentClientError.swift](../../../Hex/Services/Agent/HexLiveAgentClientError.swift) | — |
 | [PreviewHexAgentClient.swift](../../../Hex/Services/Agent/PreviewHexAgentClient.swift) | A deterministic in-memory client used by the app default and SwiftUI previews. It emits the same gateway event shapes as a real run, pauses at one exact authorization request, and never reads credentials or touches the filesystem. |
 | [UserDefaultsAgentComposerPreferenceStore.swift](../../../Hex/Services/Agent/UserDefaultsAgentComposerPreferenceStore.swift) | — |
 
@@ -178,6 +190,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexAuthorizationBroker.swift](../../../Hex/Services/Authorization/HexAuthorizationBroker.swift) | Bridges the runtime's authorization prompt to the main-actor UI through an actor-owned waiter. The runtime remains paused until the operator submits a matching decision. |
+| [HexAuthorizationBrokerError.swift](../../../Hex/Services/Authorization/HexAuthorizationBrokerError.swift) | — |
 | [HexAuthorizationDecisionSubmitting.swift](../../../Hex/Services/Authorization/HexAuthorizationDecisionSubmitting.swift) | App-owned seam for returning an operator's authorization choice to the process that owns the gateway broker. The resident implementation encodes this call over HexIPC; the app does not recreate or own the resident broker. |
 | [HexGatewayAuthorizationDecisionAdapter.swift](../../../Hex/Services/Authorization/HexGatewayAuthorizationDecisionAdapter.swift) | Routes an app authorization choice through the existing gateway client connection. The client owns the active lease and session, so this adapter cannot accidentally create a second XPC connection or submit a decision against a stale session… |
 | [HexInProcessAuthorizationDecisionTransport.swift](../../../Hex/Services/Authorization/HexInProcessAuthorizationDecisionTransport.swift) | Adapts the app's developer-only broker to the common decision-submission seam. This is the only in-process implementation; resident mode receives an injected transport instead. |
@@ -187,6 +200,8 @@ macOS app composition, observable models, services and SwiftUI views.
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexDeveloperConfiguration.swift](../../../Hex/Services/Configuration/HexDeveloperConfiguration.swift) | Explicit, process-environment configuration for the temporary developer-only live path. Secrets are retained only in memory and are intentionally absent from all descriptions and diagnostics. The Debug app target is unsandboxed so this expl… |
+| [HexDeveloperConfigurationError.swift](../../../Hex/Services/Configuration/HexDeveloperConfigurationError.swift) | — |
+| [HexDeveloperConfigurationLiveValues.swift](../../../Hex/Services/Configuration/HexDeveloperConfigurationLiveValues.swift) | — |
 | [HexInferenceBackendSettingsDependencies.swift](../../../Hex/Services/Configuration/HexInferenceBackendSettingsDependencies.swift) | App-composition dependencies for inference-backend settings. |
 | [HexResidentSetupDependencies.swift](../../../Hex/Services/Configuration/HexResidentSetupDependencies.swift) | App-composition dependencies for resident setup and activation checks. |
 
@@ -205,6 +220,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [HexGatewayClientAdapter.swift](../../../Hex/Services/Gateway/HexGatewayClientAdapter.swift) | Adapts the package's replay-aware client to the app protocol. Authorization routing is an injected process boundary so a resident gateway can receive decisions over IPC without placing a second broker in the app. |
 | [HexResidentGatewayConnectionResetting.swift](../../../Hex/Services/Gateway/HexResidentGatewayConnectionResetting.swift) | Invalidates the app's cached resident-gateway session before the service is restarted. Implementations must leave the next operation able to establish a fresh connection. |
 | [HexResidentGatewayControlling.swift](../../../Hex/Services/Gateway/HexResidentGatewayControlling.swift) | Control boundary for a gateway that outlives the app window. Implementations must use the same authenticated gateway session as interactive runs; they must not create a second connection. |
+| [HexUnavailableResidentGatewayControlError.swift](../../../Hex/Services/Gateway/HexUnavailableResidentGatewayControlError.swift) | — |
 | [HexUnavailableResidentGatewayController.swift](../../../Hex/Services/Gateway/HexUnavailableResidentGatewayController.swift) | Default control route when no resident gateway client has been connected. It reports unavailable state and rejects mutations instead of making a local UI toggle look like a remote change. |
 
 ## Hex/Services/Heartbeat
@@ -213,6 +229,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | --- | --- |
 | [HexHeartbeatManaging.swift](../../../Hex/Services/Heartbeat/HexHeartbeatManaging.swift) | App-side capability for managing durable resident heartbeat schedules. Implementations must use the same authenticated gateway session as interactive agent runs. |
 | [HexUnavailableHeartbeatService.swift](../../../Hex/Services/Heartbeat/HexUnavailableHeartbeatService.swift) | Default management route before a resident gateway session is connected. It never mutates local UI state as if a remote schedule operation succeeded. |
+| [HexUnavailableHeartbeatServiceError.swift](../../../Hex/Services/Heartbeat/HexUnavailableHeartbeatServiceError.swift) | — |
 
 ## Hex/Services/Lifecycle
 
@@ -298,6 +315,9 @@ macOS app composition, observable models, services and SwiftUI views.
 | [AgentLegacyWorkspaceView.swift](../../../Hex/Views/Agent/AgentLegacyWorkspaceView.swift) | — |
 | [AgentPatchPreviewView.swift](../../../Hex/Views/Agent/AgentPatchPreviewView.swift) | — |
 | [AgentProcessActivityView.swift](../../../Hex/Views/Agent/AgentProcessActivityView.swift) | — |
+| [AgentProcessControlsView.swift](../../../Hex/Views/Agent/AgentProcessControlsView.swift) | — |
+| [AgentProcessDetailsView.swift](../../../Hex/Views/Agent/AgentProcessDetailsView.swift) | — |
+| [AgentProcessListView.swift](../../../Hex/Views/Agent/AgentProcessListView.swift) | — |
 | [AgentSidebarBrandView.swift](../../../Hex/Views/Agent/AgentSidebarBrandView.swift) | — |
 | [AgentSidebarConversationRow.swift](../../../Hex/Views/Agent/AgentSidebarConversationRow.swift) | — |
 | [AgentSidebarStatusView.swift](../../../Hex/Views/Agent/AgentSidebarStatusView.swift) | — |
@@ -323,7 +343,9 @@ macOS app composition, observable models, services and SwiftUI views.
 | [ErrorBannerView.swift](../../../Hex/Views/Components/ErrorBannerView.swift) | — |
 | [HexAppIconView.swift](../../../Hex/Views/Components/HexAppIconView.swift) | — |
 | [HexBrandBackdrop.swift](../../../Hex/Views/Components/HexBrandBackdrop.swift) | — |
+| [HexCodeScrollView.swift](../../../Hex/Views/Components/HexCodeScrollView.swift) | — |
 | [HexMascotView.swift](../../../Hex/Views/Components/HexMascotView.swift) | — |
+| [HexSegmentedPicker.swift](../../../Hex/Views/Components/HexSegmentedPicker.swift) | — |
 
 ## Hex/Views/Gateway
 

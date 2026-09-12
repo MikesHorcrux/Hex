@@ -2,12 +2,7 @@ import Darwin
 import Foundation
 
 struct MCPMachOImage: Sendable {
-  struct Dependency: Sendable, Equatable {
-    let path: String
-    let isRequired: Bool
-  }
-
-  let dependencies: [Dependency]
+  let dependencies: [MCPMachOImageDependency]
   let runpaths: [String]
 
   private static let maximumArchitectureCount = 64
@@ -47,7 +42,7 @@ struct MCPMachOImage: Sendable {
       throw MCPClientSessionError.connectionClosed
     }
     let table = try readBytes(from: descriptor, offset: 8, count: tableByteCount)
-    var dependencies: [Dependency] = []
+    var dependencies: [MCPMachOImageDependency] = []
     var dependencyIndexes: [String: Int] = [:]
     var runpaths: [String] = []
     var runpathSet = Set<String>()
@@ -113,7 +108,7 @@ struct MCPMachOImage: Sendable {
     from descriptor: Int32,
     sliceOffset: off_t,
     sliceSize: off_t,
-    format: ThinFormat
+    format: MCPMachOImageThinFormat
   ) throws -> MCPMachOImage {
     let headerSize = format.uses64BitHeader ? 32 : 28
     guard sliceSize >= headerSize else {
@@ -133,7 +128,7 @@ struct MCPMachOImage: Sendable {
       offset: sliceOffset + off_t(headerSize),
       count: Int(commandBytes)
     )
-    var dependencies: [Dependency] = []
+    var dependencies: [MCPMachOImageDependency] = []
     var dependencyIndexes: [String: Int] = [:]
     var runpaths: [String] = []
     var runpathSet = Set<String>()
@@ -161,7 +156,10 @@ struct MCPMachOImage: Sendable {
           minimumOffset: 24
         )
         appendUniqueDependencies(
-          [Dependency(path: path, isRequired: requiredDependencyCommands.contains(command))],
+          [
+            MCPMachOImageDependency(
+              path: path, isRequired: requiredDependencyCommands.contains(command))
+          ],
           to: &dependencies,
           indexes: &dependencyIndexes
         )
@@ -196,7 +194,7 @@ struct MCPMachOImage: Sendable {
     _ commands: Data,
     commandOffset: Int,
     commandSize: Int,
-    order: ByteOrder,
+    order: MCPMachOImageByteOrder,
     minimumOffset: Int
   ) throws -> String {
     guard
@@ -252,31 +250,31 @@ struct MCPMachOImage: Sendable {
     return Data(bytes)
   }
 
-  private static func thinFormat(_ magic: Data) -> ThinFormat? {
+  private static func thinFormat(_ magic: Data) -> MCPMachOImageThinFormat? {
     switch Array(magic) {
     case [0xCE, 0xFA, 0xED, 0xFE]:
-      ThinFormat(order: .little, uses64BitHeader: false)
+      MCPMachOImageThinFormat(order: .little, uses64BitHeader: false)
     case [0xCF, 0xFA, 0xED, 0xFE]:
-      ThinFormat(order: .little, uses64BitHeader: true)
+      MCPMachOImageThinFormat(order: .little, uses64BitHeader: true)
     case [0xFE, 0xED, 0xFA, 0xCE]:
-      ThinFormat(order: .big, uses64BitHeader: false)
+      MCPMachOImageThinFormat(order: .big, uses64BitHeader: false)
     case [0xFE, 0xED, 0xFA, 0xCF]:
-      ThinFormat(order: .big, uses64BitHeader: true)
+      MCPMachOImageThinFormat(order: .big, uses64BitHeader: true)
     default:
       nil
     }
   }
 
-  private static func fatFormat(_ magic: Data) -> FatFormat? {
+  private static func fatFormat(_ magic: Data) -> MCPMachOImageFatFormat? {
     switch Array(magic) {
     case [0xCA, 0xFE, 0xBA, 0xBE]:
-      FatFormat(order: .big, uses64BitOffsets: false)
+      MCPMachOImageFatFormat(order: .big, uses64BitOffsets: false)
     case [0xBE, 0xBA, 0xFE, 0xCA]:
-      FatFormat(order: .little, uses64BitOffsets: false)
+      MCPMachOImageFatFormat(order: .little, uses64BitOffsets: false)
     case [0xCA, 0xFE, 0xBA, 0xBF]:
-      FatFormat(order: .big, uses64BitOffsets: true)
+      MCPMachOImageFatFormat(order: .big, uses64BitOffsets: true)
     case [0xBF, 0xBA, 0xFE, 0xCA]:
-      FatFormat(order: .little, uses64BitOffsets: true)
+      MCPMachOImageFatFormat(order: .little, uses64BitOffsets: true)
     default:
       nil
     }
@@ -285,7 +283,7 @@ struct MCPMachOImage: Sendable {
   private static func readUInt32(
     _ data: Data,
     offset: Int,
-    order: ByteOrder
+    order: MCPMachOImageByteOrder
   ) -> UInt32? {
     guard offset >= 0, offset <= data.count - 4 else { return nil }
     let bytes = data[offset..<(offset + 4)]
@@ -297,7 +295,7 @@ struct MCPMachOImage: Sendable {
   private static func readUInt64(
     _ data: Data,
     offset: Int,
-    order: ByteOrder
+    order: MCPMachOImageByteOrder
   ) -> UInt64? {
     guard offset >= 0, offset <= data.count - 8 else { return nil }
     let bytes = data[offset..<(offset + 8)]
@@ -326,8 +324,8 @@ struct MCPMachOImage: Sendable {
   }
 
   private static func appendUniqueDependencies(
-    _ values: [Dependency],
-    to destination: inout [Dependency],
+    _ values: [MCPMachOImageDependency],
+    to destination: inout [MCPMachOImageDependency],
     indexes: inout [String: Int]
   ) {
     for value in values {
@@ -356,18 +354,4 @@ struct MCPMachOImage: Sendable {
     0x8000_0023,
   ]
 
-  private enum ByteOrder: Sendable {
-    case little
-    case big
-  }
-
-  private struct ThinFormat: Sendable {
-    let order: ByteOrder
-    let uses64BitHeader: Bool
-  }
-
-  private struct FatFormat: Sendable {
-    let order: ByteOrder
-    let uses64BitOffsets: Bool
-  }
 }

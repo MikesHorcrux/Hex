@@ -4,9 +4,9 @@ import HexCore
 
 extension SQLiteAgentEventJournal {
   func writeConversation(
-    _ write: ConversationStorageRequest.Write,
+    _ write: ConversationStorageWrite,
     connection: SQLiteConnection
-  ) throws -> ConversationStorageRequest.Response {
+  ) throws -> ConversationStorageResponse {
     let document = write.document
     guard document.revision >= 0, document.revision < Int64.max,
       !document.title.isEmpty, document.title.utf8.count <= 256,
@@ -15,18 +15,18 @@ extension SQLiteAgentEventJournal {
       write.entries.count <= ConversationStorageRequest.maximumPageCount,
       Set(write.entries.map(\.id)).count == write.entries.count
     else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     if write.updatesCheckpoint {
       try validateConversationJSON(document.state)
     } else if !document.state.isEmpty {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     let encoded = try encoder.encode(write)
     guard encoded.count <= ConversationStorageRequest.maximumEncodedWriteBytes else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     let hash = Data(SHA256.hash(data: encoded))
     let lookup = try connection.prepare(
@@ -40,20 +40,20 @@ extension SQLiteAgentEventJournal {
       let revision = try lookup.columnInt64(at: 0)
       if try lookup.columnText(at: 2, maximumBytes: 36) == write.operationID.uuidString {
         guard try lookup.columnBlob(at: 3, maximumBytes: 32) == hash else {
-          throw ConversationStorageRequest.Failure.operationConflict
+          throw ConversationStorageFailure.operationConflict
         }
-        var response = ConversationStorageRequest.Response()
+        var response = ConversationStorageResponse()
         response.receipt = .init(id: document.id, revision: revision)
         return response
       }
       guard revision == document.revision,
         try lookup.columnOptionalText(at: 4, maximumBytes: 128) == write.importID
       else {
-        throw ConversationStorageRequest.Failure.revisionConflict
+        throw ConversationStorageFailure.revisionConflict
       }
       nextSequence = try lookup.columnInt64(at: 1)
     } else if document.revision != 0 || !write.updatesCheckpoint {
-      throw ConversationStorageRequest.Failure.revisionConflict
+      throw ConversationStorageFailure.revisionConflict
     }
     let statement = try connection.prepare(
       """
@@ -99,19 +99,19 @@ extension SQLiteAgentEventJournal {
     try update.bind(nextSequence, at: 1)
     try update.bind(document.id.uuidString, at: 2)
     _ = try update.step()
-    var response = ConversationStorageRequest.Response()
+    var response = ConversationStorageResponse()
     response.receipt = .init(id: document.id, revision: document.revision + 1)
     return response
   }
 
   func writeConversationEntry(
-    _ entry: ConversationStorageRequest.Entry, conversationID: UUID,
+    _ entry: ConversationStorageEntry, conversationID: UUID,
     nextSequence: inout Int64, connection: SQLiteConnection
   ) throws {
     guard !entry.id.isEmpty, entry.id.utf8.count <= 256, entry.searchText.utf8.count <= 64 * 1_024,
       nextSequence > 0, nextSequence < Int64.max
     else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     try validateConversationJSON(entry.payload)
     let lookup = try connection.prepare(
@@ -125,11 +125,11 @@ extension SQLiteAgentEventJournal {
     if try lookup.step() == .row {
       let previous = try decodeConversationEntry(lookup)
       guard previous.kind == entry.kind else {
-        throw ConversationStorageRequest.Failure.immutableEntry
+        throw ConversationStorageFailure.immutableEntry
       }
       if previous.payload == entry.payload && previous.searchText == entry.searchText { return }
       guard entry.kind == .display || entry.kind == .exchange else {
-        throw ConversationStorageRequest.Failure.immutableEntry
+        throw ConversationStorageFailure.immutableEntry
       }
       sequence = previous.sequence
     } else {
@@ -153,25 +153,25 @@ extension SQLiteAgentEventJournal {
 
   func validateConversationJSON(_ data: Data) throws {
     guard !data.isEmpty, data.count <= ConversationStorageRequest.maximumPayloadBytes else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     _ = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
   }
 
   func publishConversationImport(
     _ fingerprint: String,
-    documents: [ConversationStorageRequest.Receipt], selected: UUID?,
+    documents: [ConversationStorageReceipt], selected: UUID?,
     connection: SQLiteConnection
   ) throws {
     guard !fingerprint.isEmpty, fingerprint.utf8.count <= 128, documents.count <= 64,
       Set(documents.map(\.id)).count == documents.count,
       selected.map({ id in documents.contains(where: { $0.id == id }) }) ?? true
     else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     if let imported = try conversationSetting("legacy_import", connection: connection) {
       guard imported == fingerprint else {
-        throw ConversationStorageRequest.Failure.operationConflict
+        throw ConversationStorageFailure.operationConflict
       }
       return
     }
@@ -181,12 +181,12 @@ extension SQLiteAgentEventJournal {
     var actual: [UUID: Int64] = [:]
     while try lookup.step() == .row {
       guard let id = UUID(uuidString: try lookup.columnText(at: 0, maximumBytes: 36)) else {
-        throw ConversationStorageRequest.Failure.invalidRequest
+        throw ConversationStorageFailure.invalidRequest
       }
       actual[id] = try lookup.columnInt64(at: 1)
     }
     guard actual == Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0.revision) }) else {
-      throw ConversationStorageRequest.Failure.revisionConflict
+      throw ConversationStorageFailure.revisionConflict
     }
     let publication = try connection.prepare(
       "UPDATE conversation_documents SET import_id = NULL WHERE import_id = ?")

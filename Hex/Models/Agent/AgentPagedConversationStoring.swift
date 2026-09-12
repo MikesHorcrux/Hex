@@ -6,7 +6,7 @@ nonisolated protocol AgentPagedConversationStoring: AgentConversationStoring {
   func readConversation(_ id: UUID) async throws -> AgentConversation
   func earlierTranscript(_ id: UUID, before: Int64?) async throws
     -> (items: [ConversationItem], before: Int64?)
-  func listConversations(_ query: ConversationStorageRequest.Query) async throws
-    -> (conversations: [AgentConversation], next: ConversationStorageRequest.Cursor?)
+  func listConversations(_ query: ConversationStorageQuery) async throws
+    -> (conversations: [AgentConversation], next: ConversationStorageCursor?)
   func removeConversation(_ id: UUID) async throws
 }

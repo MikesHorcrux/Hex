@@ -4,7 +4,7 @@
 
 Journal, settings and artifact persistence implementations.
 
-**66 Swift files.** Generated; do not edit by hand.
+**68 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexPersistence/Artifacts
 
@@ -38,6 +38,7 @@ Journal, settings and artifact persistence implementations.
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexResidentDataPaths.swift](../../../Packages/HexKit/Sources/HexPersistence/Resident/HexResidentDataPaths.swift) | The resident gateway's non-secret settings, journal, and heartbeat locations. |
+| [HexResidentDataPathsPathError.swift](../../../Packages/HexKit/Sources/HexPersistence/Resident/HexResidentDataPathsPathError.swift) | — |
 | [JSONHexInferenceBackendSettingsLockAttempt.swift](../../../Packages/HexKit/Sources/HexPersistence/Resident/JSONHexInferenceBackendSettingsLockAttempt.swift) | — |
 | [JSONHexInferenceBackendSettingsStore.swift](../../../Packages/HexKit/Sources/HexPersistence/Resident/JSONHexInferenceBackendSettingsStore.swift) | An owner-only, atomic JSON store for non-secret inference-backend settings.  The store deliberately mirrors the resident settings boundary: it creates a private parent directory, uses a no-follow lock and data file, bounds reads and writes,… |
 | [JSONHexInferenceBackendSettingsStoreError.swift](../../../Packages/HexKit/Sources/HexPersistence/Resident/JSONHexInferenceBackendSettingsStoreError.swift) | Secret-free failures from the inference-backend settings store. |
@@ -87,6 +88,7 @@ Journal, settings and artifact persistence implementations.
 | [SQLiteConversationTimeline.swift](../../../Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteConversationTimeline.swift) | Shared by live journal transactions and the schema-five backfill. |
 | [SQLiteInterruptedRunTerminal.swift](../../../Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteInterruptedRunTerminal.swift) | — |
 | [SQLiteJournalActiveRunState.swift](../../../Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteJournalActiveRunState.swift) | Actor-owned append validation for a run created after whole-journal admission. Recovered runs are terminal before admission returns and do not need a retained state. |
+| [SQLiteJournalIntegrityPolicy.swift](../../../Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteJournalIntegrityPolicy.swift) | Eager validation retains the original bounded-archive contract for diagnostic callers. Incremental validation has no lifetime size/count quota; it validates writes and requested pages and restores only transactionally checkpointed active ru… |
 | [SQLiteJournalIntegrityUsage.swift](../../../Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteJournalIntegrityUsage.swift) | — |
 | [SQLiteRunIntegrityState.swift](../../../Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteRunIntegrityState.swift) | — |
 | [SQLiteRunLifecycleValidator.swift](../../../Packages/HexKit/Sources/HexPersistence/SQLite/Journal/SQLiteRunLifecycleValidator.swift) | — |

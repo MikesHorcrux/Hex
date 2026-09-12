@@ -4,7 +4,7 @@
 
 Explicit profiles, personal facts and bounded prompt context.
 
-**27 Swift files.** Generated; do not edit by hand.
+**30 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexPersonality
 
@@ -18,6 +18,7 @@ Explicit profiles, personal facts and bounded prompt context.
 | --- | --- |
 | [JSONPersonalMemoryStore.swift](../../../Packages/HexKit/Sources/HexPersonality/Memory/JSONPersonalMemoryStore.swift) | An owner-only, atomically replaced JSON implementation of `PersonalMemoryStore`.  Every operation reads the current snapshot while holding the file lock. This keeps separate store instances from overwriting one another after a process resta… |
 | [JSONPersonalMemoryStoreError.swift](../../../Packages/HexKit/Sources/HexPersonality/Memory/JSONPersonalMemoryStoreError.swift) | — |
+| [JSONPersonalMemoryStoreSnapshot.swift](../../../Packages/HexKit/Sources/HexPersonality/Memory/JSONPersonalMemoryStoreSnapshot.swift) | — |
 | [PersonalMemoryError.swift](../../../Packages/HexKit/Sources/HexPersonality/Memory/PersonalMemoryError.swift) | — |
 | [PersonalMemoryID.swift](../../../Packages/HexKit/Sources/HexPersonality/Memory/PersonalMemoryID.swift) | — |
 | [PersonalMemoryKind.swift](../../../Packages/HexKit/Sources/HexPersonality/Memory/PersonalMemoryKind.swift) | — |
@@ -36,6 +37,7 @@ Explicit profiles, personal facts and bounded prompt context.
 | Source file | Leading source documentation |
 | --- | --- |
 | [JSONPersonalityProfileStore.swift](../../../Packages/HexKit/Sources/HexPersonality/Profile/JSONPersonalityProfileStore.swift) | An owner-only, atomically replaced JSON store for the current personality profile. |
+| [JSONPersonalityProfileStorePersistedProfile.swift](../../../Packages/HexKit/Sources/HexPersonality/Profile/JSONPersonalityProfileStorePersistedProfile.swift) | — |
 | [PersonalityProfile+Default.swift](../../../Packages/HexKit/Sources/HexPersonality/Profile/PersonalityProfile+Default.swift) | — |
 | [PersonalityProfile.swift](../../../Packages/HexKit/Sources/HexPersonality/Profile/PersonalityProfile.swift) | — |
 | [PersonalityProfileError.swift](../../../Packages/HexKit/Sources/HexPersonality/Profile/PersonalityProfileError.swift) | — |
@@ -57,3 +59,4 @@ Explicit profiles, personal facts and bounded prompt context.
 | Source file | Leading source documentation |
 | --- | --- |
 | [JSONPersonalityStoreFileSupport.swift](../../../Packages/HexKit/Sources/HexPersonality/Storage/JSONPersonalityStoreFileSupport.swift) | Shared file-system mechanics for the personality stores.  The support boundary deliberately has no JSON or policy knowledge. Callers provide the bounded payload and remain responsible for decoding and validating their own records. |
+| [JSONPersonalityStoreFileSupportFailure.swift](../../../Packages/HexKit/Sources/HexPersonality/Storage/JSONPersonalityStoreFileSupportFailure.swift) | — |

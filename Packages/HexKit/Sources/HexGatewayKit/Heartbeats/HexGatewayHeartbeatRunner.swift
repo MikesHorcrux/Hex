@@ -8,20 +8,6 @@ import HexIPC
 /// enters the same gateway admission path as an interactive run instead of creating a private driver
 /// or bypassing the single-active-run policy.
 public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
-  public enum RunnerError: Swift.Error, Equatable, LocalizedError, Sendable {
-    case invalidConfiguration
-    case timedOut
-
-    public var errorDescription: String? {
-      switch self {
-      case .invalidConfiguration:
-        "The heartbeat runner configuration is invalid."
-      case .timedOut:
-        "The heartbeat run exceeded its bounded execution timeout."
-      }
-    }
-  }
-
   private let client: HexGatewayClient
   private let authorizationPolicy: HexHeartbeatAuthorizationPolicy
   private let modelID: ModelID
@@ -42,7 +28,7 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
       requestedNanoseconds >= 1,
       requestedNanoseconds <= Double(UInt64.max)
     else {
-      throw RunnerError.invalidConfiguration
+      throw HexGatewayHeartbeatRunnerError.invalidConfiguration
     }
 
     self.client = client
@@ -57,7 +43,7 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
   ) async throws -> HexHeartbeatExecutionResult {
     try Task.checkCancellation()
     guard let runID = request.lease.runID else {
-      throw RunnerError.invalidConfiguration
+      throw HexGatewayHeartbeatRunnerError.invalidConfiguration
     }
     try await authorizationPolicy.register(runID)
     do {
@@ -132,12 +118,12 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
         runID: runID,
         invocationID: invocationID
       )
-    } catch RunnerError.timedOut {
+    } catch HexGatewayHeartbeatRunnerError.timedOut {
       await cancelAdmittedRun(runID: runID, invocationID: invocationID)
       return .failed(
         HexHeartbeatFailure(
           code: .timedOut,
-          message: RunnerError.timedOut.errorDescription
+          message: HexGatewayHeartbeatRunnerError.timedOut.errorDescription
             ?? "The heartbeat run timed out.",
           retryable: true
         )
@@ -170,13 +156,13 @@ public struct HexGatewayHeartbeatRunner: HexHeartbeatRunner, Sendable {
         while true {
           try Task.checkCancellation()
           let remaining = budget - (await authorizationPolicy.executionTime(for: runID))
-          guard remaining > .zero else { throw RunnerError.timedOut }
+          guard remaining > .zero else { throw HexGatewayHeartbeatRunnerError.timedOut }
           try await Task.sleep(for: min(remaining, .milliseconds(250)))
         }
       }
       defer { group.cancelAll() }
       guard let result = try await group.next() else {
-        throw RunnerError.timedOut
+        throw HexGatewayHeartbeatRunnerError.timedOut
       }
       return result
     }

@@ -67,7 +67,7 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
         }
 
         let candidate = try validatedSnapshot(
-          Snapshot(schemaVersion: Self.schemaVersion, records: records),
+          JSONPersonalMemoryStoreSnapshot(schemaVersion: Self.schemaVersion, records: records),
           maximumRecords: maximumRecords
         )
         let data = try encode(candidate, maximumEncodedBytes: maximumEncodedBytes)
@@ -131,7 +131,7 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
         var records = current.records
         records.remove(at: index)
         let candidate = try validatedSnapshot(
-          Snapshot(schemaVersion: Self.schemaVersion, records: records),
+          JSONPersonalMemoryStoreSnapshot(schemaVersion: Self.schemaVersion, records: records),
           maximumRecords: maximumRecords
         )
         let data = try encode(candidate, maximumEncodedBytes: maximumEncodedBytes)
@@ -192,7 +192,7 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
       throw error
     } catch let error as JSONPersonalMemoryStoreError {
       throw error
-    } catch let error as JSONPersonalityStoreFileSupport.Failure {
+    } catch let error as JSONPersonalityStoreFileSupportFailure {
       switch error {
       case .invalidFileURL:
         throw JSONPersonalMemoryStoreError.invalidFileURL
@@ -212,18 +212,18 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
     fileURL: URL,
     maximumEncodedBytes: Int,
     maximumRecords: Int
-  ) throws -> Snapshot {
+  ) throws -> JSONPersonalMemoryStoreSnapshot {
     guard
       let data = try JSONPersonalityStoreFileSupport.readBoundedData(
         from: fileURL,
         maximumBytes: maximumEncodedBytes
       )
     else {
-      return Snapshot(schemaVersion: Self.schemaVersion, records: [])
+      return JSONPersonalMemoryStoreSnapshot(schemaVersion: Self.schemaVersion, records: [])
     }
 
     do {
-      let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+      let snapshot = try JSONDecoder().decode(JSONPersonalMemoryStoreSnapshot.self, from: data)
       return try validatedSnapshot(snapshot, maximumRecords: maximumRecords)
     } catch let error as JSONPersonalMemoryStoreError {
       throw error
@@ -235,9 +235,9 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
   }
 
   private func validatedSnapshot(
-    _ snapshot: Snapshot,
+    _ snapshot: JSONPersonalMemoryStoreSnapshot,
     maximumRecords: Int
-  ) throws -> Snapshot {
+  ) throws -> JSONPersonalMemoryStoreSnapshot {
     guard snapshot.schemaVersion == Self.schemaVersion else {
       throw JSONPersonalMemoryStoreError.malformedStore
     }
@@ -255,7 +255,7 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
   }
 
   private func encode(
-    _ snapshot: Snapshot,
+    _ snapshot: JSONPersonalMemoryStoreSnapshot,
     maximumEncodedBytes: Int
   ) throws -> Data {
     do {
@@ -305,11 +305,6 @@ public actor JSONPersonalMemoryStore: PersonalMemoryStore {
       return left.scope.rawValue < right.scope.rawValue
     }
     return left.id.rawValue < right.id.rawValue
-  }
-
-  private struct Snapshot: Codable, Sendable {
-    let schemaVersion: Int
-    let records: [PersonalMemoryRecord]
   }
 
   private static let schemaVersion = 1

@@ -103,7 +103,7 @@ struct HexSelfKnowledgeTests {
     let registered = try await service.snapshot(for: runID)
     #expect(decoded == registered)
     await service.endRun(runID)
-    await #expect(throws: HexSelfKnowledgeService.ServiceError.runUnavailable) {
+    await #expect(throws: HexSelfKnowledgeServiceError.runUnavailable) {
       try await service.snapshot(for: runID)
     }
   }

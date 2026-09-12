@@ -4,7 +4,7 @@
 
 Focused test target; consult suites for exercised boundaries.
 
-**61 Swift files.** Generated; do not edit by hand.
+**62 Swift files.** Generated; do not edit by hand.
 
 ## HexTests/Agent
 
@@ -34,6 +34,7 @@ Focused test target; consult suites for exercised boundaries.
 | [AgentWorkspaceDeliveryRecoveryTests.swift](../../../HexTests/Agent/AgentWorkspaceDeliveryRecoveryTests.swift) | — |
 | [AgentWorkspaceNonExecutionHistoryTests.swift](../../../HexTests/Agent/AgentWorkspaceNonExecutionHistoryTests.swift) | — |
 | [AgentWorkspacePresentationTests.swift](../../../HexTests/Agent/AgentWorkspacePresentationTests.swift) | — |
+| [AgentWorkspaceRefreshLoopTests.swift](../../../HexTests/Agent/AgentWorkspaceRefreshLoopTests.swift) | — |
 | [AgentWorkspaceRestartRecoveryTests.swift](../../../HexTests/Agent/AgentWorkspaceRestartRecoveryTests.swift) | — |
 | [AgentWorkspaceRetryTests.swift](../../../HexTests/Agent/AgentWorkspaceRetryTests.swift) | — |
 | [HexApprovalModeRenderingTests.swift](../../../HexTests/Agent/HexApprovalModeRenderingTests.swift) | Opt-in component renders use only static data. They never start a resident or load user settings. |

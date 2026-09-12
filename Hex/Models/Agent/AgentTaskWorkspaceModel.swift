@@ -14,8 +14,7 @@ final class AgentTaskWorkspaceModel {
   var steering = ""
   var error: String?
   var isSubmitting = false
-  var controlOperation:
-    (taskID: UUID, revision: Int64, id: UUID, action: GatewayTaskRequest.Action)?
+  var controlOperation: (taskID: UUID, revision: Int64, id: UUID, action: GatewayTaskAction)?
   var items: [ConversationItem] = []
   var approvals: [AuthorizationRequest] = []
   var nextPage: UUID?
@@ -91,7 +90,7 @@ final class AgentTaskWorkspaceModel {
     }
   }
 
-  func control(_ action: GatewayTaskRequest.Action) async {
+  func control(_ action: GatewayTaskAction) async {
     guard let selected, !isSubmitting else { return }
     isSubmitting = true
     defer { isSubmitting = false }

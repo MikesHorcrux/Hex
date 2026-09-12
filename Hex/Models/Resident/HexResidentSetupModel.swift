@@ -579,7 +579,7 @@ final class HexResidentSetupModel {
     return await persist(request)
   }
 
-  private func prepareSave() -> SaveRequest? {
+  private func prepareSave() -> HexResidentSettingsSaveRequest? {
     guard !isSaving, !Task.isCancelled else { return nil }
     guard hasLoaded else {
       errorMessage = "Load the saved resident settings before making changes."
@@ -660,11 +660,11 @@ final class HexResidentSetupModel {
     }
 
     isSaving = true
-    return SaveRequest(
+    return HexResidentSettingsSaveRequest(
       settings: settings, apiKey: normalizedAPIKey, mcpSecretChanges: mcpSecretChanges)
   }
 
-  private func persist(_ request: SaveRequest) async -> Bool {
+  private func persist(_ request: HexResidentSettingsSaveRequest) async -> Bool {
     defer { isSaving = false }
     guard let settingsStore, let secretStore else { return false }
     var isReloading = false
@@ -728,12 +728,6 @@ final class HexResidentSetupModel {
       statusMessage = nil
       return false
     }
-  }
-
-  private struct SaveRequest: Sendable {
-    let settings: HexResidentRuntimeSettings
-    let apiKey: String
-    let mcpSecretChanges: [HexMCPSecretChange]
   }
 
   private static func isValidModelID(_ value: String) -> Bool {

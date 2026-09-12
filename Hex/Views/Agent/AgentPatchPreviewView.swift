@@ -10,12 +10,11 @@ struct AgentPatchPreviewView: View {
       HStack {
         Text(preview.path).font(.headline)
         Spacer()
-        Button("Done") { dismiss() }
+        Button("Done") { dismiss() }.buttonStyle(.hexSecondaryAction)
       }
-      Picker("Saved image", selection: $after) {
-        Text("Before").tag(false)
-        Text("Proposed after").tag(true)
-      }.pickerStyle(.segmented)
+      HexSegmentedPicker(
+        title: "Saved image", options: [false, true], selection: $after,
+        label: { $0 ? "Proposed after" : "Before" })
       Text(
         "These saved images describe the patch. Its receipt records whether each file was applied."
       ).font(.caption).foregroundStyle(.secondary)
@@ -23,11 +22,9 @@ struct AgentPatchPreviewView: View {
         Text("Preview limited to 32 KiB per image; the full recovery images remain saved.").font(
           .caption)
       }
-      ScrollView([.vertical, .horizontal]) {
+      HexCodeScrollView {
         Text((after ? preview.after : preview.before) ?? "File absent")
-          .font(.system(.body, design: .monospaced)).textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .topLeading).padding(12)
-      }.defaultScrollAnchor(.topLeading, for: .alignment)
+      }
     }.padding(20).frame(minWidth: 700, minHeight: 500)
   }
 }

@@ -290,7 +290,7 @@ public struct ProcessRunTool: HostTool, Sendable {
   }
 
   private func identityValue(
-    _ identity: ProcessExecutionIdentity.FileIdentity
+    _ identity: ProcessFileIdentity
   ) -> JSONValue {
     .object([
       "device": .integer(Int64(exactly: identity.device) ?? Int64.max),

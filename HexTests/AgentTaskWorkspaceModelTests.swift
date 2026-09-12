@@ -44,7 +44,7 @@ struct AgentTaskWorkspaceModelTests {
     var record = AgentTaskRecord(
       id: UUID(), title: "fixture", request: Data(), admissionHash: Data())
     var operationIDs: [UUID] = []
-    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskRequest.Response {
+    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskResponse {
       if case .control(_, let revision, let id, _) = request {
         operationIDs.append(id)
         if operationIDs.count == 1 {
@@ -64,7 +64,7 @@ struct AgentTaskWorkspaceModelTests {
       id: UUID(), title: "fixture", request: Data(), admissionHash: Data())
     var operationIDs: [UUID] = []
     var appliedCount = 0
-    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskRequest.Response {
+    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskResponse {
       switch request {
       case .control(_, _, let id, _):
         operationIDs.append(id)

@@ -21,8 +21,8 @@ struct SQLiteConversationStorageTests {
     _ = try await journal.conversationStorage(.write(.init(document: value, entries: [])))
     value.revision = 1
     value.state = Data()
-    let entry = ConversationStorageRequest.Entry(id: "large", kind: .message, payload: payload)
-    let write = ConversationStorageRequest.Write(
+    let entry = ConversationStorageEntry(id: "large", kind: .message, payload: payload)
+    let write = ConversationStorageWrite(
       document: value, entries: [entry], updatesCheckpoint: false)
     #expect(
       try JSONEncoder().encode(write).count < ConversationStorageRequest.maximumEncodedWriteBytes)
@@ -42,22 +42,22 @@ struct SQLiteConversationStorageTests {
       configuration: .init(
         databaseURL: JournalTestSupport.databaseURL(in: root), integrityPolicy: .incremental))
     var document = document()
-    let entry = ConversationStorageRequest.Entry(
+    let entry = ConversationStorageEntry(
       id: "message:one", kind: .message,
       payload: Data(#"{"text":"original"}"#.utf8))
-    let write = ConversationStorageRequest.Write(document: document, entries: [entry])
+    let write = ConversationStorageWrite(document: document, entries: [entry])
     let first = try await journal.conversationStorage(.write(write))
     #expect(first.receipt?.revision == 1)
     #expect(try await journal.conversationStorage(.write(write)).receipt == first.receipt)
-    await #expect(throws: ConversationStorageRequest.Failure.revisionConflict) {
+    await #expect(throws: ConversationStorageFailure.revisionConflict) {
       try await journal.conversationStorage(.write(.init(document: document, entries: [])))
     }
     document.revision = 1
     document.title = "must roll back"
-    let changed = ConversationStorageRequest.Entry(
+    let changed = ConversationStorageEntry(
       id: entry.id, kind: .message,
       payload: Data(#"{"text":"replacement"}"#.utf8))
-    await #expect(throws: ConversationStorageRequest.Failure.immutableEntry) {
+    await #expect(throws: ConversationStorageFailure.immutableEntry) {
       try await journal.conversationStorage(.write(.init(document: document, entries: [changed])))
     }
     let restored = try #require(
@@ -83,7 +83,7 @@ struct SQLiteConversationStorageTests {
     try await journal.close()
     let reopened = try await SQLiteAgentEventJournal.open(configuration: configuration)
     #expect(try await reopened.conversationStorage(.list(.init())).documents.isEmpty)
-    await #expect(throws: ConversationStorageRequest.Failure.revisionConflict) {
+    await #expect(throws: ConversationStorageFailure.revisionConflict) {
       try await reopened.conversationStorage(
         .publishImport(
           "source-fingerprint",
@@ -110,7 +110,7 @@ struct SQLiteConversationStorageTests {
     for page in 0..<12 {
       let entries = (0..<100).map { offset in
         let number = page * 100 + offset
-        return ConversationStorageRequest.Entry(
+        return ConversationStorageEntry(
           id: "display:\(number)", kind: .display,
           payload: Data("{\"number\":\(number)}".utf8), searchText: "marker \(number)")
       }
@@ -177,7 +177,7 @@ struct SQLiteConversationStorageTests {
     try await again.close()
   }
 
-  private func document() -> ConversationStorageRequest.Document {
+  private func document() -> ConversationStorageDocument {
     .init(
       id: UUID(), title: "Conversation", createdAt: Date(timeIntervalSince1970: 100),
       updatedAt: Date(timeIntervalSince1970: 200), state: Data(#"{"version":1}"#.utf8))

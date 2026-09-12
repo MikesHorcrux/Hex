@@ -128,7 +128,7 @@ struct HexGatewayResidentPersistenceTests {
         secretStore: secretStore
       )
       Issue.record("Expected a missing resident credential to fail loading.")
-    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+    } catch let error as HexGatewayResidentConfigurationError {
       #expect(error == .credentialsUnavailable)
     }
     #expect(await secretStore.didReadValue() == false)
@@ -221,7 +221,7 @@ struct HexGatewayResidentPersistenceTests {
         apiKey: "sk-test"
       )
       Issue.record("Expected a database path containing '..' to be rejected.")
-    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+    } catch let error as HexGatewayResidentConfigurationError {
       #expect(error == .invalidVariable("HEX_GATEWAY_DATABASE_URL"))
     }
 
@@ -235,7 +235,7 @@ struct HexGatewayResidentPersistenceTests {
         heartbeatStoreURL: URL(fileURLWithPath: "/tmp/.")
       )
       Issue.record("Expected a heartbeat path containing '.' to be rejected.")
-    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+    } catch let error as HexGatewayResidentConfigurationError {
       #expect(error == .invalidVariable("HEX_HEARTBEAT_STORE_URL"))
     }
 
@@ -249,7 +249,7 @@ struct HexGatewayResidentPersistenceTests {
         heartbeatStoreURL: URL(fileURLWithPath: "/")
       )
       Issue.record("Expected a standardized heartbeat directory to be rejected.")
-    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+    } catch let error as HexGatewayResidentConfigurationError {
       #expect(error == .invalidVariable("HEX_HEARTBEAT_STORE_URL"))
     }
   }

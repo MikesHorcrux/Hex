@@ -4,7 +4,7 @@
 
 OpenAI provider/authentication and shared provider support.
 
-**75 Swift files.** Generated; do not edit by hand.
+**92 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexProviders
 
@@ -37,6 +37,7 @@ OpenAI provider/authentication and shared provider support.
 | [MLXRequestContentValidator+Tools.swift](../../../Packages/HexKit/Sources/HexProviders/MLX/MLXRequestContentValidator+Tools.swift) | — |
 | [MLXRequestContentValidator.swift](../../../Packages/HexKit/Sources/HexProviders/MLX/MLXRequestContentValidator.swift) | — |
 | [MLXToolInputSchemaValidator.swift](../../../Packages/HexKit/Sources/HexProviders/MLX/MLXToolInputSchemaValidator.swift) | Validates object-rooted tool schemas with primitive/union types, nested properties and items, required/additional-property rules, enum/const constraints, and bounded collection lengths. Request admission rejects every schema keyword outside… |
+| [MLXToolInputSchemaValidatorSchemaType.swift](../../../Packages/HexKit/Sources/HexProviders/MLX/MLXToolInputSchemaValidatorSchemaType.swift) | — |
 
 ## Packages/HexKit/Sources/HexProviders/OpenAI
 
@@ -51,8 +52,15 @@ OpenAI provider/authentication and shared provider support.
 | [ChatGPTCodexOAuthTokenResponse.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/ChatGPTCodexOAuthTokenResponse.swift) | Validated shape returned by an OAuth token exchange or refresh. |
 | [ChatGPTCodexOAuthTokenSet.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/ChatGPTCodexOAuthTokenSet.swift) | Codable token bundle stored as one atomic Keychain value. |
 | [ChatGPTCodexOAuthTransport.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/ChatGPTCodexOAuthTransport.swift) | Injectable network boundary for the ChatGPT/Codex OAuth device-code flow. |
+| [ChatGPTCodexOAuthTransportDeviceAuthorizationResponse.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/ChatGPTCodexOAuthTransportDeviceAuthorizationResponse.swift) | — |
+| [ChatGPTCodexOAuthTransportHTTPResult.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/ChatGPTCodexOAuthTransportHTTPResult.swift) | — |
+| [ChatGPTCodexOAuthTransportPollResponse.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/ChatGPTCodexOAuthTransportPollResponse.swift) | — |
+| [ChatGPTCodexOAuthTransportTokenResponse.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/ChatGPTCodexOAuthTransportTokenResponse.swift) | — |
 | [OpenAIAssistantMirror.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIAssistantMirror.swift) | — |
 | [OpenAIChatGPTModelCatalog.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIChatGPTModelCatalog.swift) | Reads Codex's account-specific catalog. Only model metadata is retained; credentials and the server's agent instructions never enter the catalog returned to Hex's runtime. |
+| [OpenAIChatGPTModelCatalogEntry.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIChatGPTModelCatalogEntry.swift) | — |
+| [OpenAIChatGPTModelCatalogEntryEffort.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIChatGPTModelCatalogEntryEffort.swift) | — |
+| [OpenAIChatGPTModelCatalogPayload.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIChatGPTModelCatalogPayload.swift) | — |
 | [OpenAIContinuationCommit.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIContinuationCommit.swift) | — |
 | [OpenAICredentialProvider+OpenAIResponsesAuthorizationProvider.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAICredentialProvider+OpenAIResponsesAuthorizationProvider.swift) | — |
 | [OpenAICredentialProvider.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAICredentialProvider.swift) | Supplies an OpenAI Platform API key at request time.  Implementations should read from a secret store and must not expose the key through descriptions, logging, or thrown error text. This boundary does not support ChatGPT subscription crede… |
@@ -69,6 +77,9 @@ OpenAI provider/authentication and shared provider support.
 | [OpenAIResponsesAuthorizationProvider.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesAuthorizationProvider.swift) | Supplies request-time authorization without giving the inference provider ownership of login. |
 | [OpenAIResponsesBodyStreamer.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesBodyStreamer.swift) | Delivers SSE lines as they arrive while keeping oversized lines and queued bytes bounded. |
 | [OpenAIResponsesConfiguration.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesConfiguration.swift) | — |
+| [OpenAIResponsesContinuationMapper.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesContinuationMapper.swift) | — |
+| [OpenAIResponsesInputEncoder.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesInputEncoder.swift) | — |
+| [OpenAIResponsesInputValidator.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesInputValidator.swift) | — |
 | [OpenAIResponsesPrivacyMode.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesPrivacyMode.swift) | Controls how a Responses API conversation is continued. |
 | [OpenAIResponsesProcessedEvent.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesProcessedEvent.swift) | — |
 | [OpenAIResponsesProvider+Cache.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesProvider+Cache.swift) | — |
@@ -78,12 +89,18 @@ OpenAI provider/authentication and shared provider support.
 | [OpenAIResponsesProviderError+InferenceProviderFailure.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesProviderError+InferenceProviderFailure.swift) | — |
 | [OpenAIResponsesProviderError+LocalizedError.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesProviderError+LocalizedError.swift) | — |
 | [OpenAIResponsesProviderError.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesProviderError.swift) | Public, deliberately redacted failures from the OpenAI Responses provider. |
+| [OpenAIResponsesReasoningAccumulator.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesReasoningAccumulator.swift) | — |
 | [OpenAIResponsesReasoningEffort.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesReasoningEffort.swift) | — |
+| [OpenAIResponsesReplayDecoder.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesReplayDecoder.swift) | — |
 | [OpenAIResponsesRequestBuilder.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesRequestBuilder.swift) | — |
 | [OpenAIResponsesRequestPlan.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesRequestPlan.swift) | — |
 | [OpenAIResponsesService.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesService.swift) | The two OpenAI-hosted routes supported by Hex's own Responses client. |
+| [OpenAIResponsesStreamContext.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesStreamContext.swift) | Immutable admission evidence shared with the channel accumulators for one event. |
+| [OpenAIResponsesStreamFields.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesStreamFields.swift) | — |
+| [OpenAIResponsesStreamFramingLimit.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesStreamFramingLimit.swift) | — |
 | [OpenAIResponsesStreamProcessor.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesStreamProcessor.swift) | — |
 | [OpenAIResponsesStreamResult.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesStreamResult.swift) | — |
+| [OpenAIResponsesTextAccumulator.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesTextAccumulator.swift) | — |
 | [OpenAIResponsesTransport.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesTransport.swift) | Injectable streaming HTTP boundary used by `OpenAIResponsesProvider`.  A successful send returns an owned response whose cancellation stops its body producer and whose termination join returns only after that producer has stopped touching t… |
 | [OpenAIResponsesTransportResponse.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesTransportResponse.swift) | An owned transport response whose body producer has an explicit cancellation and join lifetime. |
 | [OpenAIResponsesTransportResponseCancellation.swift](../../../Packages/HexKit/Sources/HexProviders/OpenAI/OpenAIResponsesTransportResponseCancellation.swift) | — |

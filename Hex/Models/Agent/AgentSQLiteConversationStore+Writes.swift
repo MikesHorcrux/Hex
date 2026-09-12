@@ -9,7 +9,7 @@ extension AgentSQLiteConversationStore {
     let previous = try await storage.conversationStorage(.read(input.id)).documents.first
     let expected = revisions[input.id] ?? (importID == nil ? 0 : previous?.revision ?? 0)
     guard (previous?.revision ?? 0) == expected else {
-      throw ConversationStorageRequest.Failure.revisionConflict
+      throw ConversationStorageFailure.revisionConflict
     }
     revisions[input.id] = expected
     var conversation = input
@@ -30,7 +30,7 @@ extension AgentSQLiteConversationStore {
     var exists = previous != nil
     var published = false
     repeat {
-      var batch: [ConversationStorageRequest.Entry] = []
+      var batch: [ConversationStorageEntry] = []
       var bytes = 0
       while let entry = remaining.first {
         let cost = entry.payload.count + entry.searchText.utf8.count + 512
@@ -39,13 +39,13 @@ extension AgentSQLiteConversationStore {
         bytes += cost
         remaining = remaining.dropFirst()
       }
-      var document = ConversationStorageRequest.Document(
+      var document = ConversationStorageDocument(
         id: conversation.id,
         title: conversation.title, createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
         archivedAt: conversation.archivedAt, revision: revisions[conversation.id] ?? 0,
         state: state)
-      var write = ConversationStorageRequest.Write(
+      var write = ConversationStorageWrite(
         document: document, entries: batch, importID: importID)
       let encodedBytes = try Self.encode(write).count
       published =
@@ -65,12 +65,12 @@ extension AgentSQLiteConversationStore {
     fingerprints[conversation.id] = try Self.fingerprints(for: conversation)
   }
 
-  func commit(_ write: ConversationStorageRequest.Write) async throws {
+  func commit(_ write: ConversationStorageWrite) async throws {
     let response = try await storage.conversationStorage(.write(write))
     guard let receipt = response.receipt, receipt.id == write.document.id,
       receipt.revision == write.document.revision + 1
     else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     revisions[receipt.id] = receipt.revision
     pendingWrites.removeValue(forKey: receipt.id)

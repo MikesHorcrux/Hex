@@ -3,13 +3,6 @@
 /// Native Foundation XPC client connection. NSXPCConnection is kept entirely inside this actor;
 /// only bounded Data and Sendable stream values cross the Swift concurrency boundary.
 public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
-  private struct EventState {
-    let token: UUID
-    let continuation: GatewayBufferedStream<Data>.Continuation
-    let sink: EventSink
-    let cancellationEnvelope: Data
-  }
-
   private let machServiceName: String
   private let configuration: GatewayConfiguration
   private let codec: GatewayWireCodec
@@ -17,7 +10,7 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
   private var didConfigureConnection = false
   private var isUnavailable = false
   private var pendingReplies: [UUID: CheckedContinuation<Data, any Error>] = [:]
-  private var events: [GatewayXPCSubscriptionID: EventState] = [:]
+  private var events: [GatewayXPCSubscriptionID: NativeHexGatewayXPCConnectionEventState] = [:]
 
   public init(
     machServiceName: String,
@@ -93,7 +86,7 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
     let continuation = pair.continuation
     let maximumWireBytes = configuration.maximumWireBytes
     let codec = self.codec
-    let sink = EventSink(
+    let sink = NativeHexGatewayXPCConnectionEventSink(
       receiveEvent: { data in
         // Reserve payload bytes before returning from the XPC callback. Creating a Task per
         // payload would retain unaccounted Data and let terminal cleanup overtake queued events.
@@ -103,7 +96,7 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
         Self.finishEvent(response: data, codec: codec, into: continuation)
       }
     )
-    events[subscriptionID] = EventState(
+    events[subscriptionID] = NativeHexGatewayXPCConnectionEventState(
       token: token,
       continuation: continuation,
       sink: sink,
@@ -294,7 +287,7 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
 
   private func sendSubscribe(
     _ envelope: Data,
-    sink: EventSink,
+    sink: NativeHexGatewayXPCConnectionEventSink,
     requestID: UUID
   ) {
     guard
@@ -354,7 +347,7 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
   private nonisolated static func receiveEvent(
     _ data: Data,
     maximumWireBytes: Int,
-    into continuation: GatewayBufferedStream<Data>.Continuation
+    into continuation: GatewayBufferedStreamContinuation<Data>
   ) -> Bool {
     guard data.count <= maximumWireBytes else {
       continuation.finish(
@@ -392,7 +385,7 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
   private nonisolated static func finishEvent(
     response data: Data,
     codec: GatewayWireCodec,
-    into continuation: GatewayBufferedStream<Data>.Continuation
+    into continuation: GatewayBufferedStreamContinuation<Data>
   ) {
     do {
       let response = try codec.decode(GatewayXPCResponseEnvelope.self, from: data).validated()
@@ -434,24 +427,4 @@ public actor NativeHexGatewayXPCConnection: HexGatewayXPCConnection {
     }
   }
 
-  private final class EventSink: NSObject, HexGatewayXPCEventSinkProtocol {
-    private let receiveEventHandler: @Sendable (Data) -> Bool
-    private let finishHandler: @Sendable (Data) -> Void
-
-    init(
-      receiveEvent: @escaping @Sendable (Data) -> Bool,
-      finish: @escaping @Sendable (Data) -> Void
-    ) {
-      receiveEventHandler = receiveEvent
-      finishHandler = finish
-    }
-
-    func receiveEvent(_ envelope: Data, withReply reply: @escaping @Sendable (Bool) -> Void) {
-      reply(receiveEventHandler(envelope))
-    }
-
-    func finish(_ response: Data) {
-      finishHandler(response)
-    }
-  }
 }

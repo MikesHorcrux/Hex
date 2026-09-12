@@ -4,16 +4,6 @@ import HexCore
 /// required/additional-property rules, enum/const constraints, and bounded collection lengths.
 /// Request admission rejects every schema keyword outside this explicit subset.
 enum MLXToolInputSchemaValidator {
-  private enum SchemaType: String, Hashable {
-    case array
-    case boolean
-    case integer
-    case null
-    case number
-    case object
-    case string
-  }
-
   private static let supportedKeywords: Set<String> = [
     "additionalProperties",
     "const",
@@ -231,7 +221,7 @@ enum MLXToolInputSchemaValidator {
 
   private static func matchesType(
     _ value: JSONValue,
-    type: SchemaType
+    type: MLXToolInputSchemaValidatorSchemaType
   ) -> Bool {
     switch (type, value) {
     case (.array, .array), (.boolean, .boolean), (.integer, .integer), (.null, .null),
@@ -242,7 +232,7 @@ enum MLXToolInputSchemaValidator {
     }
   }
 
-  private static func schemaTypes(_ value: JSONValue?) -> [SchemaType]? {
+  private static func schemaTypes(_ value: JSONValue?) -> [MLXToolInputSchemaValidatorSchemaType]? {
     guard let value else {
       return []
     }
@@ -267,11 +257,11 @@ enum MLXToolInputSchemaValidator {
       return nil
     }
 
-    var seenTypes = Set<SchemaType>()
-    var result: [SchemaType] = []
+    var seenTypes = Set<MLXToolInputSchemaValidatorSchemaType>()
+    var result: [MLXToolInputSchemaValidatorSchemaType] = []
     for rawType in rawTypes {
       guard
-        let type = SchemaType(rawValue: rawType),
+        let type = MLXToolInputSchemaValidatorSchemaType(rawValue: rawType),
         seenTypes.insert(type).inserted
       else {
         return nil

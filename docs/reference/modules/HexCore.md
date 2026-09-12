@@ -4,7 +4,7 @@
 
 Shared Sendable values and small inference, tool, event and authority contracts.
 
-**105 Swift files.** Generated; do not edit by hand.
+**124 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexCore/Artifacts
 
@@ -38,6 +38,7 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | [GitWorkspaceSnapshot.swift](../../../Packages/HexKit/Sources/HexCore/Coding/GitWorkspaceSnapshot.swift) | — |
 | [WorkspaceChangesReview.swift](../../../Packages/HexKit/Sources/HexCore/Coding/WorkspaceChangesReview.swift) | — |
 | [WorkspaceFileChangePreview.swift](../../../Packages/HexKit/Sources/HexCore/Coding/WorkspaceFileChangePreview.swift) | — |
+| [WorkspacePatchFileReceipt.swift](../../../Packages/HexKit/Sources/HexCore/Coding/WorkspacePatchFileReceipt.swift) | — |
 | [WorkspacePatchReceipt.swift](../../../Packages/HexKit/Sources/HexCore/Coding/WorkspacePatchReceipt.swift) | — |
 
 ## Packages/HexKit/Sources/HexCore/Conversations
@@ -45,8 +46,18 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | Source file | Leading source documentation |
 | --- | --- |
 | [ConversationStorage.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorage.swift) | The resident persistence owner implements this boundary; clients never open its database. |
+| [ConversationStorageCursor.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageCursor.swift) | — |
+| [ConversationStorageDocument.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageDocument.swift) | — |
+| [ConversationStorageEntry.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageEntry.swift) | — |
+| [ConversationStorageEntryKind.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageEntryKind.swift) | — |
+| [ConversationStorageFailure.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageFailure.swift) | — |
+| [ConversationStorageQuery.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageQuery.swift) | — |
+| [ConversationStorageReceipt.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageReceipt.swift) | — |
 | [ConversationStorageRequest.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageRequest.swift) | Versioned documents and individually addressed history records. Payloads are JSON; indexes, identity, ordering and optimistic concurrency remain typed. Limits bound one operation only. |
+| [ConversationStorageResponse.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageResponse.swift) | — |
+| [ConversationStorageWrite.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationStorageWrite.swift) | — |
 | [ConversationTimelineEntry.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationTimelineEntry.swift) | A durable display projection. Execution truth remains in the original run journal. |
+| [ConversationTimelineEntryContent.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationTimelineEntryContent.swift) | — |
 | [ConversationTimelinePage.swift](../../../Packages/HexKit/Sources/HexCore/Conversations/ConversationTimelinePage.swift) | — |
 
 ## Packages/HexKit/Sources/HexCore/Events
@@ -54,6 +65,9 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | Source file | Leading source documentation |
 | --- | --- |
 | [AgentContextCompaction.swift](../../../Packages/HexKit/Sources/HexCore/Events/AgentContextCompaction.swift) | A durable historical-context replacement, never a new user instruction or authorization. Source IDs identify the exact ordered history replaced at the declared boundary; earlier summaries remain valid sources for subsequent compactions. Ori… |
+| [AgentContextCompactionBoundary.swift](../../../Packages/HexKit/Sources/HexCore/Events/AgentContextCompactionBoundary.swift) | — |
+| [AgentContextCompactionFieldKey.swift](../../../Packages/HexKit/Sources/HexCore/Events/AgentContextCompactionFieldKey.swift) | — |
+| [AgentContextCompactionValidationError.swift](../../../Packages/HexKit/Sources/HexCore/Events/AgentContextCompactionValidationError.swift) | — |
 | [AgentEvent.swift](../../../Packages/HexKit/Sources/HexCore/Events/AgentEvent.swift) | Durable facts emitted by an agent run. A cancelled run journals `runCancelled`, never `runFailed`; Swift `CancellationError` is never wrapped as `AgentFailure`. |
 | [AgentEventJournal.swift](../../../Packages/HexKit/Sources/HexCore/Events/AgentEventJournal.swift) | An append-only, per-run event journal. Appending atomically assigns the event ID, timestamp, and sequence. Each run starts with exactly one `runStarted` record at sequence 1 and increases monotonically; duplicate starts are rejected atomica… |
 | [AgentEventRecord.swift](../../../Packages/HexKit/Sources/HexCore/Events/AgentEventRecord.swift) | — |
@@ -101,8 +115,10 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | [InferenceStreamCancellation.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceStreamCancellation.swift) | — |
 | [InferenceStreamCursor.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceStreamCursor.swift) | The single scoped cursor handed to an `InferenceStream` consumer.  A cursor cannot create additional iterators. It closes when its consumption scope ends, so a retained cursor cannot continue reading buffered events after producer teardown. |
 | [InferenceStreamCursorControl.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceStreamCursorControl.swift) | — |
+| [InferenceStreamCursorControlState.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceStreamCursorControlState.swift) | — |
 | [InferenceStreamError.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceStreamError.swift) | — |
 | [InferenceStreamEvent.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceStreamEvent.swift) | — |
+| [InferenceStreamState.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceStreamState.swift) | — |
 | [InferenceUsage.swift](../../../Packages/HexKit/Sources/HexCore/Inference/InferenceUsage.swift) | — |
 
 ## Packages/HexKit/Sources/HexCore/JSON
@@ -126,6 +142,7 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | --- | --- |
 | [ProcessOutputSegment.swift](../../../Packages/HexKit/Sources/HexCore/ProcessSessions/ProcessOutputSegment.swift) | — |
 | [ProcessSessionCommand.swift](../../../Packages/HexKit/Sources/HexCore/ProcessSessions/ProcessSessionCommand.swift) | — |
+| [ProcessSessionCommandAction.swift](../../../Packages/HexKit/Sources/HexCore/ProcessSessions/ProcessSessionCommandAction.swift) | — |
 | [ProcessSessionControlling.swift](../../../Packages/HexKit/Sources/HexCore/ProcessSessions/ProcessSessionControlling.swift) | — |
 | [ProcessSessionError.swift](../../../Packages/HexKit/Sources/HexCore/ProcessSessions/ProcessSessionError.swift) | — |
 | [ProcessSessionOperation.swift](../../../Packages/HexKit/Sources/HexCore/ProcessSessions/ProcessSessionOperation.swift) | — |
@@ -163,7 +180,9 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | [AgentTaskAttempt.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskAttempt.swift) | — |
 | [AgentTaskEffect.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskEffect.swift) | — |
 | [AgentTaskEffectReading.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskEffectReading.swift) | A previous dispatch in this durable task. A nil result is an unknown outcome, never permission to repeat it. Reads are keyed by canonical operation arguments, independent of provider call IDs. |
+| [AgentTaskInstruction.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskInstruction.swift) | — |
 | [AgentTaskOperationFingerprint.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskOperationFingerprint.swift) | — |
+| [AgentTaskPhase.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskPhase.swift) | — |
 | [AgentTaskRecord.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskRecord.swift) | A durable unit of user work. Run IDs identify attempts; they are never reused for continuation. |
 | [AgentTaskStorage.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskStorage.swift) | Only the resident scheduler writes task records. Saves are atomic optimistic transactions. |
 | [AgentTaskStorageError.swift](../../../Packages/HexKit/Sources/HexCore/Tasks/AgentTaskStorageError.swift) | — |

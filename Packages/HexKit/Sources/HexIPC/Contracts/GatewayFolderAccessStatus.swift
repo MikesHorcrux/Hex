@@ -2,17 +2,11 @@ import Foundation
 
 /// An actual directory read in the resident process, not a claim of Full Disk Access.
 public struct GatewayFolderAccessStatus: Codable, Equatable, Sendable {
-  public enum Access: String, Codable, Sendable {
-    case readable
-    case denied
-    case unavailable
-  }
-
   public let directory: URL
   public let agentBundle: URL
-  public let access: Access
+  public let access: GatewayFolderAccessMode
 
-  public init(directory: URL, agentBundle: URL, access: Access) {
+  public init(directory: URL, agentBundle: URL, access: GatewayFolderAccessMode) {
     self.directory = directory
     self.agentBundle = agentBundle
     self.access = access

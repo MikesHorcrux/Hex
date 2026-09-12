@@ -4,7 +4,7 @@ extension HexGatewayService {
   public func conversationStorage(
     _ untrusted: ConversationStorageRequest,
     sessionID: GatewaySessionID
-  ) async throws -> ConversationStorageRequest.Response {
+  ) async throws -> ConversationStorageResponse {
     try Task.checkCancellation()
     let request = try codec.roundTrip(untrusted)
     try requireSession(sessionID)
@@ -12,9 +12,9 @@ extension HexGatewayService {
       throw GatewayFailure(
         code: .recoveryUnavailable, message: "Conversation storage is unavailable.")
     }
-    var response: ConversationStorageRequest.Response
+    var response: ConversationStorageResponse
     do { response = try await conversationStore.conversationStorage(request) } catch let failure
-      as ConversationStorageRequest.Failure
+      as ConversationStorageFailure
     {
       response = .init()
       response.failure = failure

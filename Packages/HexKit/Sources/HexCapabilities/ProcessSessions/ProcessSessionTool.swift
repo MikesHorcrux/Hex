@@ -172,12 +172,12 @@ public struct ProcessSessionTool: HostTool {
         requiresUserAttention: page.session.terminal && !page.session.cleanupConfirmed
           && page.session.reconciliationID == nil)
     }
-    let commandAction: ProcessSessionCommand.Action
+    let commandAction: ProcessSessionCommandAction
     if action == "input" {
       commandAction = .input
     } else {
       guard
-        let parsed = ProcessSessionCommand.Action(
+        let parsed = ProcessSessionCommandAction(
           rawValue: try args.requiredString(named: "action", maximumBytes: 16)), parsed != .input
       else {
         throw ProcessSessionError.invalidRequest

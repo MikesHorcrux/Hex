@@ -3,7 +3,7 @@ import HexCore
 
 extension SQLiteAgentEventJournal {
   func conversationDocument(_ id: UUID, connection: SQLiteConnection) throws
-    -> ConversationStorageRequest.Document?
+    -> ConversationStorageDocument?
   {
     let statement = try connection.prepare(
       """
@@ -16,14 +16,14 @@ extension SQLiteAgentEventJournal {
   }
 
   func decodeConversationDocument(_ statement: SQLiteStatement, includesState: Bool) throws
-    -> ConversationStorageRequest.Document
+    -> ConversationStorageDocument
   {
     guard let id = UUID(uuidString: try statement.columnText(at: 0, maximumBytes: 36)) else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     let revision = try statement.columnInt64(at: 5)
-    guard revision > 0 else { throw ConversationStorageRequest.Failure.invalidRequest }
-    return ConversationStorageRequest.Document(
+    guard revision > 0 else { throw ConversationStorageFailure.invalidRequest }
+    return ConversationStorageDocument(
       id: id, title: try statement.columnText(at: 1, maximumBytes: 256),
       createdAt: AgentEventCodec.date(for: try statement.columnInt64(at: 2)),
       updatedAt: AgentEventCodec.date(for: try statement.columnInt64(at: 3)),
@@ -36,12 +36,12 @@ extension SQLiteAgentEventJournal {
   }
 
   func listConversations(
-    _ query: ConversationStorageRequest.Query,
+    _ query: ConversationStorageQuery,
     connection: SQLiteConnection
-  ) throws -> ConversationStorageRequest.Response {
+  ) throws -> ConversationStorageResponse {
     guard (1...ConversationStorageRequest.maximumPageCount).contains(query.limit),
       query.search.utf8.count <= 512
-    else { throw ConversationStorageRequest.Failure.invalidRequest }
+    else { throw ConversationStorageFailure.invalidRequest }
     let statement = try connection.prepare(
       """
       SELECT id, title, created_at_us, updated_at_us, archived_at_us, revision
@@ -70,7 +70,7 @@ extension SQLiteAgentEventJournal {
       for index: Int32 in [5, 6, 7, 8] { try statement.bindNull(at: index) }
     }
     try statement.bind(Int64(query.limit + 1), at: 9)
-    var response = ConversationStorageRequest.Response()
+    var response = ConversationStorageResponse()
     while try statement.step() == .row {
       try Task.checkCancellation()
       if response.documents.count == query.limit {
@@ -85,19 +85,19 @@ extension SQLiteAgentEventJournal {
   }
 
   func conversationEntries(
-    _ id: UUID, kind: ConversationStorageRequest.Entry.Kind,
+    _ id: UUID, kind: ConversationStorageEntryKind,
     before: Int64?, limit: Int, revision: Int64, connection: SQLiteConnection
   ) throws
-    -> ConversationStorageRequest.Response
+    -> ConversationStorageResponse
   {
     guard (1...ConversationStorageRequest.maximumPageCount).contains(limit),
       before.map({ $0 > 0 }) ?? true
-    else { throw ConversationStorageRequest.Failure.invalidRequest }
+    else { throw ConversationStorageFailure.invalidRequest }
     let metadata = try connection.prepare(
       "SELECT revision FROM conversation_documents WHERE id = ?")
     try metadata.bind(id.uuidString, at: 1)
     guard try metadata.step() == .row, try metadata.columnInt64(at: 0) == revision
-    else { throw ConversationStorageRequest.Failure.revisionConflict }
+    else { throw ConversationStorageFailure.revisionConflict }
     let statement = try connection.prepare(
       """
       SELECT id, kind, sequence, payload, search_text FROM conversation_entries
@@ -108,7 +108,7 @@ extension SQLiteAgentEventJournal {
     try statement.bind(kind.rawValue, at: 2)
     try statement.bind(before ?? Int64.max, at: 3)
     try statement.bind(Int64(limit + 1), at: 4)
-    var response = ConversationStorageRequest.Response()
+    var response = ConversationStorageResponse()
     var bytes = 0
     while try statement.step() == .row {
       try Task.checkCancellation()
@@ -129,13 +129,13 @@ extension SQLiteAgentEventJournal {
   }
 
   func decodeConversationEntry(_ statement: SQLiteStatement) throws
-    -> ConversationStorageRequest.Entry
+    -> ConversationStorageEntry
   {
     guard
-      let kind = ConversationStorageRequest.Entry.Kind(
+      let kind = ConversationStorageEntryKind(
         rawValue: try statement.columnText(at: 1, maximumBytes: 32))
     else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     return .init(
       id: try statement.columnText(at: 0, maximumBytes: 256), kind: kind,

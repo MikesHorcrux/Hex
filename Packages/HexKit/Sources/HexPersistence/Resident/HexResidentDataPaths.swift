@@ -2,23 +2,6 @@ import Foundation
 
 /// The resident gateway's non-secret settings, journal, and heartbeat locations.
 public struct HexResidentDataPaths: Equatable, Sendable {
-  public enum PathError: Error, Equatable, LocalizedError, Sendable {
-    case invalidApplicationSupportURL
-    case invalidDataURL
-    case applicationSupportUnavailable
-
-    public var errorDescription: String? {
-      switch self {
-      case .invalidApplicationSupportURL:
-        "Hex could not use the configured Application Support directory."
-      case .invalidDataURL:
-        "Hex resident data paths must be absolute file URLs."
-      case .applicationSupportUnavailable:
-        "Hex could not locate Application Support for the resident gateway."
-      }
-    }
-  }
-
   public let directoryURL: URL
   public let settingsURL: URL
   public let databaseURL: URL
@@ -29,7 +12,7 @@ public struct HexResidentDataPaths: Equatable, Sendable {
   /// Creates the conventional resident paths beneath an Application Support directory.
   public init(applicationSupportURL: URL) throws {
     guard Self.isAbsoluteDirectoryURL(applicationSupportURL) else {
-      throw PathError.invalidApplicationSupportURL
+      throw HexResidentDataPathsPathError.invalidApplicationSupportURL
     }
     let directoryURL = applicationSupportURL
       .standardizedFileURL
@@ -68,7 +51,7 @@ public struct HexResidentDataPaths: Equatable, Sendable {
       Self.isAbsoluteFileURL(resolvedPersonalityProfileURL),
       Self.isAbsoluteFileURL(resolvedPersonalMemoryURL)
     else {
-      throw PathError.invalidDataURL
+      throw HexResidentDataPathsPathError.invalidDataURL
     }
 
     self.settingsURL = settingsURL.standardizedFileURL
@@ -87,7 +70,7 @@ public struct HexResidentDataPaths: Equatable, Sendable {
         in: .userDomainMask
       ).first
     else {
-      throw PathError.applicationSupportUnavailable
+      throw HexResidentDataPathsPathError.applicationSupportUnavailable
     }
     return try Self(applicationSupportURL: applicationSupportURL)
   }

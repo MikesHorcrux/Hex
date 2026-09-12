@@ -13,7 +13,7 @@ nonisolated struct HexHeartbeatRunPageProjection {
     var partialRows = Set<UUID>()
     for record in records {
       func row(
-        _ role: ConversationItem.Role, _ text: String,
+        _ role: ConversationItemRole, _ text: String,
         artifacts: [ArtifactReference] = [], callID: ToolCallID? = nil
       ) -> ConversationItem {
         ConversationItem(

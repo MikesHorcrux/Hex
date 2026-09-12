@@ -111,10 +111,10 @@ struct AgentChatWorkspaceModelTests {
 
   private actor HeldHistoryStorage: ConversationStorage {
     let id: UUID
-    let entry: ConversationStorageRequest.Entry
+    let entry: ConversationStorageEntry
     var entered = false
     var waiter: CheckedContinuation<Void, Never>?
-    init(id: UUID, entry: ConversationStorageRequest.Entry) {
+    init(id: UUID, entry: ConversationStorageEntry) {
       self.id = id
       self.entry = entry
     }
@@ -123,9 +123,9 @@ struct AgentChatWorkspaceModelTests {
       waiter = nil
     }
     func conversationStorage(_ request: ConversationStorageRequest) async
-      -> ConversationStorageRequest.Response
+      -> ConversationStorageResponse
     {
-      var response = ConversationStorageRequest.Response()
+      var response = ConversationStorageResponse()
       switch request {
       case .read:
         response.documents = [
@@ -142,7 +142,7 @@ struct AgentChatWorkspaceModelTests {
   }
 
   private actor RejectingClient: HexGatewayTaskClient {
-    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskRequest.Response {
+    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskResponse {
       if case .submitConversation = request {
         throw GatewayFailure(code: .taskRequestRejected, message: "Rejected before admission")
       }
@@ -154,7 +154,7 @@ struct AgentChatWorkspaceModelTests {
     var submissions: [GatewayTaskRequest] = []
     var record: AgentTaskRecord?
     var created = 0
-    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskRequest.Response {
+    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskResponse {
       switch request {
       case .submitConversation(let id, let parent, let previous, let title, _):
         submissions.append(request)
@@ -175,7 +175,7 @@ struct AgentChatWorkspaceModelTests {
   }
   private actor EmptyStorage: ConversationStorage {
     func conversationStorage(_ request: ConversationStorageRequest)
-      -> ConversationStorageRequest.Response
+      -> ConversationStorageResponse
     { .init() }
   }
 
