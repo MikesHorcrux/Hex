@@ -2,11 +2,6 @@ import HexCore
 
 /// Adds one reserved read-only tool while preserving the host's existing executor and policy.
 public struct HexSelfInspectionToolExecutor: ToolExecutor, Sendable {
-  public enum ToolError: Error, Equatable, Sendable {
-    case reservedToolName
-    case invalidArguments
-  }
-
   public static let toolName = "hex_inspect_self"
   private let service: HexSelfKnowledgeService
   private let base: any ToolExecutor
@@ -20,7 +15,7 @@ public struct HexSelfInspectionToolExecutor: ToolExecutor, Sendable {
     try Task.checkCancellation()
     var tools = try await base.availableTools()
     guard !tools.contains(where: { $0.name == Self.toolName }) else {
-      throw ToolError.reservedToolName
+      throw HexSelfInspectionToolError.reservedToolName
     }
     tools.append(
       ToolDefinition(
@@ -44,7 +39,9 @@ public struct HexSelfInspectionToolExecutor: ToolExecutor, Sendable {
     guard call.name == Self.toolName else {
       return try await base.authorizationRequest(for: call, in: context)
     }
-    guard call.arguments.isEmpty else { throw ToolError.invalidArguments }
+    guard call.arguments.isEmpty else {
+      throw HexSelfInspectionToolError.invalidArguments
+    }
     return AuthorizationRequest(
       runID: context.runID,
       toolCallID: call.id,
@@ -69,7 +66,7 @@ public struct HexSelfInspectionToolExecutor: ToolExecutor, Sendable {
           "manual": .string(HexSelfOperatingManual().text),
         ])
       )
-    } catch HexSelfKnowledgeService.ServiceError.runUnavailable {
+    } catch HexSelfKnowledgeServiceError.runUnavailable {
       return failure(call.id, code: "run_unavailable")
     }
   }

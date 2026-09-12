@@ -8,56 +8,8 @@ import HexIPC
 /// session. Every field is compared before a waiter is removed, making replay and request-ID reuse
 /// fail closed.
 public actor HexGatewayAuthorizationBroker: AuthorizationPrompting {
-  public enum BrokerError:
-    Swift.Error,
-    Equatable,
-    LocalizedError,
-    Sendable,
-    HexGatewayAuthorizationDecisionFailure
-  {
-    case requestNotPending
-    case requestMismatch
-    case requestAlreadyPending
-
-    public var errorDescription: String? {
-      switch self {
-      case .requestNotPending:
-        "That authorization request is no longer pending."
-      case .requestMismatch:
-        "The authorization response did not match the pending request."
-      case .requestAlreadyPending:
-        "That authorization request is already pending."
-      }
-    }
-
-    public var gatewayFailure: GatewayFailure {
-      switch self {
-      case .requestNotPending:
-        GatewayFailure(
-          code: .authorizationRequestNotPending,
-          message: "The authorization request is no longer pending."
-        )
-      case .requestMismatch:
-        GatewayFailure(
-          code: .authorizationRequestMismatch,
-          message: "The authorization response did not match the pending request."
-        )
-      case .requestAlreadyPending:
-        GatewayFailure(
-          code: .authorizationRequestAlreadyPending,
-          message: "The authorization request is already pending."
-        )
-      }
-    }
-  }
-
-  private struct PendingRequest {
-    let request: AuthorizationRequest
-    let continuation: CheckedContinuation<AuthorizationPromptResponse, any Swift.Error>
-  }
-
   private var registeringRequestIDs: Set<AuthorizationRequestID> = []
-  private var waiters: [AuthorizationRequestID: PendingRequest] = [:]
+  private var waiters: [AuthorizationRequestID: HexGatewayAuthorizationBrokerPendingRequest] = [:]
 
   public init() {}
 
@@ -77,7 +29,7 @@ public actor HexGatewayAuthorizationBroker: AuthorizationPrompting {
       waiters[request.id] == nil,
       registeringRequestIDs.insert(request.id).inserted
     else {
-      throw BrokerError.requestAlreadyPending
+      throw HexGatewayAuthorizationBrokerError.requestAlreadyPending
     }
 
     return try await withTaskCancellationHandler(
@@ -89,10 +41,11 @@ public actor HexGatewayAuthorizationBroker: AuthorizationPrompting {
             return
           }
           guard waiters[request.id] == nil else {
-            continuation.resume(throwing: BrokerError.requestAlreadyPending)
+            continuation.resume(
+              throwing: HexGatewayAuthorizationBrokerError.requestAlreadyPending)
             return
           }
-          waiters[request.id] = PendingRequest(
+          waiters[request.id] = HexGatewayAuthorizationBrokerPendingRequest(
             request: request,
             continuation: continuation
           )
@@ -116,16 +69,16 @@ public actor HexGatewayAuthorizationBroker: AuthorizationPrompting {
     do {
       try gate.withValidCommit {
         guard let pending = waiters[request.id] else {
-          throw BrokerError.requestNotPending
+          throw HexGatewayAuthorizationBrokerError.requestNotPending
         }
         guard pending.request == request else {
-          throw BrokerError.requestMismatch
+          throw HexGatewayAuthorizationBrokerError.requestMismatch
         }
         waiters.removeValue(forKey: request.id)
         pending.continuation.resume(returning: Self.response(for: choice))
       }
-    } catch HexGatewayAuthorizationCommitGate.GateError.closed {
-      throw BrokerError.requestNotPending
+    } catch HexGatewayAuthorizationCommitGateError.closed {
+      throw HexGatewayAuthorizationBrokerError.requestNotPending
     }
   }
 

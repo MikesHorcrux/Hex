@@ -2,11 +2,7 @@ import Foundation
 
 /// Durable-journal limits and deterministic dependencies.
 public struct SQLiteAgentEventJournalConfiguration: Sendable {
-  /// Eager validation retains the original bounded-archive contract for diagnostic callers.
-  /// Incremental validation has no lifetime size/count quota; it validates writes and requested
-  /// pages and restores only transactionally checkpointed active runs.
-  public enum IntegrityPolicy: String, Sendable { case boundedArchive, incremental }
-  public let integrityPolicy: IntegrityPolicy
+  public let integrityPolicy: SQLiteJournalIntegrityPolicy
   var auditRunLimit: Int { integrityPolicy == .incremental ? Int.max - 1 : maximumRecoveryRunCount }
   var auditRecordLimit: Int {
     integrityPolicy == .incremental ? Int.max - 1 : maximumRecoveryRecordCount
@@ -40,7 +36,7 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
 
   public init(
     databaseURL: URL,
-    integrityPolicy: IntegrityPolicy = .boundedArchive,
+    integrityPolicy: SQLiteJournalIntegrityPolicy = .boundedArchive,
     busyTimeoutMilliseconds: Int = 5_000,
     maximumReadLimit: Int = 1_000,
     maximumPayloadBytes: Int = 8 * 1_024 * 1_024,

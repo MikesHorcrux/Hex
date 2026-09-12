@@ -51,7 +51,7 @@ struct HexGatewayPermissionManagerTests {
     await broker.cancelAll()
     await #expect(throws: CancellationError.self) { try await next.value }
     #expect(try await manager.inbox().requests.isEmpty)
-    await #expect(throws: HexGatewayAuthorizationBroker.BrokerError.self) {
+    await #expect(throws: HexGatewayAuthorizationBrokerError.self) {
       try await broker.submit(
         request, choice: .allowOnce, gate: HexGatewayAuthorizationCommitGate())
     }

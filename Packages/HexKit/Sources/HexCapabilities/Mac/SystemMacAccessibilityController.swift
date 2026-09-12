@@ -9,7 +9,7 @@ import Foundation
 public final class SystemMacAccessibilityController: MacAccessibilityControlling {
   private let now: @Sendable () -> UInt64
   private let sessionState: @Sendable () -> MacInteractionSessionState
-  private var observations: [String: Observation] = [:]
+  private var observations: [String: SystemMacAccessibilityControllerObservation] = [:]
 
   public nonisolated init(
     now: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
@@ -60,7 +60,7 @@ public final class SystemMacAccessibilityController: MacAccessibilityControlling
       elements: traversal.elements.map(\.value), isTruncated: traversal.isTruncated
     )
     guard observations.count < 64 else { throw MacToolError.authorizationStateUnavailable }
-    observations[snapshot.observationID] = Observation(
+    observations[snapshot.observationID] = SystemMacAccessibilityControllerObservation(
       bundleIdentifier: bundleIdentifier, processIdentifier: application.processIdentifier,
       launchDate: launchDate, capturedAt: capturedAt, elements: traversal.elements
     )
@@ -160,17 +160,4 @@ public final class SystemMacAccessibilityController: MacAccessibilityControlling
     return application
   }
 
-  struct ObservedElement {
-    let element: AXUIElement
-    let window: CFTypeRef?
-    let value: MacAccessibilityElementSnapshot
-  }
-
-  private struct Observation {
-    let bundleIdentifier: String
-    let processIdentifier: Int32
-    let launchDate: Date
-    let capturedAt: UInt64
-    let elements: [ObservedElement]
-  }
 }

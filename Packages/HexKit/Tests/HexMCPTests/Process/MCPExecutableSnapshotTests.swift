@@ -226,8 +226,8 @@ struct MCPExecutableSnapshotTests {
 
     #expect(
       image.dependencies == [
-        MCPMachOImage.Dependency(path: "@rpath/libA.dylib", isRequired: true),
-        MCPMachOImage.Dependency(path: "@rpath/libB.dylib", isRequired: true),
+        MCPMachOImageDependency(path: "@rpath/libA.dylib", isRequired: true),
+        MCPMachOImageDependency(path: "@rpath/libB.dylib", isRequired: true),
       ]
     )
     #expect(
@@ -356,13 +356,13 @@ struct MCPExecutableSnapshotTests {
   @Test("Enforces closure-wide runpath count and byte budgets")
   func enforcesClosureWideRunpathBudgets() throws {
     let shortRunpaths = (0..<MCPExecutableSnapshot.maximumRunpathsPerImage).map { index in
-      MCPExecutableSnapshot.ExpandedRunpath(
+      MCPExecutableSnapshotExpandedRunpath(
         relativePath: "runpath-\(index)",
         isTrustedSystemPath: false,
         isExternalPath: false
       )
     }
-    var countState = MCPExecutableSnapshot.CopyState(policy: .standard)
+    var countState = MCPExecutableSnapshotCopyState(policy: .standard)
     for _
       in 0..<(MCPExecutableSnapshot.maximumClosureRunpaths
       / MCPExecutableSnapshot.maximumRunpathsPerImage)
@@ -374,13 +374,13 @@ struct MCPExecutableSnapshotTests {
     }
 
     let longRunpaths = (0..<240).map { index in
-      MCPExecutableSnapshot.ExpandedRunpath(
+      MCPExecutableSnapshotExpandedRunpath(
         relativePath: String(repeating: "x", count: 4_000) + "-\(index)",
         isTrustedSystemPath: false,
         isExternalPath: false
       )
     }
-    var byteState = MCPExecutableSnapshot.CopyState(policy: .standard)
+    var byteState = MCPExecutableSnapshotCopyState(policy: .standard)
     for _ in 0..<8 {
       try byteState.admitRunpathBudget(source: longRunpaths, snapshot: [])
     }

@@ -4,7 +4,7 @@ import HexCore
 
 extension SQLiteAgentEventJournal: ConversationStorage {
   public func conversationStorage(_ request: ConversationStorageRequest) throws
-    -> ConversationStorageRequest.Response
+    -> ConversationStorageResponse
   {
     try Task.checkCancellation()
     let connection = try requireConnection()
@@ -14,14 +14,14 @@ extension SQLiteAgentEventJournal: ConversationStorage {
       try validateIntegrityDataVersion(connection: connection)
       switch request {
       case .status:
-        var response = ConversationStorageRequest.Response()
+        var response = ConversationStorageResponse()
         response.selected = try conversationSetting("selected", connection: connection).flatMap(
           UUID.init)
         response.imported = try conversationSetting("legacy_import", connection: connection)
         return response
       case .list(let query): return try listConversations(query, connection: connection)
       case .read(let id):
-        var response = ConversationStorageRequest.Response()
+        var response = ConversationStorageResponse()
         if let document = try conversationDocument(id, connection: connection) {
           response.documents = [document]
         }
@@ -33,13 +33,13 @@ extension SQLiteAgentEventJournal: ConversationStorage {
       case .write(let write): return try writeConversation(write, connection: connection)
       case .select(let id):
         if let id, try conversationDocument(id, connection: connection) == nil {
-          throw ConversationStorageRequest.Failure.invalidRequest
+          throw ConversationStorageFailure.invalidRequest
         }
         try setConversationSetting("selected", value: id?.uuidString ?? "", connection: connection)
       case .delete(let id, let revision):
         if let document = try conversationDocument(id, connection: connection) {
           guard document.revision == revision else {
-            throw ConversationStorageRequest.Failure.revisionConflict
+            throw ConversationStorageFailure.revisionConflict
           }
           let deletion = try connection.prepare("DELETE FROM conversation_documents WHERE id = ?")
           try deletion.bind(id.uuidString, at: 1)
@@ -53,7 +53,7 @@ extension SQLiteAgentEventJournal: ConversationStorage {
           fingerprint, documents: documents, selected: selected,
           connection: connection)
       }
-      return ConversationStorageRequest.Response()
+      return ConversationStorageResponse()
     }
   }
 }

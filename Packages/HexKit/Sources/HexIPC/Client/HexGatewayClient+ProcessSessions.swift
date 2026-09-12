@@ -2,7 +2,7 @@ import HexCore
 
 extension HexGatewayClient: HexGatewayProcessSessionClient {
   public func processSession(_ request: GatewayProcessSessionRequest) async throws
-    -> GatewayProcessSessionRequest.Response
+    -> GatewayProcessSessionResponse
   {
     let connection = try requireConnectedGeneration()
     guard let transport = transport as? any HexGatewayProcessSessionTransport else {

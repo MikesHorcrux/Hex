@@ -7,7 +7,7 @@ extension MCPExecutableSnapshot {
     namespaceBasename: String = MCPExecutableSnapshotAdmission.productionNamespaceBasename,
     openClaimedSlot: @Sendable (Int32, String) -> Int32 = MCPExecutableSnapshotAdmission
       .openDirectoryForProduction
-  ) throws -> PrivateDirectory {
+  ) throws -> MCPExecutableSnapshotPrivateDirectory {
     try MCPExecutableSnapshotAdmission.claimSlot(
       policy: policy,
       namespaceBasename: namespaceBasename,
@@ -18,7 +18,7 @@ extension MCPExecutableSnapshot {
   static func ensureDestinationDirectory(
     _ relativePath: String,
     beneath rootDescriptor: Int32,
-    copyState: inout CopyState
+    copyState: inout MCPExecutableSnapshotCopyState
   ) throws -> Int32? {
     if relativePath.isEmpty {
       let duplicate = fcntl(rootDescriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
@@ -68,7 +68,8 @@ extension MCPExecutableSnapshot {
         }
         copyState.createdDirectoryStatuses[currentPath] = createdStatus
         copyState.createdEntries.append(
-          CreatedEntry(relativePath: currentPath, kind: .directory, status: createdStatus)
+          MCPExecutableSnapshotCreatedEntry(
+            relativePath: currentPath, kind: .directory, status: createdStatus)
         )
       }
       guard let expectedDirectoryStatus = copyState.createdDirectoryStatuses[currentPath] else {
@@ -101,7 +102,7 @@ extension MCPExecutableSnapshot {
   static func destinationParent(
     for relativePath: String,
     beneath rootDescriptor: Int32,
-    copyState: inout CopyState
+    copyState: inout MCPExecutableSnapshotCopyState
   ) throws -> (descriptor: Int32, basename: String) {
     guard let normalized = normalizeRelativePath(relativePath, relativeTo: ""),
       normalized == relativePath,

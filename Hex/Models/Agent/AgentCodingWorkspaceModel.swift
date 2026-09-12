@@ -29,6 +29,13 @@ final class AgentCodingWorkspaceModel {
     self.conversationID = conversationID
     self.taskID = taskID
   }
+  func observe(tab: AgentCodingTab) async {
+    switch tab {
+    case .changes: await loadChanges()
+    case .processes: await AgentWorkspaceRefreshLoop().run { await self.refresh() }
+    }
+  }
+
   func earlierSessions() {
     pageBefore = sessions.last?.id
     select(nil)
@@ -73,7 +80,7 @@ final class AgentCodingWorkspaceModel {
       self.error = "Process sessions could not be refreshed: \(error.localizedDescription)"
     }
   }
-  func send(_ action: ProcessSessionCommand.Action) async {
+  func send(_ action: ProcessSessionCommandAction) async {
     guard let selected, !sending, pendingCommand == nil || action == .stop else { return }
     let command = ProcessSessionCommand(
       sessionID: selected.id, operationID: UUID().uuidString,

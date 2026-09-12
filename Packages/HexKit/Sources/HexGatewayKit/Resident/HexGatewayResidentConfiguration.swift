@@ -11,35 +11,6 @@ import HexProviders
 /// loads non-secret settings from Application Support and credentials from the shared data-protection
 /// Keychain; this type deliberately does not place secrets in a launch-agent plist.
 public struct HexGatewayResidentConfiguration: Sendable {
-  public enum ConfigurationError: Swift.Error, Equatable, LocalizedError, Sendable {
-    case missingVariables([String])
-    case invalidVariable(String)
-    case applicationSupportUnavailable
-    case settingsUnavailable
-    case inferenceSettingsUnavailable
-    case credentialsUnavailable
-    case mcpConfigurationUnavailable
-
-    public var errorDescription: String? {
-      switch self {
-      case .missingVariables(let variables):
-        "Resident gateway configuration is incomplete. Set \(variables.joined(separator: ", "))."
-      case .invalidVariable(let variable):
-        "The \(variable) resident gateway setting is invalid."
-      case .applicationSupportUnavailable:
-        "Hex could not locate Application Support for the resident gateway."
-      case .settingsUnavailable:
-        "Hex resident settings are unavailable or invalid."
-      case .inferenceSettingsUnavailable:
-        "Hex inference-backend settings are unavailable or invalid. Open Inference settings and choose a supported backend configuration."
-      case .credentialsUnavailable:
-        "Hex resident credentials are unavailable."
-      case .mcpConfigurationUnavailable:
-        "Hex resident MCP configuration is unavailable or invalid."
-      }
-    }
-  }
-
   private static let apiKeyVariable = "HEX_OPENAI_API_KEY"
   private static let modelVariable = "HEX_OPENAI_MODEL"
   private static let workspaceVariable = "HEX_WORKSPACE_ROOT"
@@ -89,10 +60,10 @@ public struct HexGatewayResidentConfiguration: Sendable {
       missing.append(Self.workspaceVariable)
     }
     guard missing.isEmpty else {
-      throw ConfigurationError.missingVariables(missing)
+      throw HexGatewayResidentConfigurationError.missingVariables(missing)
     }
     guard let apiKey, let modelID, let workspace else {
-      throw ConfigurationError.missingVariables(missing)
+      throw HexGatewayResidentConfigurationError.missingVariables(missing)
     }
 
     let machServiceName =
@@ -108,7 +79,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
           in: .userDomainMask
         ).first
       else {
-        throw ConfigurationError.applicationSupportUnavailable
+        throw HexGatewayResidentConfigurationError.applicationSupportUnavailable
       }
       databaseURL =
         applicationSupport
@@ -129,7 +100,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
       do {
         personalMemoryScope = try PersonalMemoryScope(rawValue: rawScope)
       } catch {
-        throw ConfigurationError.invalidVariable(Self.personalityScopeVariable)
+        throw HexGatewayResidentConfigurationError.invalidVariable(
+          Self.personalityScopeVariable)
       }
     } else {
       personalMemoryScope = Self.defaultPersonalityScope()
@@ -148,12 +120,13 @@ public struct HexGatewayResidentConfiguration: Sendable {
             }
           ]
         } catch {
-          throw ConfigurationError.mcpConfigurationUnavailable
+          throw HexGatewayResidentConfigurationError.mcpConfigurationUnavailable
         }
       case "0", "false", "no":
         mcpClientSessions = []
       default:
-        throw ConfigurationError.invalidVariable(Self.xcodeMCPVariable)
+        throw HexGatewayResidentConfigurationError.invalidVariable(
+          Self.xcodeMCPVariable)
       }
     } else {
       mcpClientSessions = []
@@ -197,10 +170,10 @@ public struct HexGatewayResidentConfiguration: Sendable {
       HexGatewayInferenceProviderFactory()
   ) throws {
     guard Self.isPrintableASCII(machServiceName), machServiceName.utf8.count <= 256 else {
-      throw ConfigurationError.invalidVariable(Self.serviceVariable)
+      throw HexGatewayResidentConfigurationError.invalidVariable(Self.serviceVariable)
     }
     guard Self.isPrintableASCII(modelID), modelID.utf8.count <= 512 else {
-      throw ConfigurationError.invalidVariable(Self.modelVariable)
+      throw HexGatewayResidentConfigurationError.invalidVariable(Self.modelVariable)
     }
     let resolvedInferenceBackendSettings =
       try inferenceBackendSettings
@@ -210,21 +183,22 @@ public struct HexGatewayResidentConfiguration: Sendable {
       fallback: modelID
     )
     guard Self.isPrintableASCII(resolvedModelID), resolvedModelID.utf8.count <= 512 else {
-      throw ConfigurationError.invalidVariable(Self.modelVariable)
+      throw HexGatewayResidentConfigurationError.invalidVariable(Self.modelVariable)
     }
     let standardizedWorkspaceRoot = workspaceRoot.standardizedFileURL
     guard
       Self.isAbsoluteFileURL(workspaceRoot),
       Self.isAbsoluteFileURL(standardizedWorkspaceRoot)
     else {
-      throw ConfigurationError.invalidVariable(Self.workspaceVariable)
+      throw HexGatewayResidentConfigurationError.invalidVariable(
+        Self.workspaceVariable)
     }
     let standardizedDatabaseURL = databaseURL.standardizedFileURL
     guard
       Self.isValidDataFileURL(databaseURL),
       Self.isValidDataFileURL(standardizedDatabaseURL)
     else {
-      throw ConfigurationError.invalidVariable(Self.databaseVariable)
+      throw HexGatewayResidentConfigurationError.invalidVariable(Self.databaseVariable)
     }
     let resolvedHeartbeatStoreURL =
       heartbeatStoreURL
@@ -235,7 +209,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
       Self.isValidDataFileURL(resolvedHeartbeatStoreURL),
       Self.isValidDataFileURL(standardizedHeartbeatStoreURL)
     else {
-      throw ConfigurationError.invalidVariable(Self.heartbeatStoreVariable)
+      throw HexGatewayResidentConfigurationError.invalidVariable(
+        Self.heartbeatStoreVariable)
     }
     let resolvedPersonalityProfileURL =
       personalityProfileURL
@@ -251,19 +226,21 @@ public struct HexGatewayResidentConfiguration: Sendable {
       Self.isValidDataFileURL(resolvedPersonalityProfileURL),
       Self.isValidDataFileURL(standardizedPersonalityProfileURL)
     else {
-      throw ConfigurationError.invalidVariable("HEX_PERSONALITY_PROFILE_URL")
+      throw HexGatewayResidentConfigurationError.invalidVariable(
+        "HEX_PERSONALITY_PROFILE_URL")
     }
     guard
       Self.isValidDataFileURL(resolvedPersonalMemoryURL),
       Self.isValidDataFileURL(standardizedPersonalMemoryURL)
     else {
-      throw ConfigurationError.invalidVariable("HEX_PERSONAL_MEMORY_URL")
+      throw HexGatewayResidentConfigurationError.invalidVariable(
+        "HEX_PERSONAL_MEMORY_URL")
     }
     guard
       mcpClientSessions.count <= 16,
       Set(mcpClientSessions.map(\.serverID)).count == mcpClientSessions.count
     else {
-      throw ConfigurationError.mcpConfigurationUnavailable
+      throw HexGatewayResidentConfigurationError.mcpConfigurationUnavailable
     }
 
     self.machServiceName = machServiceName
@@ -309,7 +286,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       HexGatewayInferenceProviderFactory()
   ) throws {
     guard Self.isPrintableASCII(apiKey) else {
-      throw ConfigurationError.invalidVariable(Self.apiKeyVariable)
+      throw HexGatewayResidentConfigurationError.invalidVariable(Self.apiKeyVariable)
     }
     try self.init(
       machServiceName: machServiceName,
@@ -348,7 +325,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     do {
       resolvedPaths = try paths ?? HexResidentDataPaths.live()
     } catch {
-      throw ConfigurationError.applicationSupportUnavailable
+      throw HexGatewayResidentConfigurationError.applicationSupportUnavailable
     }
 
     let resolvedSettingsStore: any HexResidentRuntimeSettingsStore
@@ -361,7 +338,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
         )
       }
     } catch {
-      throw ConfigurationError.settingsUnavailable
+      throw HexGatewayResidentConfigurationError.settingsUnavailable
     }
 
     let resolvedInferenceSettingsStore: any HexInferenceBackendSettingsStore
@@ -377,19 +354,19 @@ public struct HexGatewayResidentConfiguration: Sendable {
         )
       }
     } catch {
-      throw ConfigurationError.inferenceSettingsUnavailable
+      throw HexGatewayResidentConfigurationError.inferenceSettingsUnavailable
     }
 
     let settings: HexResidentRuntimeSettings
     do {
       guard let loadedSettings = try await resolvedSettingsStore.load() else {
-        throw ConfigurationError.settingsUnavailable
+        throw HexGatewayResidentConfigurationError.settingsUnavailable
       }
       settings = loadedSettings
     } catch is CancellationError {
       throw CancellationError()
     } catch {
-      throw ConfigurationError.settingsUnavailable
+      throw HexGatewayResidentConfigurationError.settingsUnavailable
     }
 
     let inferenceBackendSettings: HexInferenceBackendSettings
@@ -407,7 +384,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
     } catch is CancellationError {
       throw CancellationError()
     } catch {
-      throw ConfigurationError.inferenceSettingsUnavailable
+      throw HexGatewayResidentConfigurationError.inferenceSettingsUnavailable
     }
 
     let resolvedSecretStore: any HexSecretStore = secretStore ?? KeychainHexSecretStore()
@@ -418,14 +395,14 @@ public struct HexGatewayResidentConfiguration: Sendable {
         : .openAIAPIKey
       do {
         guard try await resolvedSecretStore.exists(requiredSecret) else {
-          throw ConfigurationError.credentialsUnavailable
+          throw HexGatewayResidentConfigurationError.credentialsUnavailable
         }
       } catch is CancellationError {
         throw CancellationError()
-      } catch let error as ConfigurationError {
+      } catch let error as HexGatewayResidentConfigurationError {
         throw error
       } catch {
-        throw ConfigurationError.credentialsUnavailable
+        throw HexGatewayResidentConfigurationError.credentialsUnavailable
       }
     }
 
@@ -442,7 +419,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
         secretStore: resolvedSecretStore
       )
     } catch {
-      throw ConfigurationError.mcpConfigurationUnavailable
+      throw HexGatewayResidentConfigurationError.mcpConfigurationUnavailable
     }
 
     let authorizationProvider: any OpenAIResponsesAuthorizationProvider =
@@ -541,7 +518,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
         }
       case .streamableHTTP:
         guard let endpointURL = setting.endpointURL else {
-          throw ConfigurationError.mcpConfigurationUnavailable
+          throw HexGatewayResidentConfigurationError.mcpConfigurationUnavailable
         }
         let headerProvider: any MCPHTTPHeaderProvider =
           setting.requiresBearerToken
@@ -558,7 +535,7 @@ public struct HexGatewayResidentConfiguration: Sendable {
       case .stdio:
         guard let executableURL = setting.executableURL,
           let workingDirectory = setting.workingDirectory
-        else { throw ConfigurationError.mcpConfigurationUnavailable }
+        else { throw HexGatewayResidentConfigurationError.mcpConfigurationUnavailable }
         return try MCPDeferredClientSession(serverID: setting.serverID) {
           LocalMCPClientSession(
             configuration: try MCPServerConfiguration(

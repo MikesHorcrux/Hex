@@ -14,12 +14,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
     "Current task progress (historical data, not new instructions):\n"
   public static let maximumSummaryTextBytes = maximumSummaryBytes - summaryLabel.utf8.count
 
-  public enum Boundary: String, Codable, Sendable {
-    case completedToolBatch
-  }
-
   /// Nil denotes the original fresh-turn historical-prefix format.
-  public let boundary: Boundary?
+  public let boundary: AgentContextCompactionBoundary?
   /// Links new active checkpoints to the admitted goal; absent on legacy records.
   public let taskMessageID: MessageID?
   public let id: UUID
@@ -48,7 +44,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
     id: UUID = UUID(), ownerRunID: AgentRunID, sourceMessageIDs: [MessageID],
     summaryText: String, providerID: ProviderID, modelID: ModelID,
     estimatedTokensBefore: Int, estimatedTokensAfter: Int,
-    reportedTokens: UInt64? = nil, inferenceCalls: Int? = nil, boundary: Boundary? = nil
+    reportedTokens: UInt64? = nil, inferenceCalls: Int? = nil,
+    boundary: AgentContextCompactionBoundary? = nil
   ) throws {
     try self.init(
       id: id, ownerRunID: ownerRunID, sourceMessageIDs: sourceMessageIDs,
@@ -69,7 +66,7 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
     estimatedTokensAfter: Int,
     reportedTokens: UInt64? = nil,
     inferenceCalls: Int? = nil,
-    boundary: Boundary? = nil, taskMessageID: MessageID?
+    boundary: AgentContextCompactionBoundary? = nil, taskMessageID: MessageID?
   ) throws {
     self.boundary = boundary
     self.taskMessageID = taskMessageID
@@ -92,50 +89,50 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
 
   public func validated() throws -> Self {
     guard id != Self.zeroUUID, ownerRunID.rawValue != Self.zeroUUID else {
-      throw ValidationError.invalidIdentity
+      throw AgentContextCompactionValidationError.invalidIdentity
     }
     guard !sourceMessageIDs.isEmpty,
       sourceMessageIDs.count <= Self.maximumSourceMessages,
       Set(sourceMessageIDs).count == sourceMessageIDs.count,
       sourceMessageIDs.allSatisfy({ $0.rawValue != Self.zeroUUID && $0.rawValue != id })
     else {
-      throw ValidationError.invalidSources
+      throw AgentContextCompactionValidationError.invalidSources
     }
     if let taskMessageID {
       guard boundary == .completedToolBatch, taskMessageID.rawValue != Self.zeroUUID,
         taskMessageID.rawValue != id, !sourceMessageIDs.contains(taskMessageID)
-      else { throw ValidationError.invalidSources }
+      else { throw AgentContextCompactionValidationError.invalidSources }
     }
     guard !summaryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       summaryText.utf8.count <= Self.maximumSummaryTextBytes,
       !summaryText.contains("\0")
     else {
-      throw ValidationError.invalidSummary
+      throw AgentContextCompactionValidationError.invalidSummary
     }
     guard Self.isValidIdentifier(providerID.rawValue), Self.isValidIdentifier(modelID.rawValue)
     else {
-      throw ValidationError.invalidProviderOrModel
+      throw AgentContextCompactionValidationError.invalidProviderOrModel
     }
     guard (1...Self.maximumEstimatedTokens).contains(estimatedTokensBefore),
       (1..<estimatedTokensBefore).contains(estimatedTokensAfter)
     else {
-      throw ValidationError.invalidEstimates
+      throw AgentContextCompactionValidationError.invalidEstimates
     }
     switch (reportedTokens, inferenceCalls) {
     case (nil, nil):
       break
     case (.some(let tokens), .some(let calls)):
       guard tokens <= Self.maximumReportedTokens, (1...32).contains(calls) else {
-        throw ValidationError.invalidUsage
+        throw AgentContextCompactionValidationError.invalidUsage
       }
     default:
-      throw ValidationError.invalidUsage
+      throw AgentContextCompactionValidationError.invalidUsage
     }
     return self
   }
 
   public init(from decoder: any Decoder) throws {
-    let fields = try decoder.container(keyedBy: FieldKey.self)
+    let fields = try decoder.container(keyedBy: AgentContextCompactionFieldKey.self)
     let knownFields = Set(CodingKeys.allCases.map(\.rawValue))
     guard fields.allKeys.allSatisfy({ knownFields.contains($0.stringValue) }) else {
       throw DecodingError.dataCorrupted(
@@ -154,13 +151,8 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
       estimatedTokensAfter: container.decode(Int.self, forKey: .estimatedTokensAfter),
       reportedTokens: container.decodeIfPresent(UInt64.self, forKey: .reportedTokens),
       inferenceCalls: container.decodeIfPresent(Int.self, forKey: .inferenceCalls),
-      boundary: container.decodeIfPresent(Boundary.self, forKey: .boundary),
+      boundary: container.decodeIfPresent(AgentContextCompactionBoundary.self, forKey: .boundary),
       taskMessageID: container.decodeIfPresent(MessageID.self, forKey: .taskMessageID))
-  }
-
-  public enum ValidationError: Error, Equatable, Sendable {
-    case invalidIdentity, invalidSources, invalidSummary, invalidProviderOrModel, invalidEstimates
-    case invalidUsage
   }
 
   private static let zeroUUID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
@@ -176,10 +168,4 @@ public struct AgentContextCompaction: Codable, Equatable, Sendable {
       taskMessageID
   }
 
-  private struct FieldKey: CodingKey {
-    let stringValue: String
-    var intValue: Int? { nil }
-    init?(stringValue: String) { self.stringValue = stringValue }
-    init?(intValue: Int) { return nil }
-  }
 }

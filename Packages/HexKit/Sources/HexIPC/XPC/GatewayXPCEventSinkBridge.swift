@@ -3,15 +3,9 @@
 /// Owns one in-flight XPC payload until the receiver acknowledges bounded admission. A missing
 /// reply, failed admission, or cancellation seals this bridge; late replies cannot admit more work.
 public actor GatewayXPCEventSinkBridge {
-  private struct PendingAcknowledgement {
-    let id: UUID
-    let continuation: CheckedContinuation<Void, any Error>
-    let timer: Task<Void, Never>
-  }
-
   private let sink: any HexGatewayXPCEventSinkProtocol
   private let acknowledgementTimeout: Duration
-  private var pending: PendingAcknowledgement?
+  private var pending: GatewayXPCEventSinkBridgePendingAcknowledgement?
   private var isSealed = false
 
   public init(
@@ -48,7 +42,8 @@ public actor GatewayXPCEventSinkBridge {
           do { try await Task.sleep(for: timeout) } catch { return }
           await self?.expireAcknowledgement(id)
         }
-        pending = PendingAcknowledgement(id: id, continuation: continuation, timer: timer)
+        pending = GatewayXPCEventSinkBridgePendingAcknowledgement(
+          id: id, continuation: continuation, timer: timer)
         sink.receiveEvent(envelope) { [weak self] accepted in
           Task { await self?.acknowledge(id, accepted: accepted) }
         }

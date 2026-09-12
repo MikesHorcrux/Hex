@@ -61,7 +61,7 @@ struct HexProtectedFoldersPermissionView: View {
       ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/HexGateway.app")
   }
 
-  private func accessTitle(_ access: GatewayFolderAccessStatus.Access) -> String {
+  private func accessTitle(_ access: GatewayFolderAccessMode) -> String {
     switch access {
     case .readable: "Saved workspace can be read"
     case .denied: "Saved workspace access denied"

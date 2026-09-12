@@ -6,14 +6,14 @@ struct AgentProcessActivityView: View {
   let client: any HexGatewayProcessSessionClient
   let conversationID: UUID
   let open: () -> Void
-  @State private var sessions: [ProcessSessionRecord] = []
+  @State private var model = AgentProcessActivityModel()
   var body: some View {
     Group {
-      if let latest = sessions.first {
+      if let latest = model.sessions.first {
         Button(action: open) {
           HStack {
             Image(systemName: "terminal")
-            let active = sessions.filter { !$0.terminal }.count
+            let active = model.sessions.filter { !$0.terminal }.count
             Text(
               active > 0
                 ? "\(active) process\(active == 1 ? "" : "es") running"
@@ -26,14 +26,7 @@ struct AgentProcessActivityView: View {
           HexBrandPalette.coral.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
       }
     }.task(id: conversationID) {
-      while !Task.isCancelled {
-        do {
-          sessions = try await client.processSession(
-            .list(conversationID: conversationID, before: nil, limit: 50)
-          ).sessions
-        } catch { return }
-        do { try await Task.sleep(for: .seconds(2)) } catch { return }
-      }
+      await model.observe(client: client, conversationID: conversationID)
     }
   }
 }

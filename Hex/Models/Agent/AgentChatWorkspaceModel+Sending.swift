@@ -25,7 +25,7 @@ extension AgentChatWorkspaceModel {
         work = current
         activeWork = response.activeTask
         if let active = response.activeTask, !enqueue {
-          let action: GatewayTaskRequest.Action =
+          let action: GatewayTaskAction =
             active.phase == .blocked ? .reconcile(text) : .steer(text)
           pending = (
             parent,
@@ -95,7 +95,7 @@ extension AgentChatWorkspaceModel {
     }
   }
 
-  func control(_ action: GatewayTaskRequest.Action) async {
+  func control(_ action: GatewayTaskAction) async {
     guard let task = activeWork, !isSubmitting, pending == nil else { return }
     execution.update(task)
     execution.select(task.id)
@@ -120,7 +120,7 @@ extension AgentChatWorkspaceModel {
   }
 
   private func updateMetadata(
-    _ id: UUID, mutation: (inout ConversationStorageRequest.Document) -> Void
+    _ id: UUID, mutation: (inout ConversationStorageDocument) -> Void
   ) async {
     do {
       guard var document = try await storage.conversationStorage(.read(id)).documents.first else {

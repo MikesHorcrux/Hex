@@ -12,38 +12,6 @@ public actor OpenAIChatGPTModelCatalog: OpenAIModelCatalogLoading {
   /// The request still identifies the host honestly as Hex through User-Agent and originator.
   private static let catalogCompatibilityVersion = "0.144.0"
 
-  private struct Catalog: Decodable {
-    let models: [Entry]
-  }
-
-  private struct Entry: Decodable {
-    struct Effort: Decodable {
-      let effort: String
-    }
-
-    let slug: String
-    let displayName: String
-    let visibility: String
-    let priority: Int?
-    let contextWindow: Int?
-    let supportedReasoningLevels: [Effort]?
-    let defaultReasoningLevel: String?
-    let supportsReasoningSummaryParameter: Bool?
-    let inputModalities: [String]?
-
-    enum CodingKeys: String, CodingKey {
-      case slug
-      case displayName = "display_name"
-      case visibility
-      case priority
-      case contextWindow = "context_window"
-      case supportedReasoningLevels = "supported_reasoning_levels"
-      case defaultReasoningLevel = "default_reasoning_level"
-      case supportsReasoningSummaryParameter = "supports_reasoning_summary_parameter"
-      case inputModalities = "input_modalities"
-    }
-  }
-
   private let providerID: ProviderID
   private let authorizationProvider: any OpenAIResponsesAuthorizationProvider
   private let transport: any OpenAIResponsesTransport
@@ -106,9 +74,9 @@ public actor OpenAIChatGPTModelCatalog: OpenAIModelCatalogLoading {
       }
       await response.waitForTermination()
       try Task.checkCancellation()
-      let catalog: Catalog
+      let catalog: OpenAIChatGPTModelCatalogPayload
       do {
-        catalog = try JSONDecoder().decode(Catalog.self, from: data)
+        catalog = try JSONDecoder().decode(OpenAIChatGPTModelCatalogPayload.self, from: data)
       } catch let error as DecodingError {
         let category: String
         let context: DecodingError.Context

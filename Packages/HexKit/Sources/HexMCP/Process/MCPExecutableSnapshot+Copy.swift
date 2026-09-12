@@ -4,10 +4,10 @@ extension MCPExecutableSnapshot {
   static func copySourceDirectoryTree(
     sourceRelativePath: String,
     destinationRelativePath: String,
-    boundDependency: ResolvedDependency,
+    boundDependency: MCPExecutableSnapshotResolvedDependency,
     sourceRootDescriptor: Int32,
     destinationRootDescriptor: Int32,
-    copyState: inout CopyState
+    copyState: inout MCPExecutableSnapshotCopyState
   ) throws {
     guard
       let sourceDescriptor = try openSourceDirectory(
@@ -53,9 +53,9 @@ extension MCPExecutableSnapshot {
     destinationRelativePath: String,
     sourcePackageRoot: String,
     destinationPackageRoot: String,
-    boundDependency: ResolvedDependency,
+    boundDependency: MCPExecutableSnapshotResolvedDependency,
     destinationRootDescriptor: Int32,
-    copyState: inout CopyState
+    copyState: inout MCPExecutableSnapshotCopyState
   ) throws {
     var rootStatus = stat()
     guard
@@ -68,7 +68,7 @@ extension MCPExecutableSnapshot {
       throw MCPClientSessionError.connectionClosed
     }
     var stack = [
-      SourceDirectoryFrame(
+      MCPExecutableSnapshotSourceDirectoryFrame(
         descriptor: sourceDescriptor,
         sourceRelativePath: sourceRelativePath,
         destinationRelativePath: destinationRelativePath,
@@ -147,7 +147,7 @@ extension MCPExecutableSnapshot {
             Darwin.close(destinationDescriptor)
           }
           stack.append(
-            SourceDirectoryFrame(
+            MCPExecutableSnapshotSourceDirectoryFrame(
               descriptor: childDescriptor,
               sourceRelativePath: sourceChildPath,
               destinationRelativePath: destinationChildPath,
@@ -242,7 +242,7 @@ extension MCPExecutableSnapshot {
     destinationRelativePath: String,
     destinationRootDescriptor: Int32,
     requireExecutable: Bool,
-    copyState: inout CopyState,
+    copyState: inout MCPExecutableSnapshotCopyState,
     beforeCopy: (() -> Void)?
   ) throws -> (descriptor: Int32, status: stat) {
     guard
@@ -290,7 +290,8 @@ extension MCPExecutableSnapshot {
     }
     copyState.ownedRegularFiles[ownedFileIndex].status = createdStatus
     copyState.createdEntries.append(
-      CreatedEntry(relativePath: destinationRelativePath, kind: .file, status: createdStatus)
+      MCPExecutableSnapshotCreatedEntry(
+        relativePath: destinationRelativePath, kind: .file, status: createdStatus)
     )
     do {
       beforeCopy?()
@@ -339,7 +340,7 @@ extension MCPExecutableSnapshot {
     sourcePackageRoot: String,
     destinationPackageRoot: String,
     destinationRootDescriptor: Int32,
-    copyState: inout CopyState
+    copyState: inout MCPExecutableSnapshotCopyState
   ) throws {
     guard
       initialStatus.st_uid == 0
@@ -469,7 +470,7 @@ extension MCPExecutableSnapshot {
       throw MCPClientSessionError.connectionClosed
     }
     copyState.createdEntries.append(
-      CreatedEntry(
+      MCPExecutableSnapshotCreatedEntry(
         relativePath: destinationRelativePath, kind: .symbolicLink, status: createdStatus)
     )
   }

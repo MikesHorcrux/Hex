@@ -5,7 +5,7 @@ import SwiftUI
 struct AgentSidebarView: View {
   @Bindable var model: AgentWorkspaceModel
   @State private var remoteIDs: [UUID] = []
-  @State private var remoteCursor: ConversationStorageRequest.Cursor?
+  @State private var remoteCursor: ConversationStorageCursor?
   @State private var remoteLoading = false
   @State private var conversationToDelete: AgentConversation?
   @State private var conversationToRename: AgentConversation?

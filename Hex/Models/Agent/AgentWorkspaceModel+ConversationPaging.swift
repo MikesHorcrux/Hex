@@ -131,8 +131,8 @@ extension AgentWorkspaceModel {
     } catch { errorMessage = "Latest messages could not be loaded. Your draft is unchanged." }
   }
 
-  func queryConversationPage(_ query: ConversationStorageRequest.Query) async throws
-    -> (ids: [UUID], next: ConversationStorageRequest.Cursor?)
+  func queryConversationPage(_ query: ConversationStorageQuery) async throws
+    -> (ids: [UUID], next: ConversationStorageCursor?)
   {
     guard let repository = conversationStore as? any AgentPagedConversationStoring else {
       return ([], nil)

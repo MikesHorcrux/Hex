@@ -264,7 +264,7 @@ public actor MCPBoundedProcessRunner {
     _ descriptor: Int32,
     into data: inout Data,
     maximumBytes: Int
-  ) throws -> DrainResult {
+  ) throws -> MCPBoundedProcessRunnerDrainResult {
     var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
     while true {
       try Task.checkCancellation()
@@ -277,16 +277,16 @@ public actor MCPBoundedProcessRunner {
           data.append(contentsOf: buffer.prefix(accepted))
         }
         if accepted < count {
-          return DrainResult(reachedEndOfFile: false, exceededLimit: true)
+          return MCPBoundedProcessRunnerDrainResult(reachedEndOfFile: false, exceededLimit: true)
         }
         continue
       }
       if count == 0 {
-        return DrainResult(reachedEndOfFile: true, exceededLimit: false)
+        return MCPBoundedProcessRunnerDrainResult(reachedEndOfFile: true, exceededLimit: false)
       }
       if errno == EINTR { continue }
       if errno == EAGAIN || errno == EWOULDBLOCK {
-        return DrainResult(reachedEndOfFile: false, exceededLimit: false)
+        return MCPBoundedProcessRunnerDrainResult(reachedEndOfFile: false, exceededLimit: false)
       }
       throw MCPClientSessionError.connectionClosed
     }
@@ -405,8 +405,4 @@ public actor MCPBoundedProcessRunner {
     return (status >> 8) & 0xff
   }
 
-  private struct DrainResult: Sendable {
-    let reachedEndOfFile: Bool
-    let exceededLimit: Bool
-  }
 }

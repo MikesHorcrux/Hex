@@ -126,7 +126,7 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport, HexGatewayRunRec
   }
 
   public func taskOperation(_ request: GatewayTaskRequest, lease: GatewayTransportConnectionLease)
-    async throws -> GatewayTaskRequest.Response
+    async throws -> GatewayTaskResponse
   {
     let sessionID = try requireSession(ownedBy: lease)
     let response = try await service.taskOperation(codec.roundTrip(request), sessionID: sessionID)
@@ -137,7 +137,7 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport, HexGatewayRunRec
   public func processSession(
     _ request: GatewayProcessSessionRequest, lease: GatewayTransportConnectionLease
   )
-    async throws -> GatewayProcessSessionRequest.Response
+    async throws -> GatewayProcessSessionResponse
   {
     let sessionID = try requireSession(ownedBy: lease)
     let response = try await service.processSession(codec.roundTrip(request), sessionID: sessionID)
@@ -148,7 +148,7 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport, HexGatewayRunRec
   public func conversationStorage(
     _ request: ConversationStorageRequest,
     lease: GatewayTransportConnectionLease
-  ) async throws -> ConversationStorageRequest.Response {
+  ) async throws -> ConversationStorageResponse {
     let sessionID = try requireSession(ownedBy: lease)
     let response = try await service.conversationStorage(
       codec.roundTrip(request), sessionID: sessionID)

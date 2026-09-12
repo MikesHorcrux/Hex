@@ -130,14 +130,6 @@ struct AgentChatWorkspaceView: View {
           .frame(minWidth: 640, minHeight: 500)
       }
     }
-    .task {
-      while !Task.isCancelled {
-        if workspace.connectionState == .connected {
-          await model.prepareHistory(workspace: workspace)
-          await model.refresh()
-        }
-        do { try await Task.sleep(for: .seconds(1)) } catch { return }
-      }
-    }
+    .task { await model.observe(workspace: workspace) }
   }
 }

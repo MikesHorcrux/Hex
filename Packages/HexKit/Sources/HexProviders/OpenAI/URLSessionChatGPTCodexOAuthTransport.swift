@@ -46,9 +46,10 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
     _ data: Data,
     receivedAt: Date = Date()
   ) throws -> ChatGPTCodexDeviceAuthorizationChallenge {
-    let decoded: DeviceAuthorizationResponse
+    let decoded: ChatGPTCodexOAuthTransportDeviceAuthorizationResponse
     do {
-      decoded = try JSONDecoder().decode(DeviceAuthorizationResponse.self, from: data)
+      decoded = try JSONDecoder().decode(
+        ChatGPTCodexOAuthTransportDeviceAuthorizationResponse.self, from: data)
     } catch {
       throw ChatGPTCodexOAuthError.unexpectedResponse
     }
@@ -94,7 +95,7 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
     }
     guard response.statusCode != 429 else { throw ChatGPTCodexOAuthError.rateLimited }
     guard response.statusCode == 200 else { throw ChatGPTCodexOAuthError.authorizationRejected }
-    let decoded: PollResponse = try Self.decode(response.data)
+    let decoded: ChatGPTCodexOAuthTransportPollResponse = try Self.decode(response.data)
     guard
       Self.isValidOpaqueValue(decoded.authorizationCode, maximumBytes: 8 * 1_024),
       Self.isValidOpaqueValue(decoded.codeVerifier, maximumBytes: 2_048)
@@ -160,7 +161,7 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
         ? ChatGPTCodexOAuthError.refreshRejected
         : ChatGPTCodexOAuthError.tokenExchangeFailed
     }
-    let decoded: TokenResponse = try Self.decode(response.data)
+    let decoded: ChatGPTCodexOAuthTransportTokenResponse = try Self.decode(response.data)
     guard Self.isValidOpaqueValue(decoded.accessToken, maximumBytes: 32 * 1_024) else {
       throw refresh
         ? ChatGPTCodexOAuthError.refreshRejected
@@ -179,7 +180,9 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
     )
   }
 
-  private func send(_ request: URLRequest) async throws -> HTTPResult {
+  private func send(_ request: URLRequest) async throws
+    -> ChatGPTCodexOAuthTransportHTTPResult
+  {
     do {
       let (data, response) = try await session.data(for: request)
       try Task.checkCancellation()
@@ -191,7 +194,8 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
       else {
         throw ChatGPTCodexOAuthError.transportFailed
       }
-      return HTTPResult(statusCode: response.statusCode, data: data)
+      return ChatGPTCodexOAuthTransportHTTPResult(
+        statusCode: response.statusCode, data: data)
     } catch is CancellationError {
       throw CancellationError()
     } catch let error as ChatGPTCodexOAuthError {
@@ -244,77 +248,4 @@ public final class URLSessionChatGPTCodexOAuthTransport: ChatGPTCodexOAuthTransp
     return bytes.allSatisfy { (0x21...0x7E).contains($0) }
   }
 
-  private struct HTTPResult: Sendable {
-    let statusCode: Int
-    let data: Data
-  }
-
-  private struct DeviceAuthorizationResponse: Decodable {
-    let userCode: String
-    let deviceAuthorizationID: String
-    let interval: Int?
-
-    private enum CodingKeys: String, CodingKey {
-      case userCode = "user_code"
-      case deviceAuthorizationID = "device_auth_id"
-      case interval
-    }
-
-    init(from decoder: any Decoder) throws {
-      let container = try decoder.container(keyedBy: CodingKeys.self)
-      userCode = try container.decode(String.self, forKey: .userCode)
-      deviceAuthorizationID = try container.decode(String.self, forKey: .deviceAuthorizationID)
-
-      guard container.contains(.interval) else {
-        interval = nil
-        return
-      }
-      guard try !container.decodeNil(forKey: .interval) else {
-        interval = nil
-        return
-      }
-
-      if let numericInterval = try? container.decode(Int.self, forKey: .interval) {
-        interval = numericInterval
-      } else {
-        let stringInterval = try container.decode(String.self, forKey: .interval)
-        guard
-          !stringInterval.isEmpty,
-          stringInterval.utf8.allSatisfy({ (0x30...0x39).contains($0) }),
-          let numericInterval = Int(stringInterval)
-        else {
-          throw DecodingError.dataCorruptedError(
-            forKey: .interval,
-            in: container,
-            debugDescription: "Polling interval must contain only decimal digits."
-          )
-        }
-        interval = numericInterval
-      }
-    }
-  }
-
-  private struct PollResponse: Decodable {
-    let authorizationCode: String
-    let codeVerifier: String
-
-    private enum CodingKeys: String, CodingKey {
-      case authorizationCode = "authorization_code"
-      case codeVerifier = "code_verifier"
-    }
-  }
-
-  private struct TokenResponse: Decodable {
-    let accessToken: String
-    let refreshToken: String?
-    let idToken: String?
-    let expiresIn: Int?
-
-    private enum CodingKeys: String, CodingKey {
-      case accessToken = "access_token"
-      case refreshToken = "refresh_token"
-      case idToken = "id_token"
-      case expiresIn = "expires_in"
-    }
-  }
 }

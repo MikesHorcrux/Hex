@@ -3,15 +3,8 @@ import HexCore
 /// Run-owned evidence, not a retry queue. Only calls that have never reached a durable-start
 /// attempt may receive a host-authored nonexecution receipt when the run stops.
 struct AgentToolDispatchLedger: Sendable {
-  private enum State: Equatable, Sendable {
-    case neverStarted
-    case startAttempted
-    case receiptAttempted
-    case settled
-  }
-
   private var calls: [ToolCall] = []
-  private var states: [ToolCallID: State] = [:]
+  private var states: [ToolCallID: AgentToolDispatchLedgerState] = [:]
 
   var neverStartedCalls: [ToolCall] {
     calls.filter { states[$0.id] == .neverStarted }

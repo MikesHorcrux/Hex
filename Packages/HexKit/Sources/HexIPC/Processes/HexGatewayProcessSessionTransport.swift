@@ -4,5 +4,5 @@ public protocol HexGatewayProcessSessionTransport: Sendable {
   func processSession(
     _ request: GatewayProcessSessionRequest, lease: GatewayTransportConnectionLease
   )
-    async throws -> GatewayProcessSessionRequest.Response
+    async throws -> GatewayProcessSessionResponse
 }

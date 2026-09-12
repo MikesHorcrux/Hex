@@ -79,7 +79,7 @@ struct AgentChatTimelineTests {
 
   private actor EmptyStorage: ConversationStorage {
     func conversationStorage(_ request: ConversationStorageRequest)
-      -> ConversationStorageRequest.Response
+      -> ConversationStorageResponse
     { .init() }
   }
 
@@ -95,14 +95,14 @@ struct AgentChatTimelineTests {
       entries += (start..<(start + count)).map { Self.entry($0) }
     }
     func failOlderPages(_ value: Bool) { fails = value }
-    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskRequest.Response {
+    func taskOperation(_ request: GatewayTaskRequest) throws -> GatewayTaskResponse {
       guard case .conversationHistory(_, let before, let limit) = request else { return .init() }
       calls += 1
       if fails, before != nil {
         throw GatewayFailure(code: .transportUnavailable, message: "Disconnected")
       }
       let older = entries.filter { $0.sequence < (before ?? Int64.max) }
-      var response = GatewayTaskRequest.Response()
+      var response = GatewayTaskResponse()
       response.timeline = Array(older.suffix(limit))
       response.before = older.count > limit ? response.timeline.first?.sequence : nil
       return response

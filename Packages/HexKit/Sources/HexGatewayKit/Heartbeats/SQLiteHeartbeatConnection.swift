@@ -4,14 +4,6 @@ import SQLite3
 /// Synchronous connection exclusively owned by SQLiteHexHeartbeatStore's actor. Bindings and
 /// returned rows are bounded values; no SQLite pointer crosses a task or actor boundary.
 final class SQLiteHeartbeatConnection {
-  enum Value {
-    case integer(Int64)
-    case real(Double)
-    case text(String)
-    case blob(Data)
-    case null
-  }
-
   private var handle: OpaquePointer?
 
   init(path: String) throws {
@@ -40,14 +32,14 @@ final class SQLiteHeartbeatConnection {
     self.handle = nil
   }
 
-  func execute(_ sql: String, _ bindings: [Value] = []) throws {
+  func execute(_ sql: String, _ bindings: [SQLiteHeartbeatConnectionValue] = []) throws {
     _ = try rows(sql, bindings, maximumRows: 0)
   }
 
   func rows(
-    _ sql: String, _ bindings: [Value] = [], maximumRows: Int = 1,
+    _ sql: String, _ bindings: [SQLiteHeartbeatConnectionValue] = [], maximumRows: Int = 1,
     maximumCellBytes: Int = 131_072
-  ) throws -> [[Value]] {
+  ) throws -> [[SQLiteHeartbeatConnectionValue]] {
     guard let handle else { throw SQLiteHexHeartbeatStoreError.unavailable }
     var prepared: OpaquePointer?
     guard sqlite3_prepare_v2(handle, sql, -1, &prepared, nil) == SQLITE_OK, let prepared else {
@@ -80,13 +72,13 @@ final class SQLiteHeartbeatConnection {
       }
       guard result == SQLITE_OK else { throw SQLiteHexHeartbeatStoreError.unavailable }
     }
-    var output: [[Value]] = []
+    var output: [[SQLiteHeartbeatConnectionValue]] = []
     while true {
       let result = sqlite3_step(prepared)
       if result == SQLITE_DONE { return output }
       guard result == SQLITE_ROW else { throw SQLiteHexHeartbeatStoreError.unavailable }
       guard output.count < maximumRows else { throw SQLiteHexHeartbeatStoreError.corrupt }
-      var row: [Value] = []
+      var row: [SQLiteHeartbeatConnectionValue] = []
       for index in 0..<sqlite3_column_count(prepared) {
         switch sqlite3_column_type(prepared, index) {
         case SQLITE_NULL: row.append(.null)

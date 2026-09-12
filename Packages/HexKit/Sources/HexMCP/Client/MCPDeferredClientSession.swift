@@ -6,16 +6,9 @@ import Foundation
 /// fail closed for that server without preventing core gateway startup. No error description or
 /// environment is exposed by this adapter. Each later connection retries the original factory.
 public actor MCPDeferredClientSession: MCPClientSession {
-  private struct Connection: Sendable {
-    let id: UUID
-    let session: any MCPClientSession
-    var pendingConnect: Task<Void, any Error>?
-    var isReady = false
-  }
-
   public nonisolated let serverID: String
   private let makeSession: @Sendable () throws -> any MCPClientSession
-  private var connection: Connection?
+  private var connection: MCPDeferredClientSessionConnection?
   private var shutdown: (id: UUID, task: Task<Void, Never>)?
 
   public init(
@@ -42,7 +35,8 @@ public actor MCPDeferredClientSession: MCPClientSession {
     // This task owns only the base connection attempt. It never waits on this adapter's
     // shutdown path, so shutdown can drain it without a circular dependency.
     let pendingConnect = Task { try await session.connect() }
-    connection = Connection(id: id, session: session, pendingConnect: pendingConnect)
+    connection = MCPDeferredClientSessionConnection(
+      id: id, session: session, pendingConnect: pendingConnect)
     do {
       try await withTaskCancellationHandler {
         try await pendingConnect.value
@@ -101,7 +95,7 @@ public actor MCPDeferredClientSession: MCPClientSession {
     return result
   }
 
-  private func readyConnection() throws -> Connection {
+  private func readyConnection() throws -> MCPDeferredClientSessionConnection {
     try Task.checkCancellation()
     guard let connection, connection.isReady else { throw MCPClientSessionError.notConnected }
     return connection

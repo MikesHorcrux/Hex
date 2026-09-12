@@ -3,19 +3,9 @@ import HexCore
 /// One actual run attempt: the latest user message and subsequent committed native messages,
 /// never the request's repeated prior context. The workspace model owns mutations to these values.
 nonisolated struct AgentConversationExchange: Codable, Equatable, Sendable {
-  nonisolated enum Outcome: String, Codable, CaseIterable, Sendable {
-    case inProgress
-    case completed
-    case cancelled
-    case failed
-    case interrupted
-
-    var isTerminal: Bool { self != .inProgress }
-  }
-
   let runID: AgentRunID
   var messages: [Message]
-  var outcome: Outcome
+  var outcome: AgentConversationExchangeOutcome
   var lastEventSequence: UInt64?
   var originalRetryOfRunID: AgentRunID?
   var projectionSummaryID: MessageID?
@@ -24,7 +14,7 @@ nonisolated struct AgentConversationExchange: Codable, Equatable, Sendable {
   init(
     runID: AgentRunID,
     messages: [Message],
-    outcome: Outcome = .inProgress,
+    outcome: AgentConversationExchangeOutcome = .inProgress,
     lastEventSequence: UInt64? = nil,
     retryOfRunID: AgentRunID? = nil
   ) {

@@ -11,9 +11,9 @@ final class AgentChatWorkspaceModel {
   let taskClient: any HexGatewayTaskClient
   let storage: any ConversationStorage
   let execution: AgentTaskWorkspaceModel
-  var conversations: [ConversationStorageRequest.Document] = []
+  var conversations: [ConversationStorageDocument] = []
   var selectedID: UUID?
-  var selectedDocument: ConversationStorageRequest.Document?
+  var selectedDocument: ConversationStorageDocument?
   var newID = UUID()
   var drafts: [UUID: String] = [:]
   var draft: String {
@@ -30,13 +30,13 @@ final class AgentChatWorkspaceModel {
   var storageReady = false
   var isPreparingStorage = false
   var generation = UUID()
-  var nextConversation: ConversationStorageRequest.Cursor?
+  var nextConversation: ConversationStorageCursor?
   var newestTimelineSequence: Int64?
   var didLoadTimeline = false
   var search = ""
   var showsArchived = false
   var pending: (conversationID: UUID, request: GatewayTaskRequest, draft: String)?
-  var selected: ConversationStorageRequest.Document? {
+  var selected: ConversationStorageDocument? {
     selectedDocument?.id == selectedID
       ? selectedDocument : conversations.first { $0.id == selectedID }
   }
@@ -50,6 +50,14 @@ final class AgentChatWorkspaceModel {
     self.taskClient = taskClient
     self.storage = storage
     execution = AgentTaskWorkspaceModel(client: client, taskClient: taskClient)
+  }
+
+  func observe(workspace: AgentWorkspaceModel) async {
+    await AgentWorkspaceRefreshLoop().run {
+      guard workspace.connectionState == .connected else { return }
+      await self.prepareHistory(workspace: workspace)
+      await self.refresh()
+    }
   }
 
   func refresh(more: Bool = false) async {

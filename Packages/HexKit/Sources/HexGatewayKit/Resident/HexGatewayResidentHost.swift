@@ -14,17 +14,6 @@ import HexProviders
 /// to stop. No launch-agent installation or registration occurs here; launchd owns process startup.
 @MainActor
 public final class HexGatewayResidentHost {
-  public enum HostError: Swift.Error, Equatable, LocalizedError, Sendable {
-    case alreadyRunning
-
-    public var errorDescription: String? {
-      switch self {
-      case .alreadyRunning:
-        "The resident gateway is already running."
-      }
-    }
-  }
-
   public let configuration: HexGatewayResidentConfiguration
 
   private let composition: HexGatewayComposition
@@ -366,7 +355,7 @@ public final class HexGatewayResidentHost {
   /// The listener is invalidated before the journal is closed, so no new request can race teardown.
   public func run() async throws {
     guard !hasStarted else {
-      throw HostError.alreadyRunning
+      throw HexGatewayResidentHostError.alreadyRunning
     }
     hasStarted = true
     let cancellationGate = HexGatewayResidentCancellationGate()

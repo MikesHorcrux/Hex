@@ -14,7 +14,7 @@ struct SQLiteConversationTaskMigrationTests {
     let journal = try await SQLiteAgentEventJournal.open(configuration: config)
     let oldID = UUID()
     let originalState = Data("{\"legacy\":true}".utf8)
-    let document = ConversationStorageRequest.Document(
+    let document = ConversationStorageDocument(
       id: oldID, title: "Original chat",
       createdAt: Date(), updatedAt: Date(), state: originalState)
     _ = try await journal.conversationStorage(.write(.init(document: document, entries: [])))

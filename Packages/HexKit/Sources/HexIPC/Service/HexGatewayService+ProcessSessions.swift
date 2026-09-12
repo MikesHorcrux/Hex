@@ -2,14 +2,14 @@ import HexCore
 
 extension HexGatewayService {
   public func processSession(_ untrusted: GatewayProcessSessionRequest, sessionID: GatewaySessionID)
-    async throws -> GatewayProcessSessionRequest.Response
+    async throws -> GatewayProcessSessionResponse
   {
     let request = try codec.roundTrip(untrusted)
     try requireSession(sessionID)
     guard let processSessions else {
       throw GatewayFailure(code: .recoveryUnavailable, message: "Process sessions are unavailable.")
     }
-    var response = GatewayProcessSessionRequest.Response()
+    var response = GatewayProcessSessionResponse()
     switch request {
     case .patchFile(let taskID, let receiptID, let index):
       guard let codingWorkspace, try await taskStore?.readTask(taskID) != nil else {

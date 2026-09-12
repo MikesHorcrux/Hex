@@ -81,9 +81,10 @@ public actor MCPPeekabooPermissionController {
   }
 
   private static func validateAcknowledgement(_ data: Data) throws {
-    let response: Acknowledgement
+    let response: MCPPeekabooPermissionControllerAcknowledgement
     do {
-      response = try JSONDecoder().decode(Acknowledgement.self, from: data)
+      response = try JSONDecoder().decode(
+        MCPPeekabooPermissionControllerAcknowledgement.self, from: data)
     } catch {
       throw MCPClientSessionError.protocolViolation
     }
@@ -93,9 +94,10 @@ public actor MCPPeekabooPermissionController {
   }
 
   private static func decodeStatus(_ data: Data) throws -> MCPPeekabooPermissionStatus {
-    let response: StatusResponse
+    let response: MCPPeekabooPermissionControllerStatusResponse
     do {
-      response = try JSONDecoder().decode(StatusResponse.self, from: data)
+      response = try JSONDecoder().decode(
+        MCPPeekabooPermissionControllerStatusResponse.self, from: data)
     } catch {
       throw MCPClientSessionError.protocolViolation
     }
@@ -122,21 +124,4 @@ public actor MCPPeekabooPermissionController {
     )
   }
 
-  private struct Acknowledgement: Decodable, Sendable {
-    let success: Bool
-  }
-
-  private struct StatusResponse: Decodable, Sendable {
-    let success: Bool
-    let data: StatusPayload
-  }
-
-  private struct StatusPayload: Decodable, Sendable {
-    let permissions: [Permission]
-  }
-
-  private struct Permission: Decodable, Sendable {
-    let name: String
-    let isGranted: Bool
-  }
 }

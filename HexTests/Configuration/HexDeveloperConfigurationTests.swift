@@ -12,7 +12,7 @@ struct HexDeveloperConfigurationTests {
     do {
       _ = try configuration.liveValues()
       Issue.record("Expected live configuration to require explicit settings.")
-    } catch let error as HexDeveloperConfiguration.ConfigurationError {
+    } catch let error as HexDeveloperConfigurationError {
       #expect(
         error.localizedDescription
           == "Live developer mode is not configured. Set HEX_OPENAI_API_KEY, HEX_OPENAI_MODEL, HEX_WORKSPACE_ROOT before running Hex."

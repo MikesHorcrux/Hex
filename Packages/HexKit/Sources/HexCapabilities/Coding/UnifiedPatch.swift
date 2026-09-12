@@ -52,7 +52,7 @@ struct UnifiedPatch: Sendable {
         throw WorkspacePatchError.invalidPatch
       }
       index += 2
-      var hunks: [UnifiedPatchFile.Hunk] = []
+      var hunks: [UnifiedPatchFileHunk] = []
       while index < lines.count && lines[index].hasPrefix("@@ ") {
         guard hunks.count < 256 else { throw WorkspacePatchError.invalidPatch }
         let header = lines[index].split(separator: " ")

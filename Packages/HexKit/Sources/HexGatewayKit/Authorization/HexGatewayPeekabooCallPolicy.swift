@@ -2,13 +2,6 @@ import HexCore
 
 /// Host-owned classification of the pinned Peekaboo 4.3.3 catalog. Server descriptions are data.
 enum HexGatewayPeekabooCallPolicy {
-  enum Kind: Equatable, Sendable {
-    case observation
-    case read
-    case mutation
-    case unsupported
-  }
-
   static let prefix = "mcp_8_peekaboo_"
   static let excluded = Set(["agent", "analyze", "browser"])
   static let snapshotActions = Set([
@@ -20,7 +13,9 @@ enum HexGatewayPeekabooCallPolicy {
     return String(name.dropFirst(prefix.count))
   }
 
-  static func classify(_ name: String, arguments: [String: JSONValue]) -> Kind {
+  static func classify(_ name: String, arguments: [String: JSONValue])
+    -> HexGatewayPeekabooCallPolicyKind
+  {
     switch name {
     case "see", "inspect_ui":
       return arguments["web_focus"] == .boolean(true) ? .unsupported : .observation
@@ -73,7 +68,7 @@ enum HexGatewayPeekabooCallPolicy {
 
   private static func actionKind(
     _ arguments: [String: JSONValue], reads: Set<String>, mutations: Set<String>
-  ) -> Kind {
+  ) -> HexGatewayPeekabooCallPolicyKind {
     guard case .string(let action) = arguments["action"] else { return .unsupported }
     if reads.contains(action) { return .read }
     return mutations.contains(action) ? .mutation : .unsupported

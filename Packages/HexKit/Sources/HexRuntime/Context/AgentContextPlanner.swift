@@ -106,15 +106,8 @@ public struct AgentContextPlanner: Sendable {
     return .protectedOverflow(budget, reason: .protectedContext)
   }
 
-  private struct ExchangeLayout: Sendable {
-    let closedExchanges: [Range<Int>]
-    let protectedStart: Int
-    let latestUserIndex: Int
-    let hasOpenToolChain: Bool
-  }
-
   private func exchangeLayout(pinnedMessages: [Message], messages: [Message]) throws
-    -> ExchangeLayout
+    -> AgentContextPlannerExchangeLayout
   {
     var messageIDs = Set<MessageID>()
     for message in pinnedMessages {
@@ -191,7 +184,7 @@ public struct AgentContextPlanner: Sendable {
     }
     if endsWithFinalAssistant && pendingCalls.isEmpty { closed.append(start..<messages.count) }
     let protectedStart = min(latestUserIndex, closed.last?.lowerBound ?? latestUserIndex)
-    return ExchangeLayout(
+    return AgentContextPlannerExchangeLayout(
       closedExchanges: closed,
       protectedStart: protectedStart,
       latestUserIndex: latestUserIndex,

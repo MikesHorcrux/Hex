@@ -39,7 +39,7 @@ struct HexGatewayResidentConfigurationTests {
         apiKey: "bad\nsecret"
       )
       Issue.record("Expected a non-printable credential to be rejected.")
-    } catch let error as HexGatewayResidentConfiguration.ConfigurationError {
+    } catch let error as HexGatewayResidentConfigurationError {
       #expect(error == .invalidVariable("HEX_OPENAI_API_KEY"))
       #expect(!String(describing: error).contains("bad"))
       #expect(!String(describing: error).contains("secret"))

@@ -1,7 +1,7 @@
 import Synchronization
 
 final class InferenceStreamCursorControl: Sendable {
-  private let state = Mutex(State())
+  private let state = Mutex(InferenceStreamCursorControlState())
 
   func beginRead() throws {
     try state.withLock { state in
@@ -35,8 +35,4 @@ final class InferenceStreamCursorControl: Sendable {
     }
   }
 
-  private struct State: Sendable {
-    var isOpen = true
-    var isReading = false
-  }
 }

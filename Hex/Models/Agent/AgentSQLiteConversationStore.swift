@@ -9,7 +9,7 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
   let legacy: AgentConversationStore?
   var revisions: [UUID: Int64] = [:]
   var fingerprints: [UUID: [String: Data]] = [:]
-  var pendingWrites: [UUID: ConversationStorageRequest.Write] = [:]
+  var pendingWrites: [UUID: ConversationStorageWrite] = [:]
 
   init(storage: any ConversationStorage, legacy: AgentConversationStore? = .live()) {
     self.storage = storage
@@ -39,7 +39,7 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
 
   /// Kept only for legacy-store protocol compatibility. Production queues submit explicit changes.
   func save(_ archive: AgentConversationArchive) async throws {
-    throw ConversationStorageRequest.Failure.invalidRequest
+    throw ConversationStorageFailure.invalidRequest
   }
 
   nonisolated func validateForPersistence(_ archive: AgentConversationArchive) throws {
@@ -48,12 +48,12 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
       try AgentConversationHistoryValidator.validate(
         conversation.resolvedHistory(), runIDs: &runIDs)
       guard conversation.title.utf8.count <= AgentConversation.maximumTitleBytes else {
-        throw ConversationStorageRequest.Failure.invalidRequest
+        throw ConversationStorageFailure.invalidRequest
       }
       // Validate each record independently; the conversation's lifetime size is not an admission cap.
       for entry in try Self.entries(for: conversation) {
         guard entry.payload.count <= ConversationStorageRequest.maximumPayloadBytes else {
-          throw ConversationStorageRequest.Failure.invalidRequest
+          throw ConversationStorageFailure.invalidRequest
         }
       }
       _ = try Self.state(for: conversation)
@@ -68,7 +68,7 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
 
   func readConversation(_ id: UUID) async throws -> AgentConversation {
     guard let document = try await storage.conversationStorage(.read(id)).documents.first else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     var conversation: AgentConversation
     if document.state == Data("{\"durableConversation\":1}".utf8) {
@@ -78,7 +78,7 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
     } else {
       conversation = try JSONDecoder().decode(AgentConversation.self, from: document.state)
     }
-    guard conversation.id == id else { throw ConversationStorageRequest.Failure.invalidRequest }
+    guard conversation.id == id else { throw ConversationStorageFailure.invalidRequest }
     conversation.title = document.title
     conversation.updatedAt = document.updatedAt
     conversation.archivedAt = document.archivedAt
@@ -94,7 +94,7 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
     -> (items: [ConversationItem], before: Int64?)
   {
     guard let revision = revisions[id] else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     let page = try await storage.conversationStorage(
       .entries(
@@ -106,8 +106,8 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
     )
   }
 
-  func listConversations(_ query: ConversationStorageRequest.Query) async throws
-    -> (conversations: [AgentConversation], next: ConversationStorageRequest.Cursor?)
+  func listConversations(_ query: ConversationStorageQuery) async throws
+    -> (conversations: [AgentConversation], next: ConversationStorageCursor?)
   {
     let page = try await storage.conversationStorage(.list(query))
     // Listing newer metadata cannot acknowledge a revision for a working copy we already loaded.
@@ -165,7 +165,7 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
       in: conversation.resolvedHistory())
     let encoded = try encode(state)
     guard encoded.count <= ConversationStorageRequest.maximumPayloadBytes else {
-      throw ConversationStorageRequest.Failure.invalidRequest
+      throw ConversationStorageFailure.invalidRequest
     }
     return encoded
   }
@@ -185,10 +185,10 @@ actor AgentSQLiteConversationStore: AgentPagedConversationStoring {
   }
 
   nonisolated static func entries(for conversation: AgentConversation) throws
-    -> [ConversationStorageRequest.Entry]
+    -> [ConversationStorageEntry]
   {
     var entries = try conversation.transcript.map {
-      ConversationStorageRequest.Entry(
+      ConversationStorageEntry(
         id: "display:\($0.id.uuidString)", kind: .display,
         payload: try encode($0),
         searchText: $0.text.folding(

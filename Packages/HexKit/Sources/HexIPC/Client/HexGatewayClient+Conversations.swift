@@ -2,7 +2,7 @@ import HexCore
 
 extension HexGatewayClient: ConversationStorage {
   public func conversationStorage(_ request: ConversationStorageRequest) async throws
-    -> ConversationStorageRequest.Response
+    -> ConversationStorageResponse
   {
     try Task.checkCancellation()
     let connection = try requireConnectedGeneration()

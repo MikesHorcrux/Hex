@@ -3,12 +3,6 @@ import HexCore
 
 /// One actor owns active snapshots. A tool can only inspect the snapshot for its runtime run ID.
 public actor HexSelfKnowledgeService {
-  public enum ServiceError: Error, Equatable, Sendable {
-    case duplicateRun
-    case capacityExceeded
-    case runUnavailable
-  }
-
   private let knowledge: HexSelfKnowledge
   private let provider: ProviderDescriptor
   private var snapshots: [AgentRunID: JSONValue] = [:]
@@ -25,8 +19,8 @@ public actor HexSelfKnowledgeService {
     options: InferenceOptions
   ) throws -> Message {
     try Task.checkCancellation()
-    guard snapshots[runID] == nil else { throw ServiceError.duplicateRun }
-    guard snapshots.count < 128 else { throw ServiceError.capacityExceeded }
+    guard snapshots[runID] == nil else { throw HexSelfKnowledgeServiceError.duplicateRun }
+    guard snapshots.count < 128 else { throw HexSelfKnowledgeServiceError.capacityExceeded }
     let snapshot = knowledge.snapshot(
       provider: provider, modelID: modelID, workingDirectory: workingDirectory, options: options
     )
@@ -40,7 +34,9 @@ public actor HexSelfKnowledgeService {
 
   public func snapshot(for runID: AgentRunID) throws -> JSONValue {
     try Task.checkCancellation()
-    guard let snapshot = snapshots[runID] else { throw ServiceError.runUnavailable }
+    guard let snapshot = snapshots[runID] else {
+      throw HexSelfKnowledgeServiceError.runUnavailable
+    }
     return snapshot
   }
 

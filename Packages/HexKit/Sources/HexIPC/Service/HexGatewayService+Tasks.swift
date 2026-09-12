@@ -4,14 +4,14 @@ import HexCore
 
 extension HexGatewayService {
   public func taskOperation(_ untrusted: GatewayTaskRequest, sessionID: GatewaySessionID)
-    async throws -> GatewayTaskRequest.Response
+    async throws -> GatewayTaskResponse
   {
     let request = try codec.roundTrip(untrusted)
     try requireSession(sessionID)
     guard let taskStore, driver is any HexGatewayBoundaryStopping, historyReader != nil else {
       throw taskFailure("This gateway does not support durable task execution.")
     }
-    var response = GatewayTaskRequest.Response()
+    var response = GatewayTaskResponse()
     switch request {
     case .adoptLegacyConversation(let id):
       try requireAcceptingAdmissions()
