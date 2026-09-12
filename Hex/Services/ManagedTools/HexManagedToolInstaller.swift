@@ -89,37 +89,37 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     }
     #if arch(arm64)
       let archiveName = "node-v\(MCPManagedToolLayout.nodeVersion)-darwin-arm64.tar.gz"
+      guard
+        let downloadURL = URL(
+          string: "https://nodejs.org/dist/v\(MCPManagedToolLayout.nodeVersion)/\(archiveName)"
+        )
+      else {
+        throw HexManagedToolInstallerError.invalidDownload
+      }
+      let temporaryRoot = fileManager.temporaryDirectory.appendingPathComponent(
+        "HexNode-\(UUID().uuidString)",
+        isDirectory: true
+      )
+      try createPrivateDirectory(temporaryRoot)
+      defer { try? fileManager.removeItem(at: temporaryRoot) }
+      let archiveURL = temporaryRoot.appendingPathComponent(archiveName)
+      try await download(downloadURL, to: archiveURL, expectedSHA256: Self.nodeArchiveSHA256)
+      try await validateArchive(archiveURL)
+      try await extractArchive(archiveURL, to: temporaryRoot)
+      let extractedURL = temporaryRoot.appendingPathComponent(
+        "node-v\(MCPManagedToolLayout.nodeVersion)-darwin-arm64",
+        isDirectory: true
+      )
+      guard isSafeExecutable(extractedURL.appendingPathComponent("bin/node")) else {
+        throw HexManagedToolInstallerError.invalidInstallation
+      }
+      try installStagedDirectory(
+        extractedURL,
+        at: layout.nodeExecutableURL.deletingLastPathComponent().deletingLastPathComponent()
+      )
     #else
       throw HexManagedToolInstallerError.unsupportedArchitecture
     #endif
-    guard
-      let downloadURL = URL(
-        string: "https://nodejs.org/dist/v\(MCPManagedToolLayout.nodeVersion)/\(archiveName)"
-      )
-    else {
-      throw HexManagedToolInstallerError.invalidDownload
-    }
-    let temporaryRoot = fileManager.temporaryDirectory.appendingPathComponent(
-      "HexNode-\(UUID().uuidString)",
-      isDirectory: true
-    )
-    try createPrivateDirectory(temporaryRoot)
-    defer { try? fileManager.removeItem(at: temporaryRoot) }
-    let archiveURL = temporaryRoot.appendingPathComponent(archiveName)
-    try await download(downloadURL, to: archiveURL, expectedSHA256: Self.nodeArchiveSHA256)
-    try await validateArchive(archiveURL)
-    try await extractArchive(archiveURL, to: temporaryRoot)
-    let extractedURL = temporaryRoot.appendingPathComponent(
-      "node-v\(MCPManagedToolLayout.nodeVersion)-darwin-arm64",
-      isDirectory: true
-    )
-    guard isSafeExecutable(extractedURL.appendingPathComponent("bin/node")) else {
-      throw HexManagedToolInstallerError.invalidInstallation
-    }
-    try installStagedDirectory(
-      extractedURL,
-      at: layout.nodeExecutableURL.deletingLastPathComponent().deletingLastPathComponent()
-    )
   }
 
   private func installScreenControl() async throws {
