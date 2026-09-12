@@ -10,7 +10,28 @@ struct GatewayExecutableIdentityTests {
   func currentProcessMatchesItsUnreplacedExecutable() throws {
     let url = try #require(Bundle.main.executableURL)
     let running = try #require(GatewayExecutableIdentity.runningExecutableID)
-    #expect(try GatewayExecutableIdentity.executableID(at: url) == running)
+    if let diskID = try GatewayExecutableIdentity.executableID(at: url) {
+      #expect(diskID == running)
+    } else {
+      // Apple's Swift test launcher can be universal; production gateway artifacts are thin.
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        UUID().uuidString)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let thinURL = directory.appendingPathComponent("runner")
+      let lipo = Process()
+      lipo.executableURL = URL(fileURLWithPath: "/usr/bin/lipo")
+      #if arch(arm64)
+        let architecture = "arm64"
+      #else
+        let architecture = "x86_64"
+      #endif
+      lipo.arguments = [url.path, "-extract_family", architecture, "-output", thinURL.path]
+      try lipo.run()
+      lipo.waitUntilExit()
+      try #require(lipo.terminationStatus == 0)
+      #expect(try GatewayExecutableIdentity.executableID(at: thinURL) == running)
+    }
     #expect(GatewayExecutableIdentity.runningImageID(named: url.lastPathComponent) == running)
     #expect(GatewayExecutableIdentity.runningImageID(named: "Hex-nonexistent-image.dylib") == nil)
   }

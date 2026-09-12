@@ -59,6 +59,11 @@ Before making the destination repository public:
 - Protect the default branch, require review/checks, and enable available secret-scanning protections.
 - Describe the release as an experimental source alpha with the current setup and runtime limitations.
 
+The installed-Xcode bridge integration test is opt-in: run `HEX_TEST_INSTALLED_XCODE=1 ./script/test.sh`
+on a Mac with an Apple-signed, physical `/Applications/Xcode.app` installation. Runner installations
+that use a symlink at that path intentionally do not satisfy the runtime trust boundary.
+The remaining bridge security tests run in CI.
+
 The CI package job requires a compatible full Xcode installation on the macOS runner. Signed app
 verification remains a local release check because contributor signing credentials are not supplied
 to pull-request jobs. Do not upload certificates or profiles just to make untrusted PR builds sign.

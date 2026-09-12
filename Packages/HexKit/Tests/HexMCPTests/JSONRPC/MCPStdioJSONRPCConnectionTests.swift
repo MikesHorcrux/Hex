@@ -467,7 +467,10 @@ struct MCPStdioJSONRPCConnectionTests {
     #expect(FileManager.default.fileExists(atPath: snapshotRoot.path))
   }
 
-  @Test("Builds the installed Xcode bridge closure without launching it")
+  @Test(
+    "Builds the installed Xcode bridge closure without launching it",
+    .enabled(if: ProcessInfo.processInfo.environment["HEX_TEST_INSTALLED_XCODE"] == "1")
+  )
   func snapshotsInstalledXcodeBridgeRuntimeClosure() throws {
     let namespaceBasename = "hex-mcp-xcode-closure-\(UUID().uuidString)"
     let namespaceURL = URL(
