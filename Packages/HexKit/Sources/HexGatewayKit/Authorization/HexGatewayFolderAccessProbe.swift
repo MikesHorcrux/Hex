@@ -7,11 +7,11 @@ import HexIPC
 public struct HexGatewayFolderAccessProbe: Sendable {
   private let directory: URL
   private let agentBundle: URL
-  private let read: @Sendable (URL) -> GatewayFolderAccessStatus.Access
+  private let read: @Sendable (URL) -> GatewayFolderAccessMode
 
   public init(
     directory: URL, agentBundle: URL,
-    read: @escaping @Sendable (URL) -> GatewayFolderAccessStatus.Access = Self.readDirectory
+    read: @escaping @Sendable (URL) -> GatewayFolderAccessMode = Self.readDirectory
   ) {
     self.directory = directory
     self.agentBundle = agentBundle
@@ -28,7 +28,7 @@ public struct HexGatewayFolderAccessProbe: Sendable {
     ).validated()
   }
 
-  public static func readDirectory(_ directory: URL) -> GatewayFolderAccessStatus.Access {
+  public static func readDirectory(_ directory: URL) -> GatewayFolderAccessMode {
     guard let stream = opendir(directory.path) else { return access(for: errno) }
     defer { closedir(stream) }
     errno = 0
@@ -36,7 +36,7 @@ public struct HexGatewayFolderAccessProbe: Sendable {
     return access(for: errno)
   }
 
-  private static func access(for code: Int32) -> GatewayFolderAccessStatus.Access {
+  private static func access(for code: Int32) -> GatewayFolderAccessMode {
     switch code {
     case 0: .readable
     case EACCES, EPERM: .denied

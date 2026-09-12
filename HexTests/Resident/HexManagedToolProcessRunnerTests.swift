@@ -6,6 +6,19 @@ import Testing
 @Suite("Managed tool process runner")
 struct HexManagedToolProcessRunnerTests {
   @Test
+  func archiveExecutableUsesCanonicalSystemBinary() async throws {
+    let runner = HexManagedToolProcessRunner()
+    let result = try await runner.run(
+      executableURL: URL(fileURLWithPath: "/usr/bin/bsdtar"), arguments: ["--version"])
+    #expect(result.status == 0)
+    #expect(String(decoding: result.standardOutput, as: UTF8.self).contains("bsdtar"))
+    await #expect(throws: HexManagedToolInstallerError.self) {
+      _ = try await runner.run(
+        executableURL: URL(fileURLWithPath: "/usr/bin/tar"), arguments: ["--version"])
+    }
+  }
+
+  @Test
   func successfulCommandAcceptsEmptyStandardError() async throws {
     let result = try await HexManagedToolProcessRunner().run(
       executableURL: URL(fileURLWithPath: "/usr/bin/printf"),

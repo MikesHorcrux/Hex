@@ -9,6 +9,9 @@ public actor AgentRuntime {
   let contextEstimator: any AgentContextTokenEstimating
   let contextSummarizer: any AgentContextSummarizing
   let artifactWriter: (any ArtifactWriting)?
+  var boundaryAuthorizations: [AgentRunID: Task<AuthorizationDecision, any Error>] = [:]
+  var boundaryInferences: [AgentRunID: @Sendable () -> Void] = [:]
+  var boundaryStops: Set<AgentRunID> = []
   var runArtifacts: [AgentRunID: [ArtifactReference]] = [:]
   // Immutable for each run: changing an earlier host message would invalidate provider replay.
   var runArtifactContextMessages: [AgentRunID: Message] = [:]
@@ -50,6 +53,7 @@ public actor AgentRuntime {
     }
     defer {
       activeRunIDs.remove(request.runID)
+      boundaryStops.remove(request.runID)
       authorizationScopeRunIDs.remove(request.runID)
       runsWithStartedTools.remove(request.runID)
       runArtifacts.removeValue(forKey: request.runID)

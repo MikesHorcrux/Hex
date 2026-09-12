@@ -27,11 +27,16 @@ struct WorkspaceFileMetadataSnapshot {
   // Extended ACLs and non-owner-safe flags can make a rejected temporary file impossible to
   // dispose of. They are detected and rejected before commit creates that file.
   var permitsAtomicReplacement: Bool {
-    let safelyReapplicableFlags = UInt32(UF_NODUMP | UF_OPAQUE | UF_HIDDEN)
+    // UF_TRACKED is document-ID bookkeeping, not an immutability or access restriction.
+    // Preserve it on replacement just like the other owner-reapplicable flags.
+    let safelyReapplicableFlags = UInt32(UF_NODUMP | UF_OPAQUE | UF_HIDDEN | UF_TRACKED)
     return accessControlList == nil && flags & ~safelyReapplicableFlags == 0
   }
 
   init(descriptor: Int32) throws {
+    // First access to privacy-managed metadata can update ctime. Establish access before
+    // taking the baseline; the actual snapshot below still requires stable status throughout.
+    _ = try Self.readExtendedAttributes(from: descriptor)
     var beforeStatus = stat()
     guard
       fstat(descriptor, &beforeStatus) == 0,
@@ -204,6 +209,15 @@ struct WorkspaceFileMetadataSnapshot {
       guard let name = String(data: Data(encodedName), encoding: .utf8) else {
         throw WorkspaceFileSystemError.ioFailure
       }
+      // macOS adds or updates this access bookkeeping when a file is linked into or opened
+      // inside a protected folder. Leave it intact on disk and let the OS manage it rather
+      // than treating it as editable metadata to compare or copy during atomic publication.
+      if name == "com.apple.macl" { continue }
+      // decmpfs describes the filesystem's compression representation, not user metadata.
+      // Publication can add/remove it even while logical bytes and flags remain unchanged.
+      // Do not copy a prior representation onto newly written bytes or compare it as metadata;
+      // content hashes, inode/status checks, and the compressed/dataless flag rejection remain.
+      if name == "com.apple.decmpfs" { continue }
       let valueByteCount = name.withCString { namePointer in
         fgetxattr(descriptor, namePointer, nil, 0, 0, 0)
       }

@@ -16,6 +16,8 @@ struct MarkdownMessageView: View, Equatable {
         rendered(block)
       }
     }
+    .font(.system(size: 15))
+    .lineSpacing(3)
     .textSelection(.enabled)
   }
 
@@ -30,7 +32,7 @@ struct MarkdownMessageView: View, Equatable {
 
     case .paragraph(let text):
       Text(inlineMarkdown(text))
-        .font(.body)
+        .font(.system(size: 15))
         .fixedSize(horizontal: false, vertical: true)
 
     case .unorderedListItem(let text):

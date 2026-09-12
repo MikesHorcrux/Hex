@@ -31,26 +31,39 @@ public struct AgentContextPlanner: Sendable {
     tools: [ToolDefinition],
     model: ModelDescriptor,
     outputReserveTokens: Int,
-    previousProviderResponseID: String? = nil
+    previousProviderResponseID: String? = nil,
+    maximumPlanningWindowTokens: Int? = nil,
+    allowLatestClosedExchangeCompaction: Bool = false
   ) throws -> AgentContextPlan {
     guard model.contextWindow.map({ $0 > 0 }) ?? true,
       model.maxOutputTokens.map({ $0 > 0 }) ?? true
     else { throw AgentContextPlanningError.invalidModelMetadata }
     guard outputReserveTokens > 0 else { throw AgentContextPlanningError.invalidOutputReserve }
+    guard maximumPlanningWindowTokens.map({ $0 > 0 }) ?? true else {
+      throw AgentContextPlanningError.invalidConfiguration
+    }
     let layout = try exchangeLayout(pinnedMessages: pinnedMessages, messages: messages)
-    let window = model.contextWindow ?? fallbackContextWindow
+    let estimator = ModelBoundAgentContextTokenEstimator(base: self.estimator, model: model)
+    // A caller may plan against a smaller working budget, never enlarge the model's window.
+    let window = min(
+      model.contextWindow ?? fallbackContextWindow, maximumPlanningWindowTokens ?? Int.max)
     let pinnedTokens: Int
     let messageCosts: [Int]
     let toolTokens: Int
     do {
-      pinnedTokens = try sum(pinnedMessages.map { try estimatedTokens($0) })
-      messageCosts = try messages.map { try estimatedTokens($0) }
+      pinnedTokens = try sum(
+        pinnedMessages.map { try validatedEstimate(estimator.estimateTokens(in: $0)) })
+      messageCosts = try messages.map { try validatedEstimate(estimator.estimateTokens(in: $0)) }
       toolTokens = try sum(tools.map { try validatedEstimate(estimator.estimateTokens(in: $0)) })
     } catch AgentContextPlanningError.imageCostUnavailable {
       return .unestimated(.imageCostUnavailable)
     }
     let historyTokens = try sum(messageCosts)
-    let protectedHistoryTokens = try sum(messageCosts[layout.protectedStart...])
+    // A fresh user request can make the previous whole exchange eligible for a checkpoint.
+    // This explicit fallback never includes the latest user exchange or an active continuation.
+    let protectedStart =
+      allowLatestClosedExchangeCompaction ? layout.latestUserIndex : layout.protectedStart
+    let protectedHistoryTokens = try sum(messageCosts[protectedStart...])
     let fixedTokens = try sum([pinnedTokens, toolTokens, outputReserveTokens, safetyMarginTokens])
     let total = try sum([fixedTokens, historyTokens])
     let protectedTotal = try sum([fixedTokens, protectedHistoryTokens])
@@ -78,7 +91,7 @@ public struct AgentContextPlanner: Sendable {
     }
 
     var removedTokens = 0
-    for exchange in layout.closedExchanges where exchange.upperBound <= layout.protectedStart {
+    for exchange in layout.closedExchanges where exchange.upperBound <= protectedStart {
       removedTokens = try sum([removedTokens, try sum(messageCosts[exchange])])
       let retainedTokens = historyTokens - removedTokens
       if try sum([fixedTokens, retainedTokens, summaryReserveTokens]) <= window {
@@ -93,14 +106,8 @@ public struct AgentContextPlanner: Sendable {
     return .protectedOverflow(budget, reason: .protectedContext)
   }
 
-  private struct ExchangeLayout: Sendable {
-    let closedExchanges: [Range<Int>]
-    let protectedStart: Int
-    let hasOpenToolChain: Bool
-  }
-
   private func exchangeLayout(pinnedMessages: [Message], messages: [Message]) throws
-    -> ExchangeLayout
+    -> AgentContextPlannerExchangeLayout
   {
     var messageIDs = Set<MessageID>()
     for message in pinnedMessages {
@@ -177,9 +184,10 @@ public struct AgentContextPlanner: Sendable {
     }
     if endsWithFinalAssistant && pendingCalls.isEmpty { closed.append(start..<messages.count) }
     let protectedStart = min(latestUserIndex, closed.last?.lowerBound ?? latestUserIndex)
-    return ExchangeLayout(
+    return AgentContextPlannerExchangeLayout(
       closedExchanges: closed,
       protectedStart: protectedStart,
+      latestUserIndex: latestUserIndex,
       hasOpenToolChain: hasOpenToolChain || !pendingCalls.isEmpty
     )
   }
@@ -193,10 +201,6 @@ public struct AgentContextPlanner: Sendable {
         break
       }
     }
-  }
-
-  private func estimatedTokens(_ message: Message) throws -> Int {
-    try validatedEstimate(estimator.estimateTokens(in: message))
   }
 
   private func validatedEstimate(_ estimate: Int) throws -> Int {

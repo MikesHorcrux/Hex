@@ -10,7 +10,7 @@ public struct MCPManagedToolLayout: Equatable, Sendable {
   public static let nodeVersion = "24.20.0"
   public static let playwrightVersion = "0.0.80"
   public static let playwrightBrowserRevision = "1243"
-  public static let peekabooVersion = "4.2.2"
+  public static let peekabooVersion = "4.3.3"
 
   public let rootURL: URL
 
@@ -76,7 +76,7 @@ public struct MCPManagedToolLayout: Equatable, Sendable {
 
   public var peekabooExecutableURL: URL {
     peekabooInstallationURL
-      .appendingPathComponent("PeekabooCLI.app", isDirectory: true)
+      .appendingPathComponent("HexScreenControlRuntime.app", isDirectory: true)
       .appendingPathComponent("Contents/MacOS/peekaboo", isDirectory: false)
   }
 

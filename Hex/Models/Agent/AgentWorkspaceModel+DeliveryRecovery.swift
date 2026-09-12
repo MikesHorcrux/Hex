@@ -83,7 +83,12 @@ extension AgentWorkspaceModel {
   }
 
   func isAutomaticallyRecoverableDeliveryFailure(_ error: any Error) -> Bool {
-    guard let failure = error as? GatewayFailure, failure.isRetryable else { return false }
+    guard let failure = error as? GatewayFailure else { return false }
+    // Repeating an expired in-memory cursor cannot succeed, so the gateway correctly marks that
+    // request non-retryable. Recover its durable prefix instead, including when initial messages
+    // filled the replay window before the app could attach. This never repeats run admission.
+    if failure.code == .replayUnavailable { return true }
+    guard failure.isRetryable else { return false }
     switch failure.code {
     case .consumerTooSlow, .notConnected, .staleSession, .transportUnavailable, .disconnected,
       .producerEndedWithoutTerminalEvent, .replayUnavailable:

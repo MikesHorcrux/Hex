@@ -21,7 +21,8 @@ extension AgentConversation {
       }
       exchanges = Array(exchanges.prefix(index))
     }
-    let allowedRuns = Set(exchanges.map(\.runID))
+    let durableRuns = (artifactSources ?? []).map(\.runID).filter { $0 != requestRunID }
+    let allowedRuns = Set(exchanges.map(\.runID) + durableRuns)
     let allNative = history.exchanges.flatMap(\.messages).flatMap(\.content)
       .flatMap { content -> [ArtifactReference] in
         if case .toolResult(let result) = content { return result.artifacts }
@@ -48,6 +49,11 @@ extension AgentConversation {
     // A valid source call remains in native history even when its result never reached the next
     // messageAppended event. This includes a cancelled process's committed partial capture.
     for reference in known.values {
+      if artifactSources?.contains(where: {
+        $0.runID == reference.runID && $0.toolCallID == reference.toolCallID
+      }) == true {
+        continue
+      }
       guard let callID = reference.toolCallID,
         let owner = history.exchanges.first(where: { $0.runID == reference.runID }),
         owner.messages.flatMap(\.content).contains(where: { part in

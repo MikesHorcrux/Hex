@@ -9,7 +9,8 @@ struct AgentStreamingTextView: View, Equatable {
     VStack(alignment: .leading, spacing: 0) {
       ForEach(Array(AgentStreamingTextLayout.chunks(text).enumerated()), id: \.offset) { _, chunk in
         Text(verbatim: chunk)
-          .font(.body)
+          .font(.system(size: 15))
+          .lineSpacing(3)
           .fixedSize(horizontal: false, vertical: true)
       }
     }

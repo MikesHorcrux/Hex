@@ -6,9 +6,10 @@ extension AgentWorkspaceModel {
     guard let request = currentRunRequest,
       compaction.ownerRunID == request.runID,
       compaction.modelID == request.modelID,
-      compaction.sourceMessageIDs.count < request.initialMessages.count,
-      Array(request.initialMessages.prefix(compaction.sourceMessageIDs.count).map(\.id))
-        == compaction.sourceMessageIDs,
+      compaction.boundary == .completedToolBatch
+        || (compaction.sourceMessageIDs.count < request.initialMessages.count
+          && Array(request.initialMessages.prefix(compaction.sourceMessageIDs.count).map(\.id))
+            == compaction.sourceMessageIDs),
       let index = conversations.firstIndex(where: { $0.id == selectedConversationID }),
       var history = conversations[index].history
     else {
@@ -104,7 +105,7 @@ extension AgentWorkspaceModel {
     return true
   }
 
-  func updateHistoryOutcome(_ outcome: AgentConversationExchange.Outcome) {
+  func updateHistoryOutcome(_ outcome: AgentConversationExchangeOutcome) {
     guard let index = conversations.firstIndex(where: { $0.id == selectedConversationID }),
       var history = conversations[index].history,
       let exchangeIndex = history.exchanges.firstIndex(where: { $0.runID == currentRunID })

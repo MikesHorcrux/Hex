@@ -521,6 +521,11 @@ struct WorkspaceFileSystemTransactionRegressionTests {
   func durableReplacementDoesNotDependOnTheTransactionNamespacePath() async throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
+    let admissionDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "hex-isolated-transactions-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: admissionDirectory) }
+    let isolatedNamespace = try makeNamespace(
+      root: root, admissionDirectory: admissionDirectory, maximumSlotCount: 1)
     let destination = root.appending(path: "Sources/Committed.swift")
     try Data("original".utf8).write(to: destination)
     let movedNamespace = FileManager.default.temporaryDirectory.appending(
@@ -553,7 +558,8 @@ struct WorkspaceFileSystemTransactionRegressionTests {
           at: namespace,
           withIntermediateDirectories: false
         )
-      }
+      },
+      writeTransactionNamespace: isolatedNamespace
     )
     let initial = try await fileSystem.readTextFile(
       at: "Sources/Committed.swift",
@@ -716,7 +722,11 @@ struct WorkspaceFileSystemTransactionRegressionTests {
   func oneInjectedNamespaceIsReusableAcrossWorkspaceActors() async throws {
     let root = try makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
-    let namespace = try WorkspaceWriteTransactionNamespace(appropriateFor: root)
+    let admission = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "hex-shared-test-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: admission) }
+    let namespace = try makeNamespace(
+      root: root, admissionDirectory: admission, maximumSlotCount: 1)
     defer { try? FileManager.default.removeItem(at: namespace.directoryURL) }
     let firstFileSystem = try WorkspaceFileSystem(
       root: root,

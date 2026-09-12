@@ -20,11 +20,15 @@ extension AgentWorkspaceModel {
     do {
       let loadedArchive = try await conversationStore.load()
       didRestoreConversations = true
+      conversationPersistenceState.restoreFailed = false
       guard let archive = loadedArchive else {
         return
       }
 
       conversations = archive.conversations.map { conversation in
+        if conversationStore is any AgentPagedConversationStoring, conversation.history == nil {
+          return conversation
+        }
         var recovered = conversation
         // Materialize legacy provenance before the display clears its streaming marker. An old
         // partial draft must not become committed inference history after a selection or save.
@@ -38,6 +42,9 @@ extension AgentWorkspaceModel {
         }
         return recovered
       }
+      savedConversationSnapshots = Dictionary(
+        uniqueKeysWithValues: archive.conversations.map { ($0.id, $0) })
+      conversationListRevision &+= 1
       conversationPersistenceState.persistableConversations = Dictionary(
         uniqueKeysWithValues: archive.conversations.map { ($0.id, $0) })
       let restoredID = archive.selectedConversationID ?? orderedConversations.first?.id
@@ -49,6 +56,11 @@ extension AgentWorkspaceModel {
       selectedConversationID = conversation.id
       restoreComposerSelection(from: conversation)
       transcript = recoveredTranscript(conversation.transcript)
+      if let repository = conversationStore as? any AgentPagedConversationStoring {
+        let page = try await repository.earlierTranscript(conversation.id, before: nil)
+        olderTranscriptCursor = page.before
+        hasEarlierTranscript = page.before != nil
+      }
       activity = "Conversation history restored."
       restorePendingRun(from: conversation)
       scheduleRestoredRunRecovery()
@@ -62,7 +74,7 @@ extension AgentWorkspaceModel {
       transcript = []
       activity = "Saved conversation history is unavailable."
       errorMessage =
-        "Saved history could not be restored. Saving and new messages are paused to protect the original archive. Repair or move the archive, then restart Hex."
+        "Saved history could not be restored. Saving and new messages are paused to protect your history. Reconnect to retry loading it."
     }
   }
 
@@ -80,6 +92,9 @@ extension AgentWorkspaceModel {
     conversations.insert(conversation, at: 0)
     conversationPersistenceState.persistableConversations[conversation.id] = conversation
     selectedConversationID = conversation.id
+    conversationListRevision &+= 1
+    hasEarlierTranscript = false
+    olderTranscriptCursor = nil
     restoreComposerSelection(from: conversation)
     transcript = []
     resetRunStateForConversationSwitch()
@@ -91,6 +106,10 @@ extension AgentWorkspaceModel {
   }
 
   func selectConversation(_ id: UUID) {
+    if let repository = conversationStore as? any AgentPagedConversationStoring {
+      selectPagedConversation(id, repository: repository)
+      return
+    }
     guard !isRunActive else {
       errorMessage = "Finish or cancel the active run before switching conversations."
       return
@@ -115,6 +134,10 @@ extension AgentWorkspaceModel {
   }
 
   func deleteConversation(_ id: UUID) {
+    if let repository = conversationStore as? any AgentPagedConversationStoring {
+      deletePagedConversation(id, repository: repository)
+      return
+    }
     guard !isRunActive else {
       errorMessage = "Finish or cancel the active run before deleting a conversation."
       return
@@ -196,6 +219,7 @@ extension AgentWorkspaceModel {
   }
 
   func persistConversationArchive() {
+    guard chatWorkspace == nil else { return }
     guard !isReducingRunEvent, !isPreparingAdmission else { return }
     updateCurrentConversation()
     updatePendingRunCheckpoint()
@@ -237,7 +261,7 @@ extension AgentWorkspaceModel {
     }
     if conversationPersistenceState.restoreFailed {
       errorMessage =
-        "Saved history could not be restored. Saving and new messages are paused to protect the original archive. Repair or move the archive, then restart Hex."
+        "Saved history could not be restored. Saving and new messages are paused to protect your history. Reconnect to retry loading it."
       return false
     }
     if conversationStore != nil && (!didRestoreConversations || isRestoringConversations) {
@@ -253,7 +277,7 @@ extension AgentWorkspaceModel {
       return true
     } catch {
       errorMessage =
-        "This change cannot fit in saved history. Your draft and existing history are unchanged. Start a new conversation for a full transcript, or delete an old conversation to free storage. \(error.localizedDescription)"
+        "This conversation change could not be saved safely. Your draft and saved history are unchanged. \(error.localizedDescription)"
       return false
     }
   }
@@ -292,7 +316,7 @@ extension AgentWorkspaceModel {
     activity = "Some conversation output has not been saved."
   }
 
-  private func conversation(withID id: UUID) -> AgentConversation? {
+  func conversation(withID id: UUID) -> AgentConversation? {
     conversations.first(where: { $0.id == id })
   }
 
@@ -303,14 +327,14 @@ extension AgentWorkspaceModel {
     )
   }
 
-  private func restoreComposerSelection(from conversation: AgentConversation) {
+  func restoreComposerSelection(from conversation: AgentConversation) {
     let selection = conversation.composerSelection ?? defaultComposerSelection()
     rememberedComposerModelID = selection.modelID
     composerEffort = selection.effort
     rememberedComposerAuthorizationMode = selection.authorizationMode
   }
 
-  private func recoveredTranscript(_ items: [ConversationItem]) -> [ConversationItem] {
+  func recoveredTranscript(_ items: [ConversationItem]) -> [ConversationItem] {
     items.map { item in
       var recovered = item
       recovered.isStreaming = false
@@ -318,7 +342,7 @@ extension AgentWorkspaceModel {
     }
   }
 
-  private func resetRunStateForConversationSwitch() {
+  func resetRunStateForConversationSwitch() {
     currentRunID = nil
     currentInvocationID = nil
     currentRunRequest = nil

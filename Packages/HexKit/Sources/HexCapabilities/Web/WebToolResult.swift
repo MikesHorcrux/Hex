@@ -1,3 +1,4 @@
+import Foundation
 import HexCore
 
 enum WebToolResult {
@@ -12,6 +13,14 @@ enum WebToolResult {
       "body": .string(text),
       "is_truncated": .boolean(response.isTruncated),
     ]
+    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      output["text_available"] = .boolean(false)
+      output["recovery"] = .string(
+        response.isTruncated
+          ? "No readable text was extracted before the response byte limit. This is not evidence of the page's claims. Retry with a larger bounded max_bytes or inspect the rendered page with browser tools."
+          : "No readable text was extracted. This is not evidence of the page's claims. Inspect the rendered page with browser tools or use another source."
+      )
+    }
     if let contentType = response.contentType {
       output["content_type"] = .string(contentType)
     }

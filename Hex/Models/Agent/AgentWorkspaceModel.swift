@@ -17,6 +17,7 @@ final class AgentWorkspaceModel {
   private(set) var conversationSearchRevision: UInt64 = 0
   var selectedConversationID: UUID?
   var isRestoringConversations = false
+  var chatWorkspace: AgentChatWorkspaceModel?
   var draft = ""
   var modelID: String {
     didSet {
@@ -58,6 +59,12 @@ final class AgentWorkspaceModel {
   @ObservationIgnored var archiveWriteWaiters: [UInt64: CheckedContinuation<Bool, Never>] = [:]
   @ObservationIgnored var archiveRevision: UInt64 = 0
   @ObservationIgnored var savedArchiveRevision: UInt64 = 0
+  @ObservationIgnored var savedConversationSnapshots: [UUID: AgentConversation] = [:]
+  var isLoadingConversation = false
+  var olderTranscriptCursor: Int64?
+  var hasEarlierTranscript = false
+  var isViewingEarlierTranscript = false
+  var conversationListRevision: UInt64 = 0
   var conversationSaveError: String?
   @ObservationIgnored var isReducingRunEvent = false
   @ObservationIgnored var isPreparingAdmission = false
@@ -93,6 +100,12 @@ final class AgentWorkspaceModel {
     defaultAuthorizationMode: HexAuthorizationMode = .askEveryTime
   ) {
     self.client = client
+    if let taskClient = client as? any HexGatewayTaskClient,
+      let storage = client as? any ConversationStorage
+    {
+      chatWorkspace = AgentChatWorkspaceModel(
+        client: client, taskClient: taskClient, storage: storage)
+    }
     self.modelID = modelID
     self.conversationStore = conversationStore
     self.requiresConversationPersistence = requiresConversationPersistence
@@ -177,7 +190,9 @@ final class AgentWorkspaceModel {
   }
 
   var isRunActive: Bool {
-    if runTask != nil || isRecoveringRun || isPreparingAdmission { return true }
+    if runTask != nil || isRecoveringRun || isPreparingAdmission || isLoadingConversation {
+      return true
+    }
     return switch runState {
     case .starting, .running, .waitingForAuthorization, .cancelling:
       true
@@ -254,6 +269,10 @@ final class AgentWorkspaceModel {
       }
       activity = "Ready for a prompt."
       await refreshAvailableModels()
+      if chatWorkspace == nil, usesPagedConversations, conversationPersistenceState.restoreFailed {
+        didRestoreConversations = false
+        await restoreConversationHistory()
+      }
       scheduleRestoredRunRecovery()
     } catch is CancellationError {
       connectionState = .disconnected
@@ -414,6 +433,14 @@ final class AgentWorkspaceModel {
   }
 
   func send() {
+    if isViewingEarlierTranscript, !isRunActive {
+      Task { [weak self] in
+        guard let self else { return }
+        await loadLatestTranscript()
+        if !isViewingEarlierTranscript { send() }
+      }
+      return
+    }
     let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard connectionState == .connected else {
       errorMessage = "Connect to the gateway before sending a prompt."
@@ -465,7 +492,7 @@ final class AgentWorkspaceModel {
       selectedModelID: selectedModelID)
   }
 
-  private var resolvedComposerModelID: String {
+  var resolvedComposerModelID: String {
     selectedComposerModelID ?? modelID.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 

@@ -13,7 +13,7 @@ struct HexSettingsView: View {
   let route: HexGatewayRoute
   let suppressAutomaticRefresh: Bool
 
-  @State private var selection = HexSettingsSection.general
+  @AppStorage("hex.settings.section") private var selection = HexSettingsSection.general
   @AppStorage("hex.onboarding.completed.v1") private var hasCompletedOnboarding = false
 
   var body: some View {

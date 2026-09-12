@@ -8,11 +8,6 @@ public actor CompositeToolExecutor: ToolExecutor {
   private static let maximumExecutors = 32
   private static let maximumTools = 4_096
 
-  private struct DiscoverySnapshot: Sendable {
-    let executorIndex: Int
-    let definitions: [ToolDefinition]
-  }
-
   private let executors: [any ToolExecutor]
   private var routes: [String: Int] = [:]
 
@@ -27,20 +22,20 @@ public actor CompositeToolExecutor: ToolExecutor {
     try Task.checkCancellation()
     let executors = self.executors
     let snapshots = try await withThrowingTaskGroup(
-      of: DiscoverySnapshot.self,
-      returning: [DiscoverySnapshot].self
+      of: CompositeToolExecutorDiscoverySnapshot.self,
+      returning: [CompositeToolExecutorDiscoverySnapshot].self
     ) { group in
       for (index, executor) in executors.enumerated() {
         group.addTask {
           try Task.checkCancellation()
-          return DiscoverySnapshot(
+          return CompositeToolExecutorDiscoverySnapshot(
             executorIndex: index,
             definitions: try await executor.availableTools()
           )
         }
       }
 
-      var snapshots: [DiscoverySnapshot] = []
+      var snapshots: [CompositeToolExecutorDiscoverySnapshot] = []
       snapshots.reserveCapacity(executors.count)
       for try await snapshot in group {
         snapshots.append(snapshot)

@@ -31,7 +31,7 @@ extension SQLiteHexHeartbeatStore {
         highWater = value
         before = value + 1
       }
-      var bindings: [SQLiteHeartbeatConnection.Value] = [.integer(highWater), .integer(before)]
+      var bindings: [SQLiteHeartbeatConnectionValue] = [.integer(highWater), .integer(before)]
       var query = Self.receiptColumns + " WHERE sequence<=? AND sequence<?"
       if let scheduleID {
         query += " AND schedule_id=?"
@@ -92,7 +92,7 @@ extension SQLiteHexHeartbeatStore {
     }
   }
 
-  func decodeReceiptRow(_ row: [SQLiteHeartbeatConnection.Value]) throws -> (
+  func decodeReceiptRow(_ row: [SQLiteHeartbeatConnectionValue]) throws -> (
     Int64, HexHeartbeatOccurrenceReceipt
   ) {
     guard row.count == 8, case .integer(let sequence) = row[0], sequence > 0,
@@ -114,7 +114,7 @@ extension SQLiteHexHeartbeatStore {
     return (sequence, receipt)
   }
 
-  private func optionalText(_ value: SQLiteHeartbeatConnection.Value) throws -> String? {
+  private func optionalText(_ value: SQLiteHeartbeatConnectionValue) throws -> String? {
     switch value {
     case .null: nil
     case .text(let text): text
@@ -122,7 +122,7 @@ extension SQLiteHexHeartbeatStore {
     }
   }
 
-  private func optionalReal(_ value: SQLiteHeartbeatConnection.Value) throws -> Double? {
+  private func optionalReal(_ value: SQLiteHeartbeatConnectionValue) throws -> Double? {
     switch value {
     case .null: nil
     case .real(let number): number

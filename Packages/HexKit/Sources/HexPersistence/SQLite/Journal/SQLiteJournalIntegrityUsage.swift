@@ -1,4 +1,4 @@
-struct SQLiteJournalIntegrityUsage: Equatable, Sendable {
+struct SQLiteJournalIntegrityUsage: Codable, Equatable, Sendable {
   static let zero = SQLiteJournalIntegrityUsage(
     runCount: 0,
     recordCount: 0,
@@ -30,20 +30,20 @@ struct SQLiteJournalIntegrityUsage: Equatable, Sendable {
       replacement: replacement.byteCount
     )
 
-    guard runCount <= configuration.maximumRecoveryRunCount else {
+    guard runCount <= configuration.auditRunLimit else {
       throw SQLiteAgentEventJournalError.integrityRunLimitExceeded(
-        maximum: configuration.maximumRecoveryRunCount
+        maximum: configuration.auditRunLimit
       )
     }
-    guard recordCount <= configuration.maximumRecoveryRecordCount else {
+    guard recordCount <= configuration.auditRecordLimit else {
       throw SQLiteAgentEventJournalError.integrityRecordLimitExceeded(
-        maximum: configuration.maximumRecoveryRecordCount
+        maximum: configuration.auditRecordLimit
       )
     }
-    guard byteCount <= configuration.maximumRecoveryBytes else {
+    guard byteCount <= configuration.auditByteLimit else {
       throw SQLiteAgentEventJournalError.integrityByteLimitExceeded(
         actual: byteCount,
-        maximum: configuration.maximumRecoveryBytes
+        maximum: configuration.auditByteLimit
       )
     }
 

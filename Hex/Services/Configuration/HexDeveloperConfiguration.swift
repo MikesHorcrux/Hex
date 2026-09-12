@@ -5,27 +5,6 @@ import Foundation
 /// diagnostics. The Debug app target is unsandboxed so this explicit workspace path can be opened
 /// directly; Release keeps its App Sandbox configuration.
 nonisolated struct HexDeveloperConfiguration: Equatable, Sendable {
-  struct LiveValues: Equatable, Sendable {
-    let apiKey: String
-    let modelID: String
-    let workspaceRoot: URL
-  }
-
-  enum ConfigurationError: Error, Equatable, LocalizedError, Sendable {
-    case missingVariables([String])
-    case invalidVariable(String)
-
-    var errorDescription: String? {
-      switch self {
-      case .missingVariables(let variables):
-        return
-          "Live developer mode is not configured. Set \(variables.joined(separator: ", ")) before running Hex."
-      case .invalidVariable(let variable):
-        return "The \(variable) developer setting is invalid. Check its value and try again."
-      }
-    }
-  }
-
   private nonisolated static let apiKeyVariable = "HEX_OPENAI_API_KEY"
   private nonisolated static let modelVariable = "HEX_OPENAI_MODEL"
   private nonisolated static let workspaceVariable = "HEX_WORKSPACE_ROOT"
@@ -83,7 +62,7 @@ nonisolated struct HexDeveloperConfiguration: Equatable, Sendable {
     return .developerInProcess
   }
 
-  nonisolated func liveValues() throws -> LiveValues {
+  nonisolated func liveValues() throws -> HexDeveloperConfigurationLiveValues {
     var missing: [String] = []
     if openAIAPIKey == nil {
       missing.append(Self.apiKeyVariable)
@@ -95,27 +74,27 @@ nonisolated struct HexDeveloperConfiguration: Equatable, Sendable {
       missing.append(Self.workspaceVariable)
     }
     guard missing.isEmpty else {
-      throw ConfigurationError.missingVariables(missing)
+      throw HexDeveloperConfigurationError.missingVariables(missing)
     }
 
     guard let apiKey = openAIAPIKey, Self.isPrintableASCII(apiKey) else {
-      throw ConfigurationError.invalidVariable(Self.apiKeyVariable)
+      throw HexDeveloperConfigurationError.invalidVariable(Self.apiKeyVariable)
     }
     guard let modelID = openAIModel,
       Self.isPrintableASCII(modelID),
       modelID.utf8.count <= 512
     else {
-      throw ConfigurationError.invalidVariable(Self.modelVariable)
+      throw HexDeveloperConfigurationError.invalidVariable(Self.modelVariable)
     }
     guard let workspaceRoot,
       workspaceRoot.isFileURL,
       workspaceRoot.path.hasPrefix("/"),
       !workspaceRoot.path.contains("\0")
     else {
-      throw ConfigurationError.invalidVariable(Self.workspaceVariable)
+      throw HexDeveloperConfigurationError.invalidVariable(Self.workspaceVariable)
     }
 
-    return LiveValues(
+    return HexDeveloperConfigurationLiveValues(
       apiKey: apiKey,
       modelID: modelID,
       workspaceRoot: workspaceRoot

@@ -2,28 +2,8 @@ import Foundation
 import HexCore
 
 nonisolated struct ConversationItem: Codable, Identifiable, Equatable, Sendable {
-  nonisolated enum Role: String, Codable, Sendable {
-    case user
-    case assistant
-    case tool
-    case event
-
-    var label: String {
-      switch self {
-      case .user:
-        "You"
-      case .assistant:
-        "Hex"
-      case .tool:
-        "Tool"
-      case .event:
-        "Run"
-      }
-    }
-  }
-
   let id: UUID
-  let role: Role
+  let role: ConversationItemRole
   var text: String
   let timestamp: Date
   var isStreaming: Bool
@@ -32,7 +12,7 @@ nonisolated struct ConversationItem: Codable, Identifiable, Equatable, Sendable 
 
   init(
     id: UUID = UUID(),
-    role: Role,
+    role: ConversationItemRole,
     text: String,
     timestamp: Date = Date(),
     isStreaming: Bool = false,
@@ -55,7 +35,7 @@ nonisolated struct ConversationItem: Codable, Identifiable, Equatable, Sendable 
   init(from decoder: any Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     id = try values.decode(UUID.self, forKey: .id)
-    role = try values.decode(Role.self, forKey: .role)
+    role = try values.decode(ConversationItemRole.self, forKey: .role)
     text = try values.decode(String.self, forKey: .text)
     timestamp = try values.decode(Date.self, forKey: .timestamp)
     isStreaming = try values.decode(Bool.self, forKey: .isStreaming)

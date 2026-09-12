@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import HexCore
 
@@ -39,7 +40,8 @@ public struct ProcessRunTool: HostTool, Sendable {
           ),
           "arguments": HostToolSchema.stringArray(
             "The exact argument vector passed to the executable; every argument is displayed in "
-              + "authorization, so never put secrets here.",
+              + "authorization, so never put secrets here. Control characters, including literal "
+              + "newlines and tabs, are rejected. Write multiline code to a workspace script file, then run that file.",
             maximumItems: configuration.maximumArguments,
             maximumItemLength: configuration.maximumArgumentBytes
           ),
@@ -153,6 +155,13 @@ public struct ProcessRunTool: HostTool, Sendable {
       // A cancelled or malformed authorization attempt must not leave an approval snapshot that a
       // later retry could consume. The ledger operation itself is non-throwing and actor-owned.
       await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
+      if error as? ProcessExecutionError == .invalidRequest {
+        try Task.checkCancellation()
+        // Invalid host-injected configuration must never become model argument feedback.
+        try ProcessExecutionEnvironment.validate(environment, configuration: configuration)
+        try rejectUnsafeArgumentScalars(call)
+        try rejectMissingExecutableReference(call)
+      }
       throw error
     }
   }
@@ -193,6 +202,39 @@ public struct ProcessRunTool: HostTool, Sendable {
       await authorizationLedger.remove(runID: context.runID, toolCallID: call.id)
       return try ProcessToolResult.failure(error, callID: call.id)
     }
+  }
+
+  private func rejectUnsafeArgumentScalars(_ call: ToolCall) throws {
+    guard case .array(let arguments) = call.arguments["arguments"] else { return }
+    guard
+      arguments.contains(where: { argument in
+        guard case .string(let text) = argument else { return false }
+        return !WorkspacePathScalarPolicy.isPromptSafe(text)
+      })
+    else { return }
+    throw ToolCallValidationError(
+      recovery:
+        "Process arguments cannot contain control or invisible formatting characters, including literal newlines and tabs. No process was started. Write multiline code to a workspace script file and run that file instead."
+    )
+  }
+
+  private func rejectMissingExecutableReference(_ call: ToolCall) throws {
+    guard case .string(let path) = call.arguments["executable"],
+      path.hasPrefix("/"), path.utf8.count <= 4_096,
+      !path.contains("\0"), WorkspacePathScalarPolicy.isPromptSafe(path)
+    else { return }
+    if let pointer = realpath(path, nil) {
+      free(pointer)
+      return
+    }
+    // Only a definitely absent model-selected executable is recoverable here. Permission,
+    // directory, identity, and other preflight failures retain the authorization failure path.
+    let code = errno
+    guard code == ENOENT || code == ENOTDIR else { return }
+    throw ToolCallValidationError(
+      recovery:
+        "The requested executable path does not exist. No process was started. Discover an installed executable and submit its absolute path; do not guess its location."
+    )
   }
 
   private func validatedRequest(
@@ -248,7 +290,7 @@ public struct ProcessRunTool: HostTool, Sendable {
   }
 
   private func identityValue(
-    _ identity: ProcessExecutionIdentity.FileIdentity
+    _ identity: ProcessFileIdentity
   ) -> JSONValue {
     .object([
       "device": .integer(Int64(exactly: identity.device) ?? Int64.max),

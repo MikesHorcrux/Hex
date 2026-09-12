@@ -2,16 +2,6 @@
 /// applying a compaction proposal, the caller must produce/validate a summary, account for its
 /// message envelope, preserve provenance, and replan the resulting fresh inference request.
 public enum AgentContextPlan: Equatable, Sendable {
-  public enum ProtectionReason: Equatable, Sendable {
-    case activeProviderContinuation
-    case openToolChain
-    case protectedContext
-  }
-
-  public enum UnestimatedReason: Equatable, Sendable {
-    case imageCostUnavailable
-  }
-
   case fits(AgentContextBudget)
   /// Ranges index only the original `messages`, never the separately pinned messages. The entire
   /// summary message (including its framing) must fit maximumSummaryTokens; this isn't an LLM
@@ -22,6 +12,6 @@ public enum AgentContextPlan: Equatable, Sendable {
     retainedRange: Range<Int>,
     maximumSummaryTokens: Int
   )
-  case protectedOverflow(AgentContextBudget, reason: ProtectionReason)
-  case unestimated(UnestimatedReason)
+  case protectedOverflow(AgentContextBudget, reason: AgentContextPlanProtectionReason)
+  case unestimated(AgentContextPlanUnestimatedReason)
 }

@@ -6,8 +6,8 @@ extension SystemMacAccessibilityController {
     root: AXUIElement,
     maximumDepth: Int,
     maximumElements: Int
-  ) throws -> (elements: [ObservedElement], isTruncated: Bool) {
-    var elements: [ObservedElement] = []
+  ) throws -> (elements: [SystemMacAccessibilityControllerObservedElement], isTruncated: Bool) {
+    var elements: [SystemMacAccessibilityControllerObservedElement] = []
     var windows: [(element: CFTypeRef, reference: String)] = []
     elements.reserveCapacity(maximumElements)
     let isTruncated = try MacAccessibilityTraversal.walk(
@@ -30,7 +30,9 @@ extension SystemMacAccessibilityController {
         let value = snapshot(
           element: element, path: path, childCount: childCount, windowReference: reference
         )
-        elements.append(ObservedElement(element: element, window: window, value: value))
+        elements.append(
+          SystemMacAccessibilityControllerObservedElement(
+            element: element, window: window, value: value))
       })
     return (elements, isTruncated)
   }

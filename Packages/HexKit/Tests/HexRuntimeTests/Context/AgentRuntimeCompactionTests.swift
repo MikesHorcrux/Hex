@@ -6,6 +6,188 @@ import Testing
 @Suite("Automatic runtime compaction")
 struct AgentRuntimeCompactionTests {
   @Test
+  func boundaryStopCancelsASummaryAndKeepsOriginalHistory() async {
+    let original = history()
+    let provider = provider(scripts: [.suspend])
+    let journal = RecordingEventJournal()
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider, executor: ScriptedToolExecutor(tools: []), journal: journal)
+    let request = RuntimeTestFixture.request(messages: original)
+    let task = Task { try await runtime.run(request) }
+    for _ in 0..<200 {
+      if await provider.requests().count == 1 { break }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await provider.requests().count == 1)
+    await runtime.stopAtBoundary(request.runID)
+    for _ in 0..<200 {
+      if await journal.events().contains(where: {
+        if case .runCancelled = $0 { true } else { false }
+      }) {
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    let events = await journal.events()
+    #expect(events.contains { if case .contextCompactionStarted = $0 { true } else { false } })
+    #expect(events.contains { if case .runCancelled = $0 { true } else { false } })
+    #expect(!events.contains { if case .contextCompacted = $0 { true } else { false } })
+    #expect(original.allSatisfy { events.contains(.messageAppended($0)) })
+    task.cancel()
+    do {
+      _ = try await task.value
+      Issue.record("Expected summary cancellation")
+    } catch is CancellationError {} catch { Issue.record("Unexpected error: \(error)") }
+  }
+
+  @Test
+  func priorLargeExchangeUsesBoundedSummaryBatchesBeforeResumingTheNewRequest() async throws {
+    let batches = (0..<5).flatMap { index -> [Message] in
+      let call = ToolCall(name: "inspect", arguments: [:])
+      return [
+        Message(role: .assistant, content: [.toolCall(call)]),
+        Message(
+          role: .tool,
+          content: [
+            .toolResult(
+              ToolResult(
+                toolCallID: call.id, status: .success,
+                output: .string("File \(index): " + String(repeating: "x", count: 1_500))))
+          ]),
+      ]
+    }
+    let original =
+      [Message(role: .user, content: [.text("Inspect the project")])]
+      + batches + [Message(role: .user, content: [.text("Continue with the design changes")])]
+    let provider = provider(
+      scripts: Array(
+        repeating: .events(
+          RuntimeTestFixture.textEvents("The files were inspected; design changes remain.")),
+        count: 8))
+    let journal = RecordingEventJournal()
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider, executor: ScriptedToolExecutor(tools: []), journal: journal)
+    _ = try await runtime.run(RuntimeTestFixture.request(messages: original))
+    let requests = await provider.requests()
+    #expect(requests.count > 2)
+    #expect(requests.last?.messages.last == original.last)
+    let events = await journal.events()
+    let checkpoint = try #require(
+      events.compactMap { event -> AgentContextCompaction? in
+        if case .contextCompacted(let value) = event { return value }
+        return nil
+      }.first)
+    #expect(checkpoint.sourceMessageIDs == original.dropLast().map(\.id))
+    #expect(checkpoint.inferenceCalls == requests.count - 1)
+    #expect(original.allSatisfy { events.contains(.messageAppended($0)) })
+  }
+
+  @Test
+  func followUpAfterOneOversizedAttemptCanResumeWithADurableCheckpoint() async throws {
+    let call = ToolCall(name: "echo", arguments: [:])
+    let receipt = ToolResult(
+      toolCallID: call.id, status: .success, output: .string(String(repeating: "x", count: 9_000)))
+    let original = [
+      Message(role: .user, content: [.text("Build my site")]),
+      Message(role: .assistant, content: [.toolCall(call)]),
+      Message(role: .tool, content: [.toolResult(receipt)]),
+      Message(role: .user, content: [.text("Continue and improve the contrast")]),
+    ]
+    let provider = provider(scripts: [.events(RuntimeTestFixture.textEvents())])
+    let journal = RecordingEventJournal()
+    let runtime = AgentRuntime(
+      inferenceProvider: provider, toolExecutor: ScriptedToolExecutor(tools: []),
+      authorizationProvider: ScriptedAuthorizationProvider(), journal: journal,
+      contextSummarizer: UsageSummarizer(reportedTokens: 1))
+    _ = try await runtime.run(RuntimeTestFixture.request(messages: original))
+    let inference = try #require(await provider.requests().first)
+    #expect(inference.messages.last == original.last)
+    #expect(inference.messages.count == 2)
+    #expect(inference.previousProviderResponseID == nil)
+    let events = await journal.events()
+    #expect(original.allSatisfy { events.contains(.messageAppended($0)) })
+    let checkpoint = try #require(
+      events.compactMap { event -> AgentContextCompaction? in
+        if case .contextCompacted(let value) = event { return value }
+        return nil
+      }.first)
+    #expect(checkpoint.sourceMessageIDs == original.prefix(3).map(\.id))
+    #expect(checkpoint.summaryMessage == inference.messages.first)
+    #expect(checkpoint.estimatedTokensAfter < checkpoint.estimatedTokensBefore)
+  }
+
+  @Test(arguments: [false, true])
+  func nearFullAdmissionCondensesOldHistoryAndKeepsTheNextFileReadIntact(
+    oneClosedExchange: Bool
+  ) async throws {
+    let original =
+      (oneClosedExchange
+        ? [
+          Message(role: .user, content: [.text("Build my site")]),
+          Message(role: .assistant, content: [.text(String(repeating: "x", count: 9_000))]),
+        ] : Array(history().prefix(8))) + [
+        Message(role: .user, content: [.text("Finish the current design")])
+      ]
+    let model = ModelDescriptor(
+      id: RuntimeTestFixture.modelID, providerID: RuntimeTestFixture.providerID,
+      displayName: "Working headroom", capabilities: RuntimeTestFixture.standardCapabilities,
+      contextWindow: 16_384, maxOutputTokens: 4_096)
+    let call = ToolCall(name: "echo", arguments: [:])
+    let file = ToolResult(
+      toolCallID: call.id, status: .success, output: .string(String(repeating: "x", count: 3_000)))
+    let provider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(), models: [model],
+      scripts: [
+        .events(RuntimeTestFixture.toolEvents([call])),
+        .events(RuntimeTestFixture.textEvents()),
+      ])
+    let journal = RecordingEventJournal()
+    let runtime = AgentRuntime(
+      inferenceProvider: provider,
+      toolExecutor: ScriptedToolExecutor(
+        tools: [RuntimeTestFixture.tool()], behaviors: [.result(file)]),
+      authorizationProvider: ScriptedAuthorizationProvider(), journal: journal,
+      contextSummarizer: UsageSummarizer(reportedTokens: 1))
+    _ = try await runtime.run(RuntimeTestFixture.request(messages: original))
+    let requests = await provider.requests()
+    #expect(requests.count == 2)
+    #expect(requests.first?.messages.contains(try #require(original.last)) == true)
+    #expect(
+      requests.last?.messages.contains(where: { $0.content.contains(.toolResult(file)) }) == true)
+    let events = await journal.events()
+    let compactions = events.compactMap { event -> AgentContextCompaction? in
+      if case .contextCompacted(let value) = event { return value }
+      return nil
+    }
+    #expect(compactions.count == 1)
+    #expect(compactions.first?.boundary == nil)
+    if oneClosedExchange {
+      #expect(compactions.first?.sourceMessageIDs == original.dropLast().map(\.id))
+    }
+    #expect(events.contains(.messageAppended(original[0])))
+  }
+
+  @Test
+  func headroomPreferenceDoesNotRejectAnIrreducibleRequestThatFits() async throws {
+    let original = Message(role: .user, content: [.text(String(repeating: "x", count: 10_000))])
+    let provider = ScriptedInferenceProvider(
+      descriptor: RuntimeTestFixture.descriptor(),
+      models: [
+        ModelDescriptor(
+          id: RuntimeTestFixture.modelID, providerID: RuntimeTestFixture.providerID,
+          displayName: "Working headroom", capabilities: RuntimeTestFixture.standardCapabilities,
+          contextWindow: 16_384, maxOutputTokens: 4_096)
+      ], scripts: [.events(RuntimeTestFixture.textEvents())])
+    let journal = RecordingEventJournal()
+    let runtime = RuntimeTestFixture.runtime(
+      provider: provider, executor: ScriptedToolExecutor(tools: [RuntimeTestFixture.tool()]),
+      journal: journal)
+    _ = try await runtime.run(RuntimeTestFixture.request(messages: [original]))
+    #expect(await provider.requests().first?.messages == [original])
+    #expect(try !containsEvent("contextCompacted", events: await journal.events()))
+  }
+
+  @Test
   func oversizedHistoryIsSummarizedBeforePrimaryInferenceWithoutDeletingOriginalEvents()
     async throws
   {

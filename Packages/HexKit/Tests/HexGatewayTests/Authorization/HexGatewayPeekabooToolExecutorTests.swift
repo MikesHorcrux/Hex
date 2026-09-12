@@ -18,9 +18,11 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(failure, "error") == .string("native_observation_failed"))
     #expect(field(failure, "dispatched") == .boolean(false))
     #expect(!failure.requiresUserAttention)
+    #expect(failure.executionOutcome == .completed)
     let blocked = try await wrapper.execute(
       call("click", ["on": .string("B1"), "hex_observation_id": oldToken]), in: context)
     #expect(field(blocked, "error") == .string("native_observation_required"))
+    #expect(blocked.executionOutcome == .completed)
     await base.setCaptureMode("ordinary")
     #expect(field(try await wrapper.execute(see(), in: context), "hex_observation_id") != nil)
     #expect(await base.calls.count == 3)
@@ -39,6 +41,7 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(refusal, "dispatched") == .boolean(false))
     #expect(field(refusal, "unsupported_arguments") == .array([.string("capture_focus")]))
     #expect(!refusal.requiresUserAttention)
+    #expect(refusal.executionOutcome == .completed)
     #expect(await base.calls.count == 1)
     let stale = try await wrapper.execute(
       call("click", ["on": .string("B1"), "hex_observation_id": priorToken]), in: context)
@@ -76,6 +79,46 @@ struct HexGatewayPeekabooToolExecutorTests {
     let repeated = try await wrapper.execute(action, in: context)
     #expect(field(repeated, "error") == .string("native_observation_required"))
     #expect(await base.calls.count == 2)
+  }
+
+  @Test
+  func unverifiedErrorReceiptAllowsObservationButNeverBlindReplay() async throws {
+    let base = Executor()
+    await base.setActionMode("delivered_error")
+    let wrapper = makeWrapper(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let token = try await observe(wrapper, context: context)
+    let action = call("click", ["on": .string("B1"), "hex_observation_id": token])
+    let result = try await wrapper.execute(action, in: context)
+    #expect(result.status == .failure)
+    #expect(field(result, "dispatched") == .boolean(true))
+    #expect(field(result, "outcome_verified") == .boolean(false))
+    #expect(field(result, "verification_required") == .boolean(true))
+    #expect(result.executionOutcome == .completed)
+    #expect(!result.requiresUserAttention)
+    #expect(result.content == [.text("Known helper receipt")])
+    let repeated = try await wrapper.execute(action, in: context)
+    #expect(field(repeated, "error") == .string("native_observation_required"))
+    #expect(await base.calls.count == 2)
+    #expect(field(try await wrapper.execute(see(), in: context), "hex_observation_id") != nil)
+  }
+
+  @Test
+  func foregroundInputRefusalExplainsSupportedActivationWithoutDispatch() async throws {
+    let base = Executor()
+    let wrapper = makeWrapper(base)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let result = try await wrapper.execute(
+      call("click", ["foreground": .boolean(true)]), in: context)
+    #expect(field(result, "error") == .string("native_foreground_unsupported"))
+    #expect(field(result, "dispatched") == .boolean(false))
+    #expect(!result.requiresUserAttention)
+    #expect(await base.calls.isEmpty)
+    guard case .string(let recovery) = field(result, "recovery") else {
+      Issue.record("Missing supported recovery route")
+      return
+    }
+    #expect(recovery.contains("mac_activate_application"))
   }
 
   @Test(arguments: [
@@ -144,6 +187,7 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(result.requiresUserAttention)
     #expect(field(result, "error") == .string("native_action_outcome_uncertain"))
     #expect(field(result, "dispatched") == .null)
+    #expect(result.executionOutcome == nil)
     if mode != "throw" { #expect(result.content == [.text("Known helper receipt")]) }
     _ = try await wrapper.execute(action, in: context)
     #expect(await base.calls.count == 2)
@@ -161,10 +205,13 @@ struct HexGatewayPeekabooToolExecutorTests {
     #expect(field(result, "dispatched") == .boolean(false))
     #expect(field(result, "outcome_verified") == .boolean(false))
     #expect(result.requiresUserAttention == (mode == "permission_denied"))
+    if mode != "confirmed_no_change" { #expect(result.executionOutcome == .completed) }
     if mode == "permission_denied" {
       #expect(field(result, "error") == .string("screen_permissions_required"))
     } else if mode == "target_unavailable" {
       #expect(field(result, "error") == .string("native_reference_stale"))
+      let recovery = try #require(field(result, "recovery"))
+      #expect(String(describing: recovery).contains("mac_activate_application"))
     } else {
       #expect(result.status == .success)
     }
@@ -389,11 +436,14 @@ struct HexGatewayPeekabooToolExecutorTests {
         if captureMode == "prose_only" { metadata = [:] }
         captureHook()
       }
-      if !capture, actionMode == "successful_unknown" { metadata = [:] }
+      if !capture, ["successful_unknown", "returned_error"].contains(actionMode) { metadata = [:] }
       let failure =
         !capture
-        && ["returned_error", "target_unavailable", "permission_denied", "contradictory_refusal"]
-          .contains(actionMode)
+        && [
+          "delivered_error", "returned_error", "target_unavailable", "permission_denied",
+          "contradictory_refusal",
+        ]
+        .contains(actionMode)
       return ToolResult(
         toolCallID: call.id, status: failure ? .failure : .success,
         output: .object([

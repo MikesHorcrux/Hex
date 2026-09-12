@@ -7,7 +7,9 @@ import HexCore
 /// Its configuration bounds client-side encoding and forwarding; the service independently enforces
 /// its own envelope, so a larger transport configuration never weakens service admission.
 public actor InProcessHexGatewayTransport: HexGatewayTransport, HexGatewayRunRecoveryTransport,
-  HexGatewayArtifactReadTransport, HexGatewayResidentControlTransport,
+  HexGatewayTaskTransport, HexGatewayConversationTransport, HexGatewayProcessSessionTransport,
+  HexGatewayArtifactReadTransport,
+  HexGatewayResidentControlTransport,
   HexGatewayToolServerControlTransport
 {
   private let service: HexGatewayService
@@ -121,6 +123,37 @@ public actor InProcessHexGatewayTransport: HexGatewayTransport, HexGatewayRunRec
     } catch is CancellationError { throw CancellationError() } catch {
       throw codec.canonicalFailure(from: error)
     }
+  }
+
+  public func taskOperation(_ request: GatewayTaskRequest, lease: GatewayTransportConnectionLease)
+    async throws -> GatewayTaskResponse
+  {
+    let sessionID = try requireSession(ownedBy: lease)
+    let response = try await service.taskOperation(codec.roundTrip(request), sessionID: sessionID)
+    _ = try requireSession(ownedBy: lease)
+    return try codec.roundTrip(response)
+  }
+
+  public func processSession(
+    _ request: GatewayProcessSessionRequest, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayProcessSessionResponse
+  {
+    let sessionID = try requireSession(ownedBy: lease)
+    let response = try await service.processSession(codec.roundTrip(request), sessionID: sessionID)
+    _ = try requireSession(ownedBy: lease)
+    return try codec.roundTrip(response)
+  }
+
+  public func conversationStorage(
+    _ request: ConversationStorageRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> ConversationStorageResponse {
+    let sessionID = try requireSession(ownedBy: lease)
+    let response = try await service.conversationStorage(
+      codec.roundTrip(request), sessionID: sessionID)
+    _ = try requireSession(ownedBy: lease)
+    return try codec.roundTrip(response)
   }
 
   public func readRunHistory(

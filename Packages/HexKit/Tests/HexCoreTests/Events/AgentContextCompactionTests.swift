@@ -28,6 +28,42 @@ struct AgentContextCompactionTests {
   }
 
   @Test
+  func activeProgressNamesItsTaskWithoutChangingLegacyCheckpointProjection() throws {
+    var object = try encodedObject(make())
+    object["boundary"] = "completedToolBatch"
+    let legacy = try JSONDecoder().decode(
+      AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(legacy.taskMessageID == nil)
+    #expect(
+      legacy.summaryMessage.content == [
+        .text(AgentContextCompaction.summaryLabel + legacy.summaryText)
+      ])
+    let goal = MessageID()
+    object["taskMessageID"] = goal.rawValue.uuidString
+    let current = try JSONDecoder().decode(
+      AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(current.taskMessageID == goal)
+    #expect(
+      current.summaryMessage.content == [
+        .text(AgentContextCompaction.activeSummaryLabel + current.summaryText)
+      ])
+    #expect(
+      try JSONDecoder().decode(AgentContextCompaction.self, from: JSONEncoder().encode(current))
+        == current)
+    object.removeValue(forKey: "boundary")
+    #expect(throws: (any Error).self) {
+      try JSONDecoder().decode(
+        AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+    object["boundary"] = "completedToolBatch"
+    object["taskMessageID"] = legacy.sourceMessageIDs[0].rawValue.uuidString
+    #expect(throws: (any Error).self) {
+      try JSONDecoder().decode(
+        AgentContextCompaction.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+  }
+
+  @Test
   func repeatedCompactionCanNameThePriorSummaryWithoutReusingItsIdentity() throws {
     let previous = try make()
     let next = try make(sources: [previous.summaryMessage.id, MessageID()])
@@ -72,19 +108,19 @@ struct AgentContextCompactionTests {
   func constructionEnforcesUsagePairAndBounds() throws {
     #expect(try make(reportedTokens: 0, inferenceCalls: 1).reportedTokens == 0)
     #expect(try make(reportedTokens: 1_000_000_000, inferenceCalls: 32).inferenceCalls == 32)
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 104)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(inferenceCalls: 1)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 1_000_000_001, inferenceCalls: 1)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 104, inferenceCalls: 0)
     }
-    #expect(throws: AgentContextCompaction.ValidationError.invalidUsage) {
+    #expect(throws: AgentContextCompactionValidationError.invalidUsage) {
       try make(reportedTokens: 104, inferenceCalls: 33)
     }
   }

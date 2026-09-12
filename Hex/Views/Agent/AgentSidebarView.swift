@@ -1,8 +1,12 @@
+import HexCore
 import Observation
 import SwiftUI
 
 struct AgentSidebarView: View {
   @Bindable var model: AgentWorkspaceModel
+  @State private var remoteIDs: [UUID] = []
+  @State private var remoteCursor: ConversationStorageCursor?
+  @State private var remoteLoading = false
   @State private var conversationToDelete: AgentConversation?
   @State private var conversationToRename: AgentConversation?
   @State private var filter: AgentConversationListFilter = .conversations
@@ -107,6 +111,11 @@ struct AgentSidebarView: View {
               .tag(conversation.id)
             }
           }
+          if model.usesPagedConversations, remoteCursor != nil {
+            Button("Load more conversations") { Task { await loadRemotePage(reset: false) } }
+              .disabled(remoteLoading)
+              .accessibilityIdentifier("loadMoreConversations")
+          }
         } header: {
           Text(filter.sectionTitle)
             .font(.caption2.weight(.bold))
@@ -125,7 +134,12 @@ struct AgentSidebarView: View {
       )
     }
     .background(HexBrandPalette.sidebarTint)
+    .task(id: remoteQueryKey) {
+      guard model.usesPagedConversations, model.conversationListRevision > 0 else { return }
+      await loadRemotePage(reset: true)
+    }
     .task(id: searchRequest) {
+      guard !model.usesPagedConversations else { return }
       let request = searchRequest
       guard !request.query.isEmpty else {
         searchError = nil
@@ -167,6 +181,37 @@ struct AgentSidebarView: View {
     }
   }
 
+  private var remoteQueryKey: String {
+    "\(filter.rawValue)|\(searchText)|\(model.conversationListRevision)"
+  }
+
+  private func loadRemotePage(reset: Bool) async {
+    let key = remoteQueryKey
+    remoteLoading = true
+    defer { if remoteQueryKey == key { remoteLoading = false } }
+    if reset {
+      remoteIDs = []
+      remoteCursor = nil
+    }
+    do {
+      if !searchText.isEmpty { try await Task.sleep(for: .milliseconds(180)) }
+      let page = try await model.queryConversationPage(
+        .init(
+          search: searchText,
+          archived: filter == .all ? nil : filter == .archived,
+          after: reset ? nil : remoteCursor))
+      try Task.checkCancellation()
+      guard remoteQueryKey == key else { return }
+      remoteIDs = reset ? page.ids : remoteIDs + page.ids.filter { !remoteIDs.contains($0) }
+      remoteCursor = page.next
+      searchError = nil
+    } catch is CancellationError {} catch {
+      if remoteQueryKey == key {
+        searchError = "Saved conversations could not be loaded. Try again."
+      }
+    }
+  }
+
   private var scopedConversations: [AgentConversation] {
     model.orderedConversations.filter(filter.includes)
   }
@@ -178,10 +223,15 @@ struct AgentSidebarView: View {
   }
 
   private var isSearching: Bool {
-    !searchRequest.query.isEmpty && completedSearchRequest != searchRequest
+    if model.usesPagedConversations { return remoteLoading && remoteIDs.isEmpty }
+    return !searchRequest.query.isEmpty && completedSearchRequest != searchRequest
   }
 
   private var visibleConversations: [AgentConversation] {
+    if model.usesPagedConversations {
+      let ids = Set(remoteIDs)
+      return scopedConversations.filter { ids.contains($0.id) }
+    }
     guard !searchRequest.query.isEmpty else { return scopedConversations }
     guard completedSearchRequest == searchRequest else { return [] }
     return scopedConversations.filter { searchMatches.contains($0.id) }

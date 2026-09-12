@@ -7,6 +7,90 @@ import Testing
 @Suite("Agent context planning")
 struct AgentContextPlannerTests {
   @Test
+  func explicitRecoveryCanCondenseThePreviousWholeExchangeAfterANewUserBoundary() throws {
+    let call = ToolCall(name: "probe", arguments: [:])
+    let history = [
+      user("Original task"), Message(role: .assistant, content: [.toolCall(call)]),
+      result(call), user("Continue with this correction"),
+    ]
+    let planner = try makePlanner()
+    let ordinary = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 50),
+      outputReserveTokens: 20)
+    guard case .protectedOverflow(_, .protectedContext) = ordinary else {
+      Issue.record("The default preference should retain the latest prior exchange")
+      return
+    }
+    let recovery = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 50),
+      outputReserveTokens: 20, allowLatestClosedExchangeCompaction: true)
+    guard case .requiresCompaction(let budget, let prefix, let retained, _) = recovery else {
+      Issue.record("Expected the prior exchange, including both tool halves, to be eligible")
+      return
+    }
+    #expect(prefix == 0..<3)
+    #expect(retained == 3..<4)
+    #expect(budget.protectedHistoryTokens == 10)
+  }
+
+  @Test
+  func recoveryNeverCondensesTheCurrentExchangeOrAProviderContinuation() throws {
+    let planner = try makePlanner()
+    let history = [user("Before"), assistant("Done"), user("Current request")]
+    let tooSmall = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 45),
+      outputReserveTokens: 20, allowLatestClosedExchangeCompaction: true)
+    guard case .protectedOverflow(_, .protectedContext) = tooSmall else {
+      Issue.record("Current request plus required reserves must remain protected")
+      return
+    }
+    let continuation = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 50),
+      outputReserveTokens: 20, previousProviderResponseID: "active",
+      allowLatestClosedExchangeCompaction: true)
+    guard case .protectedOverflow(_, .activeProviderContinuation) = continuation else {
+      Issue.record("Recovery must not rewrite a provider continuation")
+      return
+    }
+    let call = ToolCall(name: "probe", arguments: [:])
+    let active = try planner.plan(
+      pinnedMessages: [],
+      messages: history + [Message(role: .assistant, content: [.toolCall(call)]), result(call)],
+      tools: [], model: model(window: 60), outputReserveTokens: 20,
+      allowLatestClosedExchangeCompaction: true)
+    guard case .protectedOverflow(_, .openToolChain) = active else {
+      Issue.record("Current tool work must not be condensed by initial admission")
+      return
+    }
+  }
+
+  @Test
+  func workingWindowCannotEnlargeTheModelOrWeakenProtectedHistory() throws {
+    let history = [user("old"), assistant("old"), user("recent"), assistant("recent"), user("now")]
+    let planner = try makePlanner()
+    let enlarged = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 70),
+      outputReserveTokens: 20, maximumPlanningWindowTokens: 1_000)
+    guard case .requiresCompaction(let budget, _, _, _) = enlarged else {
+      Issue.record("A requested planning cap must not enlarge the provider window")
+      return
+    }
+    #expect(budget.contextWindowTokens == 70)
+    let reduced = try planner.plan(
+      pinnedMessages: [], messages: history, tools: [], model: model(window: 70),
+      outputReserveTokens: 20, maximumPlanningWindowTokens: 50)
+    guard case .protectedOverflow(_, reason: .protectedContext) = reduced else {
+      Issue.record("A smaller planning window must still preserve protected history")
+      return
+    }
+    #expect(throws: AgentContextPlanningError.invalidConfiguration) {
+      _ = try planner.plan(
+        pinnedMessages: [], messages: history, tools: [], model: model(window: 70),
+        outputReserveTokens: 20, maximumPlanningWindowTokens: 0)
+    }
+  }
+
+  @Test
   func accountsForPinnedHistoryToolsOutputAndMarginWithoutChangingMessages() throws {
     let planner = try makePlanner()
     let history = [user("old"), assistant("reply"), user("latest")]

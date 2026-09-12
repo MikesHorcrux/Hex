@@ -7,22 +7,7 @@ import Synchronization
 /// consumes the pending request, so connection invalidation cannot close the session between those
 /// operations. A closed gate rejects any commit that has not started yet.
 public final class HexGatewayAuthorizationCommitGate: Sendable {
-  public enum GateError: Error, Equatable, LocalizedError, Sendable {
-    case closed
-
-    public var errorDescription: String? {
-      switch self {
-      case .closed:
-        "The authorization connection is no longer valid."
-      }
-    }
-  }
-
-  private struct State: Sendable {
-    var isValid = true
-  }
-
-  private let storage = Mutex(State())
+  private let storage = Mutex(HexGatewayAuthorizationCommitGateState())
 
   public init() {}
 
@@ -43,7 +28,7 @@ public final class HexGatewayAuthorizationCommitGate: Sendable {
   ) throws -> Result {
     try storage.withLock { state in
       guard state.isValid else {
-        throw GateError.closed
+        throw HexGatewayAuthorizationCommitGateError.closed
       }
       return try operation()
     }

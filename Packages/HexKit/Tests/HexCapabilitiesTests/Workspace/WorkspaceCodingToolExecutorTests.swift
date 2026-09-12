@@ -6,6 +6,42 @@ import Testing
 @Suite("Workspace coding tool executor")
 struct WorkspaceCodingToolExecutorTests {
   @Test
+  func malformedRevisionIsRecoverableBeforeAuthorizationAndCorrectionPreservesGuard() async throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.container) }
+    let fileSystem = try WorkspaceFileSystem(root: fixture.root)
+    let original = try await fileSystem.writeTextFile(
+      "original", at: "Code.swift", expectedRevision: nil, relativeTo: fixture.root)
+    let executor = try WorkspaceCodingToolExecutor(fileSystem: fileSystem)
+    let context = ToolExecutionContext(runID: AgentRunID(), workingDirectory: fixture.root)
+    let malformed = ToolCall(
+      name: "workspace_write_text_file",
+      arguments: [
+        "path": .string("Code.swift"), "content": .string("changed"),
+        "expected_revision": .string(String(original.revision.dropLast())),
+      ])
+    await #expect(throws: ToolCallValidationError.self) {
+      _ = try await executor.authorizationRequest(for: malformed, in: context)
+    }
+    #expect(
+      try await fileSystem.readTextFile(at: "Code.swift", relativeTo: fixture.root) == original)
+    let corrected = ToolCall(
+      name: malformed.name,
+      arguments: [
+        "path": .string("Code.swift"), "content": .string("changed"),
+        "expected_revision": .string(original.revision),
+      ])
+    let authorization = try await executor.authorizationRequest(for: corrected, in: context)
+    #expect(authorization.capability.rawValue == "workspace.write")
+    #expect(authorization.operation == "overwrite")
+    #expect(try await executor.execute(corrected, in: context).status == .success)
+    #expect(try await executor.execute(corrected, in: context).status == .failure)
+    #expect(
+      try await fileSystem.readTextFile(at: "Code.swift", relativeTo: fixture.root).content
+        == "changed")
+  }
+
+  @Test
   func exposesFiveStableBoundedTools() async throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.container) }

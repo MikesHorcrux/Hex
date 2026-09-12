@@ -14,17 +14,6 @@ import HexProviders
 /// to stop. No launch-agent installation or registration occurs here; launchd owns process startup.
 @MainActor
 public final class HexGatewayResidentHost {
-  public enum HostError: Swift.Error, Equatable, LocalizedError, Sendable {
-    case alreadyRunning
-
-    public var errorDescription: String? {
-      switch self {
-      case .alreadyRunning:
-        "The resident gateway is already running."
-      }
-    }
-  }
-
   public let configuration: HexGatewayResidentConfiguration
 
   private let composition: HexGatewayComposition
@@ -53,6 +42,26 @@ public final class HexGatewayResidentHost {
       rootURL: configuration.databaseURL.deletingLastPathComponent()
         .appendingPathComponent("Artifacts", isDirectory: true))
     let processExecutor = POSIXProcessExecutor(artifactWriter: artifactStore)
+    let codingWorkspace = try CodingWorkspaceManager(
+      fileSystem: fileSystem,
+      artifacts: artifactStore, workspace: configuration.workspaceRoot)
+    // launchd's BundleProgram can leave argv[0] relative to the outer app. The loaded
+    // executable is authoritative; resolving argv[0] against the resident cwd is not.
+    guard let supervisor = Bundle.main.executableURL,
+      FileManager.default.isExecutableFile(atPath: supervisor.path)
+    else { throw ProcessSessionError.unavailable }
+    let processSessions = ProcessSessionManager(
+      supervisor: supervisor,
+      writer: artifactStore, reader: artifactStore, codingWorkspace: codingWorkspace)
+    let sessionTools = try HostToolExecutor(tools: [
+      try ProcessStartTool(manager: processSessions),
+      WorkspacePatchTool(manager: codingWorkspace, sessions: processSessions),
+      WorkspaceChangesTool(manager: codingWorkspace, sessions: processSessions),
+      try ProcessSessionTool(manager: processSessions, action: "read"),
+      try ProcessSessionTool(manager: processSessions, action: "list"),
+      try ProcessSessionTool(manager: processSessions, action: "input"),
+      try ProcessSessionTool(manager: processSessions, action: "control"),
+    ])
     let personalMemoryStore = try JSONPersonalMemoryStore(
       fileURL: configuration.personalMemoryURL
     )
@@ -62,7 +71,8 @@ public final class HexGatewayResidentHost {
     )
     let personalToolExecutor = try PersonalAgentToolExecutor(
       fileSystem: fileSystem,
-      processExecutor: processExecutor
+      processExecutor: processExecutor, codingWorkspace: codingWorkspace,
+      processSessions: processSessions
     )
     let mcpToolExecutors = try configuration.mcpClientSessions.map {
       try MCPManagedToolExecutor(session: $0, waitsForInitialDiscovery: false)
@@ -101,7 +111,7 @@ public final class HexGatewayResidentHost {
       executors: mcpToolExecutors, settings: configuration.mcpServerSettings)
     let routedToolExecutor = try CompositeToolExecutor(
       executors: [
-        personalToolExecutor, personalMemoryToolExecutor,
+        personalToolExecutor, personalMemoryToolExecutor, sessionTools,
         try ArtifactToolExecutor(reader: artifactStore),
       ] + protectedMCPExecutors
     )
@@ -128,7 +138,7 @@ public final class HexGatewayResidentHost {
     )
     let compositionConfiguration = HexGatewayCompositionConfiguration(
       journalConfiguration: SQLiteAgentEventJournalConfiguration(
-        databaseURL: configuration.databaseURL
+        databaseURL: configuration.databaseURL, integrityPolicy: .incremental
       ),
       inferenceProvider: inferenceProvider,
       toolExecutor: routedToolExecutor,
@@ -138,7 +148,9 @@ public final class HexGatewayResidentHost {
       enforcedWorkingDirectory: configuration.workspaceRoot,
       selfKnowledge: configuration.selfKnowledge,
       artifactWriter: artifactStore,
-      artifactReader: artifactStore
+      artifactReader: artifactStore,
+      processSessions: processSessions,
+      codingWorkspace: codingWorkspace
     )
     let heartbeatConfiguration = try HexHeartbeatSchedulerConfiguration.standard.validated()
     // Nothing has been advertised or started yet. Retain each opened resource before the next
@@ -343,7 +355,7 @@ public final class HexGatewayResidentHost {
   /// The listener is invalidated before the journal is closed, so no new request can race teardown.
   public func run() async throws {
     guard !hasStarted else {
-      throw HostError.alreadyRunning
+      throw HexGatewayResidentHostError.alreadyRunning
     }
     hasStarted = true
     let cancellationGate = HexGatewayResidentCancellationGate()

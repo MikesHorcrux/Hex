@@ -479,7 +479,7 @@ struct XPCGatewayTransportTests {
           do {
             try gate.withValidCommit {}
             await coordinator.recordCommit()
-          } catch HexGatewayAuthorizationCommitGate.GateError.closed {
+          } catch HexGatewayAuthorizationCommitGateError.closed {
             await coordinator.recordRejection()
           }
         }
@@ -575,7 +575,10 @@ struct XPCGatewayTransportTests {
         return try response(operation: .handshake, value: handshakeResponse)
       case .availableModels:
         return try response(operation: .availableModels, value: [ModelDescriptor]())
-      case .toolServerHealth, .refreshToolServer, .approvalInbox, .revokeSessionGrant,
+      case .taskOperation, .conversationStorage, .processSession, .toolServerHealth,
+        .refreshToolServer,
+        .approvalInbox,
+        .revokeSessionGrant,
         .folderAccessStatus:
         return try codec.encode(
           GatewayXPCResponseEnvelope(

@@ -27,6 +27,9 @@ actor ScriptedInferenceProvider: InferenceProvider {
     capturedRequests.append(request)
     let script = scripts.isEmpty ? .streamFailure : scripts.removeFirst()
     switch script {
+    case .suspendOpening:
+      try await Task.sleep(for: .seconds(30))
+      throw ScriptedInferenceProviderError.provider
     case .events(let events):
       let stream = AsyncThrowingStream<InferenceStreamEvent, any Error> { continuation in
         for event in events {

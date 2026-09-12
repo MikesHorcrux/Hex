@@ -74,7 +74,7 @@ struct HexGatewayResidentOptionalMCPTests {
   @Test
   func malformedExplicitXcodeToggleRemainsRejected() throws {
     #expect(
-      throws: HexGatewayResidentConfiguration.ConfigurationError.invalidVariable(
+      throws: HexGatewayResidentConfigurationError.invalidVariable(
         "HEX_XCODE_MCP_ENABLED")
     ) {
       try HexGatewayResidentConfiguration(

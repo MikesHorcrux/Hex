@@ -19,7 +19,7 @@ struct HexAuthorizationBrokerTests {
       do {
         try await broker.submit(request, choice: .allowForSession)
         submitted = true
-      } catch HexAuthorizationBroker.BrokerError.requestNotPending {
+      } catch HexAuthorizationBrokerError.requestNotPending {
         await Task.yield()
       }
     }
@@ -55,7 +55,7 @@ struct HexAuthorizationBrokerTests {
       do {
         try await broker.submit(request, choice: .allowOnce)
         submitted = true
-      } catch HexAuthorizationBroker.BrokerError.requestNotPending {
+      } catch HexAuthorizationBrokerError.requestNotPending {
         await Task.yield()
       }
     }
@@ -80,7 +80,7 @@ struct HexAuthorizationBrokerTests {
       do {
         _ = try await broker.requestDecision(for: request)
         return false
-      } catch HexAuthorizationBroker.BrokerError.requestAlreadyPending {
+      } catch HexAuthorizationBrokerError.requestAlreadyPending {
         return true
       } catch {
         return false
@@ -93,7 +93,7 @@ struct HexAuthorizationBrokerTests {
       do {
         try await broker.submit(request, choice: .allowOnce)
         submitted = true
-      } catch HexAuthorizationBroker.BrokerError.requestNotPending {
+      } catch HexAuthorizationBrokerError.requestNotPending {
         await Task.yield()
       }
     }

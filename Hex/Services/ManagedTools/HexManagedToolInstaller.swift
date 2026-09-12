@@ -6,7 +6,7 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
   private static let nodeArchiveSHA256 =
     "40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8"
   private static let peekabooArchiveSHA256 =
-    "80b1983a9a2468e715e176167b75aabb4f43feb4882d667ffccc9373d706602e"
+    "8c9dae67e64459f47653f2d3cd7580e6b593e0d8122da1fbdbc2c8f090748641"
   private static let maximumDownloadBytes: Int64 = 500 * 1_024 * 1_024
 
   private let layout: MCPManagedToolLayout
@@ -152,10 +152,21 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
     )
     guard
       isSafeExecutable(
-        extractedURL.appendingPathComponent("PeekabooCLI.app/Contents/MacOS/peekaboo")
+        extractedURL.appendingPathComponent("peekaboo")
       )
     else {
       throw HexManagedToolInstallerError.invalidInstallation
+    }
+    // Preserve the signed CLI and its sibling Swift runtime unchanged inside a private
+    // load container. The process runner snapshots their dependency closure together;
+    // this is not a GUI app and is never launched through Launch Services.
+    let runtimeDirectory = extractedURL.appendingPathComponent(
+      "HexScreenControlRuntime.app/Contents/MacOS", isDirectory: true)
+    try createPrivateDirectory(runtimeDirectory)
+    for name in ["peekaboo", "libswiftCompatibilitySpan.dylib"] {
+      try fileManager.moveItem(
+        at: extractedURL.appendingPathComponent(name),
+        to: runtimeDirectory.appendingPathComponent(name))
     }
     let versionRoot = layout.peekabooInstallationURL.deletingLastPathComponent()
     let stagedVersionRoot = temporaryRoot.appendingPathComponent("version", isDirectory: true)
@@ -197,7 +208,7 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
 
   private func validateArchive(_ archiveURL: URL) async throws {
     let result = try await run(
-      executableURL: URL(fileURLWithPath: "/usr/bin/tar"), arguments: ["-tzf", archiveURL.path])
+      executableURL: URL(fileURLWithPath: "/usr/bin/bsdtar"), arguments: ["-tzf", archiveURL.path])
     guard result.status == 0, let listing = String(data: result.standardOutput, encoding: .utf8)
     else {
       throw HexManagedToolInstallerError.invalidArchive
@@ -215,7 +226,7 @@ actor HexManagedToolInstaller: HexManagedToolInstalling {
 
   private func extractArchive(_ archiveURL: URL, to directoryURL: URL) async throws {
     let result = try await run(
-      executableURL: URL(fileURLWithPath: "/usr/bin/tar"),
+      executableURL: URL(fileURLWithPath: "/usr/bin/bsdtar"),
       arguments: ["-xzf", archiveURL.path, "-C", directoryURL.path]
     )
     guard result.status == 0 else {

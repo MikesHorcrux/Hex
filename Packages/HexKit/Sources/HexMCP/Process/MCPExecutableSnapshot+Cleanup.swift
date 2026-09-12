@@ -2,9 +2,9 @@ import Darwin
 
 extension MCPExecutableSnapshot {
   static func captureSnapshotEntries(
-    _ createdEntries: [CreatedEntry],
+    _ createdEntries: [MCPExecutableSnapshotCreatedEntry],
     rootDescriptor: Int32
-  ) throws -> [SnapshotEntry] {
+  ) throws -> [MCPExecutableSnapshotEntry] {
     try createdEntries.map { created in
       guard
         let currentStatus = status(
@@ -16,13 +16,13 @@ extension MCPExecutableSnapshot {
       else {
         throw MCPClientSessionError.connectionClosed
       }
-      return SnapshotEntry(created: created, status: currentStatus)
+      return MCPExecutableSnapshotEntry(created: created, status: currentStatus)
     }
   }
 
   static func status(
     of relativePath: String,
-    kind: CreatedEntry.Kind,
+    kind: MCPExecutableSnapshotCreatedEntryKind,
     beneath rootDescriptor: Int32
   ) -> stat? {
     guard let normalized = normalizeRelativePath(relativePath, relativeTo: ""),

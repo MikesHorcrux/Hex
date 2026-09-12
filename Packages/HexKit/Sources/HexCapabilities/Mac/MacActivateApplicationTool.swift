@@ -4,7 +4,8 @@ public struct MacActivateApplicationTool: HostTool, Sendable {
   public let definition = ToolDefinition(
     name: "mac_activate_application",
     description:
-      "Activate a running macOS app or launch an installed app using an exact bundle identifier.",
+      "Activate a running macOS app or launch an installed app using an exact bundle identifier. "
+      + "A later request can bring the same app forward again; a prior activation does not keep it focused.",
     inputSchema: HostToolSchema.object(
       properties: [
         "bundle_id": HostToolSchema.string(

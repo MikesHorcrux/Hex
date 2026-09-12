@@ -31,7 +31,8 @@ struct AgentWorkspaceDeliveryRecoveryTests {
     }
   }
 
-  @Test(arguments: [GatewayFailureCode.consumerTooSlow, .disconnected]) @MainActor
+  @Test(arguments: [GatewayFailureCode.consumerTooSlow, .disconnected, .replayUnavailable])
+  @MainActor
   func deliveryFailureRecoversTheOriginalPartialReplyOnce(_ code: GatewayFailureCode) async throws {
     let client = DeliveryClient(failureCode: code)
     let store = MemoryStore()
@@ -436,6 +437,11 @@ struct AgentWorkspaceDeliveryRecoveryTests {
     func eventRecords(for runID: AgentRunID, invocationID: GatewayRunInvocationID) async throws
       -> AsyncThrowingStream<GatewayEventEnvelope, any Error>
     {
+      if failureCode == .replayUnavailable {
+        throw GatewayFailure(
+          code: .replayUnavailable,
+          message: "Initial events advanced beyond the replay window before attachment.")
+      }
       let pair = AsyncThrowingStream<GatewayEventEnvelope, any Error>.makeStream()
       for record in records.prefix(3) {
         pair.continuation.yield(GatewayEventEnvelope(invocationID: invocationID, record: record))

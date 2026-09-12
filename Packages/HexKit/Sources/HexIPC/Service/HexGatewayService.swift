@@ -12,7 +12,16 @@ public actor HexGatewayService {
   let codec: GatewayWireCodec
   let gatewayInstanceID: GatewayInstanceID
   let historyReader: (any HexGatewayRunHistoryReading)?
+  let taskStore: (any AgentTaskStorage)?
+  var taskDispatchReservation: AgentRunID?
+  var taskPumpRequested = false
+  var taskPump: Task<Void, Never>?
+  var taskWake: Task<Void, Never>?
+  var taskSchedulerFailure: String?
+  let conversationStore: (any ConversationStorage)?
   let artifactReader: (any ArtifactReading)?
+  let processSessions: (any ProcessSessionControlling)?
+  let codingWorkspace: (any CodingWorkspaceControlling)?
   var sessions: [GatewaySessionID: GatewaySessionState] = [:]
   var runs: [AgentRunID: GatewayRunState] = [:]
   var completedRunOrder: [AgentRunID] = []
@@ -30,7 +39,11 @@ public actor HexGatewayService {
     configuration: GatewayConfiguration = .standard,
     gatewayInstanceID: GatewayInstanceID = GatewayInstanceID(),
     historyReader: (any HexGatewayRunHistoryReading)? = nil,
-    artifactReader: (any ArtifactReading)? = nil
+    artifactReader: (any ArtifactReading)? = nil,
+    conversationStore: (any ConversationStorage)? = nil,
+    taskStore: (any AgentTaskStorage)? = nil,
+    processSessions: (any ProcessSessionControlling)? = nil,
+    codingWorkspace: (any CodingWorkspaceControlling)? = nil
   ) {
     self.driver = driver
     self.configuration = configuration
@@ -38,6 +51,10 @@ public actor HexGatewayService {
     self.gatewayInstanceID = gatewayInstanceID
     self.historyReader = historyReader
     self.artifactReader = artifactReader
+    self.conversationStore = conversationStore
+    self.taskStore = taskStore
+    self.processSessions = processSessions
+    self.codingWorkspace = codingWorkspace
   }
 
   func requireValidGatewayIdentity(

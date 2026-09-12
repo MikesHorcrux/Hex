@@ -76,6 +76,23 @@ public struct HexGatewayComposition: Sendable {
     } else {
       throw HexGatewayCompositionError.missingJournal
     }
+    if let coding = configuration.codingWorkspace {
+      guard let storage = journal as? any CodingWorkspaceStorage else {
+        try await closeAction()
+        throw WorkspacePatchError.unavailable
+      }
+      try await coding.attach(storage: storage)
+    }
+    if let manager = configuration.processSessions {
+      guard let storage = journal as? any ProcessSessionStorage else {
+        try await closeAction()
+        throw ProcessSessionError.unavailable
+      }
+      do { try await manager.attach(storage: storage) } catch {
+        try await closeAction()
+        throw error
+      }
+    }
     let runDriver = HexGatewayRunDriverAdapter(
       inferenceProvider: configuration.inferenceProvider,
       toolExecutor: configuration.toolExecutor,
@@ -100,8 +117,13 @@ public struct HexGatewayComposition: Sendable {
       driver: runDriver,
       configuration: configuration.gatewayConfiguration,
       historyReader: historyReader,
-      artifactReader: configuration.artifactReader
+      artifactReader: configuration.artifactReader,
+      conversationStore: journal as? any ConversationStorage,
+      taskStore: journal as? any AgentTaskStorage,
+      processSessions: configuration.processSessions,
+      codingWorkspace: configuration.codingWorkspace
     )
+    await service.wakeTaskScheduler()
     let transport = InProcessHexGatewayTransport(
       service: service,
       configuration: configuration.gatewayConfiguration
@@ -135,6 +157,7 @@ public struct HexGatewayComposition: Sendable {
   /// timeout leaves the journal open; a visible terminal event is not proof that its driver returned.
   public func close(timeout: Duration = .seconds(10)) async throws {
     try await service.shutdown(timeout: timeout)
+    await service.processSessionShutdown()
     try await closeAction()
   }
 }

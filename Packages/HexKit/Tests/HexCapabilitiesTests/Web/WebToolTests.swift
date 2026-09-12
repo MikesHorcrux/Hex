@@ -48,6 +48,49 @@ struct WebToolTests {
     #expect(output["body"] == .string("Hello\nWorld"))
   }
 
+  @Test(arguments: ["style", "script", "noscript"])
+  func truncatedHiddenHTMLNeverBecomesResearchText(tag: String) async throws {
+    let url = try #require(URL(string: "https://example.com/truncated"))
+    let fetcher = Fetcher(
+      response: WebFetchResponse(
+        url: url, statusCode: 200, contentType: "text/html",
+        body: Data("<p>Visible fact</p><\(tag)>hidden content without a closing tag".utf8),
+        isTruncated: true))
+    let tool = WebFetchTool(fetcher: fetcher)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let call = ToolCall(name: "web_fetch", arguments: ["url": .string(url.absoluteString)])
+    _ = try await tool.authorizationRequest(for: call, in: context)
+    let result = try await tool.execute(call, in: context)
+    guard case .object(let output) = result.output else {
+      Issue.record("Missing fetch result")
+      return
+    }
+    #expect(output["body"] == .string("Visible fact"))
+    #expect(output["is_truncated"] == .boolean(true))
+  }
+
+  @Test
+  func responseCutInsideStyleReportsNoReadableEvidence() async throws {
+    let url = try #require(URL(string: "https://example.com/style"))
+    let fetcher = Fetcher(
+      response: WebFetchResponse(
+        url: url, statusCode: 200, contentType: "text/html",
+        body: Data("<html><head><STYLE>:root { --color: red;".utf8), isTruncated: true))
+    let tool = WebFetchTool(fetcher: fetcher)
+    let context = ToolExecutionContext(runID: AgentRunID())
+    let call = ToolCall(name: "web_fetch", arguments: ["url": .string(url.absoluteString)])
+    _ = try await tool.authorizationRequest(for: call, in: context)
+    let result = try await tool.execute(call, in: context)
+    guard case .object(let output) = result.output else {
+      Issue.record("Missing fetch result")
+      return
+    }
+    #expect(output["body"] == .string(""))
+    #expect(output["is_truncated"] == .boolean(true))
+    #expect(output["text_available"] == .boolean(false))
+    #expect(output["recovery"] != nil)
+  }
+
   @Test
   func searchReturnsBoundedHTTPSResultsFromTheProviderResponse() async throws {
     let endpoint = try #require(URL(string: "https://html.duckduckgo.com/html/"))

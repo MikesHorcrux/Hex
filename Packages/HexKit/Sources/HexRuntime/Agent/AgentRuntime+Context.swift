@@ -29,9 +29,53 @@ extension AgentRuntime {
     let planner = try makeContextPlanner(summaryReserve: summaryLimit + 256)
     let plan: AgentContextPlan
     do {
-      plan = try planner.plan(
+      var admission = try planner.plan(
         pinnedMessages: pinned, messages: history, tools: tools,
         model: model, outputReserveTokens: reserve)
+      let allowLatestClosedExchangeCompaction: Bool
+      if case .protectedOverflow(_, reason: .protectedContext) = admission {
+        // Preserving the previous exchange verbatim is a quality preference, not a reason to
+        // permanently strand every follow-up after a large attempt. At a fresh user boundary,
+        // try a journaled summary of that closed exchange while retaining the new request.
+        allowLatestClosedExchangeCompaction = true
+        admission = try planner.plan(
+          pinnedMessages: pinned, messages: history, tools: tools,
+          model: model, outputReserveTokens: reserve,
+          allowLatestClosedExchangeCompaction: true)
+      } else {
+        allowLatestClosedExchangeCompaction = false
+      }
+      // The admitted initial history stays pinned during this attempt. Leaving it just under
+      // the limit can force every fresh file read straight into a summary and a reread loop.
+      // Prefer room for tool work when an older, fully closed prefix can be condensed safely.
+      // A protected current request that fits the real window is still admitted unchanged.
+      let workingWindow = window - min(65_536, window / 4)
+      if !tools.isEmpty, request.toolChoice != .none {
+        var preferred = try planner.plan(
+          pinnedMessages: pinned, messages: history, tools: tools,
+          model: model, outputReserveTokens: reserve,
+          maximumPlanningWindowTokens: workingWindow,
+          allowLatestClosedExchangeCompaction: allowLatestClosedExchangeCompaction)
+        if case .protectedOverflow(_, reason: .protectedContext) = preferred,
+          !allowLatestClosedExchangeCompaction
+        {
+          // A previous exchange can fit the real window yet leave no room to read a file.
+          // Apply the same closed-history fallback to working-room admission. The planner
+          // still protects the newest user request, trusted instructions and open tool batches.
+          preferred = try planner.plan(
+            pinnedMessages: pinned, messages: history, tools: tools,
+            model: model, outputReserveTokens: reserve,
+            maximumPlanningWindowTokens: workingWindow,
+            allowLatestClosedExchangeCompaction: true)
+        }
+        if case .requiresCompaction = preferred {
+          plan = preferred
+        } else {
+          plan = admission
+        }
+      } else {
+        plan = admission
+      }
     } catch AgentContextPlanningError.invalidHistory {
       // Some programmatic callers provide a continuation-shaped initial history. It can be used
       // unchanged when it fits, but we never invent a user boundary to make it compactable.
@@ -42,10 +86,10 @@ extension AgentRuntime {
         "The conversation context could not be planned safely.")
     }
     switch plan {
-    case .fits, .unestimated:
-      // No tokenizer/image-cost evidence is invented. Unestimated multimodal requests retain their
-      // existing provider validation; model-specific image estimators can be injected at this seam.
+    case .fits:
       return (original, 0)
+    case .unestimated:
+      throw unknownContextCost()
     case .protectedOverflow:
       throw contextOverflow()
     case .requiresCompaction(let before, let prefix, let retained, _):
@@ -57,7 +101,10 @@ extension AgentRuntime {
           AgentContextSummaryRequest(
             model: model, sourceMessages: Array(history[prefix]),
             maximumSummaryTokens: summaryLimit,
-            maximumReportedTokens: configuration.budget.maxReportedTokens))
+            maximumReportedTokens: configuration.budget.maxReportedTokens,
+            // A prior exchange can be larger than one summary request. The planner has closed
+            // its user boundary; rolling summaries may divide only complete tool batches.
+            allowsToolBatchBoundaries: true))
       } catch is CancellationError {
         throw CancellationError()
       } catch {
@@ -98,7 +145,8 @@ extension AgentRuntime {
         )
       }
       guard
-        try contextEstimator.estimateTokens(in: provisional.summaryMessage) <= summaryLimit + 256
+        try contextEstimator.estimateTokens(in: provisional.summaryMessage, model: model)
+          <= summaryLimit + 256
       else {
         throw AgentRuntimeError.protocolViolation("The context summary exceeded its reserved size.")
       }
@@ -118,8 +166,8 @@ extension AgentRuntime {
     }
   }
 
-  /// Never rewrite an active provider continuation (including local opaque reasoning replay).
-  /// Oversized tool loops stop with an explicit outcome rather than silently losing their history.
+  /// Admission for an unchanged provider continuation. The active-boundary owner may compact
+  /// completed evidence and start a fresh request; this validator itself never mutates history.
   func validateContinuingContext(
     _ messages: [Message], request: AgentRunRequest,
     model: ModelDescriptor, tools: [ToolDefinition]
@@ -129,10 +177,10 @@ extension AgentRuntime {
     let costs: [Int]
     do {
       costs =
-        try messages.map { try contextEstimator.estimateTokens(in: $0) }
-        + tools.map { try contextEstimator.estimateTokens(in: $0) }
+        try messages.map { try contextEstimator.estimateTokens(in: $0, model: model) }
+        + tools.map { try contextEstimator.estimateTokens(in: $0, model: model) }
         + [configuration.context.safetyMarginTokens]
-    } catch AgentContextPlanningError.imageCostUnavailable { return } catch {
+    } catch AgentContextPlanningError.imageCostUnavailable { throw unknownContextCost() } catch {
       throw AgentRuntimeError.invalidRequest("Context cost could not be estimated.")
     }
     for cost in costs {
@@ -145,7 +193,7 @@ extension AgentRuntime {
     }
   }
 
-  private func outputReservation(_ request: AgentRunRequest, model: ModelDescriptor) -> Int {
+  func outputReservation(_ request: AgentRunRequest, model: ModelDescriptor) -> Int {
     if let requested = request.options.maxOutputTokens { return requested }
     if let modelMaximum = model.maxOutputTokens { return modelMaximum }
     // An explicit local planning allowance when metadata is unavailable, NOT a claimed provider
@@ -161,7 +209,13 @@ extension AgentRuntime {
       summaryReserveTokens: summaryReserve, estimator: contextEstimator)
   }
 
-  private func contextOverflow() -> AgentRuntimeError {
+  func unknownContextCost() -> AgentRuntimeError {
+    .budgetExceeded(
+      "Hex cannot safely estimate this model’s image context cost. Use text or a model with a configured media estimator; the original content is preserved."
+    )
+  }
+
+  func contextOverflow() -> AgentRuntimeError {
     .budgetExceeded(
       "The current request, required instructions, tools, or active tool exchange exceed this model's estimated context. Hex will not trim them silently. Choose a larger-context model, reduce enabled tools, or start a new conversation for a shorter task."
     )

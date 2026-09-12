@@ -7,12 +7,15 @@ extension AgentRuntime {
   ) async throws -> AgentRunResult {
     // A caller that explicitly disables tools must not acquire optional dependencies. Keep the
     // snapshot for tool-enabled runs intact, including a named call's no-more-tools continuation.
-    let tools = request.toolChoice == .none ? [] : try await discoverTools()
+    var tools = request.toolChoice == .none ? [] : try await discoverTools()
     try validateToolSnapshot(tools, request: request, model: model)
 
-    let prepared = try await prepareInitialContext(request, model: model, tools: tools)
+    let prepared = try await inferenceAtBoundary(request.runID) { [tools] in
+      try await self.prepareInitialContext(request, model: model, tools: tools)
+    }
     var conversation = prepared.messages
     var turns: [InferenceTurn] = []
+    var previousProviderResponseID: String?
     var seenToolCallIDs = try initialToolCallIDs(in: conversation)
     var seenAuthorizationRequestIDs = Set<AuthorizationRequestID>()
     var totalToolCalls = 0
@@ -24,7 +27,7 @@ extension AgentRuntime {
       && model.capabilities.contains(.parallelToolCalling)
 
     while true {
-      try Task.checkCancellation()
+      try checkBoundaryStop(request.runID)
       guard totalReportedTokens < configuration.budget.maxReportedTokens else {
         throw AgentRuntimeError.budgetExceeded(
           "Reported token budget exhausted before the next inference request.")
@@ -34,7 +37,34 @@ extension AgentRuntime {
       }
       try validateConversationSize(conversation)
       if !turns.isEmpty {
-        try validateContinuingContext(conversation, request: request, model: model, tools: tools)
+        // Optional integrations can finish starting while a tool batch runs. Refresh only at
+        // a completed batch boundary; named/no-tools continuations retain their fixed contract.
+        if effectiveToolChoice == .automatic || effectiveToolChoice == .required {
+          let currentTools = try await discoverTools()
+          try validateToolSnapshot(currentTools, request: request, model: model)
+          if currentTools != tools {
+            tools = currentTools
+            previousProviderResponseID = nil
+          }
+        }
+        let compacted = try await inferenceAtBoundary(request.runID) {
+          [conversation, totalReportedTokens, tools] in
+          try await self.prepareActiveContext(
+            conversation, protectedCount: prepared.messages.count, request: request,
+            model: model, tools: tools,
+            remainingReportedTokens: self.configuration.budget.maxReportedTokens
+              - totalReportedTokens)
+        }
+        if let compacted {
+          conversation = compacted.messages
+          totalReportedTokens = try addReportedTokens(
+            compacted.reportedTokens, to: totalReportedTokens)
+          previousProviderResponseID = nil
+          guard totalReportedTokens < configuration.budget.maxReportedTokens else {
+            throw AgentRuntimeError.budgetExceeded(
+              "Summary consumed the remaining reported token budget.")
+          }
+        }
       }
       let allowedToolNames: Set<String>
       switch effectiveToolChoice {
@@ -49,7 +79,7 @@ extension AgentRuntime {
       let inferenceRequest = InferenceRequest(
         providerID: inferenceProvider.descriptor.id,
         modelID: request.modelID,
-        previousProviderResponseID: turns.last?.providerResponseID,
+        previousProviderResponseID: previousProviderResponseID,
         messages: conversation,
         tools: tools,
         toolChoice: effectiveToolChoice,
@@ -57,26 +87,6 @@ extension AgentRuntime {
       )
       try await append(.inferenceRequested(inferenceRequest), to: request.runID)
       try Task.checkCancellation()
-
-      let stream: InferenceStream
-      do {
-        stream = try await inferenceProvider.stream(inferenceRequest)
-      } catch is CancellationError {
-        throw CancellationError()
-      } catch let error as any InferenceProviderFailure {
-        throw AgentRuntimeError.providerFailure(
-          error.userFacingMessage,
-          isRetryable: error.isRetryable
-        )
-      } catch {
-        if Task.isCancelled {
-          throw CancellationError()
-        }
-        throw AgentRuntimeError.providerFailure(
-          "The inference provider failed to open a stream.",
-          isRetryable: true
-        )
-      }
 
       let initialAccumulator = InferenceTurnAccumulator(
         budget: configuration.budget,
@@ -86,42 +96,66 @@ extension AgentRuntime {
         remainingReportedTokens: configuration.budget.maxReportedTokens - totalReportedTokens,
         allowsParallelToolCalls: allowsParallelToolCalls
       )
-      var accumulator = try await stream.consume { cursor in
-        var accumulator = initialAccumulator
-        while true {
-          let event: InferenceStreamEvent?
-          do {
-            event = try await cursor.next()
-          } catch is CancellationError {
+      var accumulator = try await inferenceAtBoundary(request.runID) {
+        let stream: InferenceStream
+        do {
+          stream = try await self.inferenceProvider.stream(inferenceRequest)
+        } catch is CancellationError {
+          throw CancellationError()
+        } catch let error as any InferenceProviderFailure {
+          throw AgentRuntimeError.providerFailure(
+            error.userFacingMessage,
+            isRetryable: error.isRetryable
+          )
+        } catch {
+          if Task.isCancelled {
             throw CancellationError()
-          } catch let error as any InferenceProviderFailure {
-            throw AgentRuntimeError.providerFailure(
-              error.userFacingMessage,
-              isRetryable: error.isRetryable
-            )
-          } catch {
-            if Task.isCancelled {
-              throw CancellationError()
-            }
-            throw AgentRuntimeError.providerFailure(
-              "The inference stream failed.",
-              isRetryable: true
-            )
           }
-          guard let event else {
-            break
-          }
-          var candidateAccumulator = accumulator
-          try candidateAccumulator.accept(event)
-          try await self.append(.inferenceEvent(event), to: request.runID)
-          accumulator = candidateAccumulator
-          try Task.checkCancellation()
+          throw AgentRuntimeError.providerFailure(
+            "The inference provider failed to open a stream.",
+            isRetryable: true
+          )
         }
-        try Task.checkCancellation()
-        return accumulator
+
+        return try await stream.consume { cursor in
+          var accumulator = initialAccumulator
+          while true {
+            let event: InferenceStreamEvent?
+            do {
+              event = try await cursor.next()
+            } catch is CancellationError {
+              throw CancellationError()
+            } catch let error as any InferenceProviderFailure {
+              throw AgentRuntimeError.providerFailure(
+                error.userFacingMessage,
+                isRetryable: error.isRetryable
+              )
+            } catch {
+              if Task.isCancelled {
+                throw CancellationError()
+              }
+              throw AgentRuntimeError.providerFailure(
+                "The inference stream failed.",
+                isRetryable: true
+              )
+            }
+            guard let event else {
+              break
+            }
+            var candidateAccumulator = accumulator
+            try candidateAccumulator.accept(event)
+            try await self.append(.inferenceEvent(event), to: request.runID)
+            accumulator = candidateAccumulator
+            try Task.checkCancellation()
+          }
+          try Task.checkCancellation()
+          return accumulator
+        }
+
       }
 
       let output = try accumulator.finish()
+      previousProviderResponseID = output.providerResponseID
       switch effectiveToolChoice {
       case .required, .named:
         guard output.stopReason == .toolCalls else {
@@ -178,6 +212,7 @@ extension AgentRuntime {
         for call in output.toolCalls {
           seenToolCallIDs.insert(call.id)
         }
+        try checkBoundaryStop(request.runID)
         let toolOutput = try await processToolBatch(
           output.toolCalls,
           runID: request.runID,

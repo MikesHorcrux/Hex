@@ -49,7 +49,8 @@ extension SQLiteAgentEventJournal {
     let (databaseBytes, overflowed) = pageSize.multipliedReportingOverflow(by: pageCount)
     guard
       !overflowed,
-      databaseBytes <= Int64(configuration.maximumDatabaseBytes)
+      configuration.integrityPolicy == .incremental
+        || databaseBytes <= Int64(configuration.maximumDatabaseBytes)
     else {
       throw SQLiteAgentEventJournalError.databaseSizeLimitExceeded(
         actual: overflowed ? Int.max : Int(databaseBytes),
@@ -79,7 +80,9 @@ extension SQLiteAgentEventJournal {
     guard try currentDataVersion(connection: connection) == integrityDataVersion else {
       // An unexpected writer invalidates the cached baseline. Diagnose its data once so
       // callers retain the precise corruption error, but never adopt that writer's state.
-      try validateWholeJournalIntegrity(connection: connection)
+      if configuration.integrityPolicy == .boundedArchive {
+        try validateWholeJournalIntegrity(connection: connection)
+      }
       throw SQLiteAgentEventJournalError.corruptRecord(
         "The journal changed through another SQLite connection while it was open."
       )

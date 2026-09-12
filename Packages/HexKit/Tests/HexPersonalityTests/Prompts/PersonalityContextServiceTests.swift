@@ -74,7 +74,7 @@ struct PersonalityContextServiceTests {
   }
 
   @Test
-  func missingProfileFailsBeforeContextAssembly() async throws {
+  func missingProfileUsesCodeDefaultAndStillLoadsUserPreferences() async throws {
     let directory = try makeTemporaryDirectory()
     defer {
       try? FileManager.default.removeItem(at: directory)
@@ -91,9 +91,27 @@ struct PersonalityContextServiceTests {
     )
     let scope = try PersonalMemoryScope(rawValue: "mike.hex")
 
-    await #expect(throws: PersonalityContextServiceError.profileUnavailable) {
-      _ = try await service.assemble(scope: scope, limit: 1)
+    try await memoryStore.save(
+      PersonalMemoryRecord(
+        scope: scope,
+        id: PersonalMemoryID(rawValue: "communication"),
+        kind: .preference,
+        text: "The user prefers concise, candid feedback.",
+        source: .explicitUserStatement,
+        createdAt: Date(timeIntervalSince1970: 1),
+        updatedAt: Date(timeIntervalSince1970: 1)
+      )
+    )
+    let context = try await service.assemble(scope: scope, limit: 1)
+    guard case .text(let data) = context.dataMessage.content.first else {
+      Issue.record("Expected personal context data")
+      return
     }
+    #expect(data.contains("<name>Hex</name>"))
+    #expect(data.contains("The user prefers concise, candid feedback."))
+    #expect(try await profileStore.load() == nil)
+    let freshContext = try await service.assemble(scope: scope, limit: 1)
+    #expect(freshContext.dataMessage.content == context.dataMessage.content)
   }
 
   private func makeTemporaryDirectory() throws -> URL {

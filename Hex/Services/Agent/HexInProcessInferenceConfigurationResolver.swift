@@ -7,34 +7,6 @@ import HexProviders
 /// used by the resident route. The resolver has no provider fallback: a selected backend without
 /// an app-linked adapter is an actionable failure.
 nonisolated struct HexInProcessInferenceConfigurationResolver: Sendable {
-  enum Resolution: Sendable {
-    case openAI(
-      settings: HexOpenAIBackendSettings,
-      authorizationProvider: any OpenAIResponsesAuthorizationProvider
-    )
-  }
-
-  enum ResolutionError: Error, Equatable, LocalizedError, Sendable {
-    case settingsUnavailable
-    case credentialsUnavailable(HexOpenAIAuthenticationMethod)
-    case unsupportedBackend(HexInferenceBackendKind)
-
-    var errorDescription: String? {
-      switch self {
-      case .settingsUnavailable:
-        "Hex could not load inference-backend settings. Open Inference settings and choose a supported configuration."
-      case .credentialsUnavailable(.apiKey):
-        "OpenAI is selected, but no API key is available in Keychain. Add one in Inference settings."
-      case .credentialsUnavailable(.chatGPT):
-        "OpenAI is selected, but Hex is not signed in with ChatGPT. Sign in under Inference settings."
-      case .unsupportedBackend(.mlxLocal):
-        "Local MLX is selected, but its in-process inference adapter is not linked in this build. Link and configure the MLX adapter before selecting it."
-      case .unsupportedBackend(.openAIResponses):
-        "OpenAI is selected, but its in-process inference adapter is unavailable. Check the Hex build configuration."
-      }
-    }
-  }
-
   private static let defaultOpenAIModelID = HexInferenceBackendSettings.defaultOpenAIModelID
 
   private let settingsStore: (any HexInferenceBackendSettingsStore)?
@@ -51,9 +23,9 @@ nonisolated struct HexInProcessInferenceConfigurationResolver: Sendable {
     defaultModelID = defaultOpenAIModelID ?? Self.defaultOpenAIModelID
   }
 
-  func resolve() async throws -> Resolution {
+  func resolve() async throws -> HexInProcessInferenceResolution {
     guard let settingsStore else {
-      throw ResolutionError.settingsUnavailable
+      throw HexInProcessInferenceResolutionError.settingsUnavailable
     }
 
     let settings: HexInferenceBackendSettings
@@ -64,14 +36,16 @@ nonisolated struct HexInProcessInferenceConfigurationResolver: Sendable {
     } catch is CancellationError {
       throw CancellationError()
     } catch {
-      throw ResolutionError.settingsUnavailable
+      throw HexInProcessInferenceResolutionError.settingsUnavailable
     }
 
     guard settings.selectedBackend == .openAIResponses else {
-      throw ResolutionError.unsupportedBackend(settings.selectedBackend)
+      throw HexInProcessInferenceResolutionError.unsupportedBackend(
+        settings.selectedBackend)
     }
     guard let secretStore else {
-      throw ResolutionError.credentialsUnavailable(settings.openAI.authenticationMethod)
+      throw HexInProcessInferenceResolutionError.credentialsUnavailable(
+        settings.openAI.authenticationMethod)
     }
 
     let requiredSecret: HexSecretKey =
@@ -80,14 +54,16 @@ nonisolated struct HexInProcessInferenceConfigurationResolver: Sendable {
       : .openAIAPIKey
     do {
       guard try await secretStore.exists(requiredSecret) else {
-        throw ResolutionError.credentialsUnavailable(settings.openAI.authenticationMethod)
+        throw HexInProcessInferenceResolutionError.credentialsUnavailable(
+          settings.openAI.authenticationMethod)
       }
     } catch is CancellationError {
       throw CancellationError()
-    } catch let error as ResolutionError {
+    } catch let error as HexInProcessInferenceResolutionError {
       throw error
     } catch {
-      throw ResolutionError.credentialsUnavailable(settings.openAI.authenticationMethod)
+      throw HexInProcessInferenceResolutionError.credentialsUnavailable(
+        settings.openAI.authenticationMethod)
     }
 
     let authorizationProvider: any OpenAIResponsesAuthorizationProvider =

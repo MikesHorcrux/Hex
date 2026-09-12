@@ -7,28 +7,17 @@ import HexCore
 public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDecisionTransport,
   HexGatewayResidentControlTransport, HexGatewayAccessibilityPermissionTransport,
   HexGatewayScreenControlPermissionTransport, HexGatewayModelCatalogTransport,
-  HexGatewayRunRecoveryTransport, HexGatewayArtifactReadTransport,
+  HexGatewayTaskTransport, HexGatewayConversationTransport, HexGatewayProcessSessionTransport,
+  HexGatewayRunRecoveryTransport,
+  HexGatewayArtifactReadTransport,
   HexGatewayToolServerControlTransport, HexGatewayPermissionManagementTransport
 {
-  private struct ConnectionState: Sendable {
-    let generation: UUID
-    let lease: GatewayTransportConnectionLease
-    let sessionID: GatewaySessionID
-    let selectedVersion: GatewayProtocolVersion
-    let connection: any HexGatewayXPCConnection
-  }
-
-  private struct HandshakeState: Sendable {
-    let attemptID: UUID
-    let lease: GatewayTransportConnectionLease
-    let connection: any HexGatewayXPCConnection
-  }
 
   private let connectionFactory: any HexGatewayXPCConnectionFactory
   private let configuration: GatewayConfiguration
   private let codec: GatewayWireCodec
-  private var connected: ConnectionState?
-  private var pendingHandshake: HandshakeState?
+  private var connected: XPCGatewayTransportConnectionState?
+  private var pendingHandshake: XPCGatewayTransportHandshakeState?
 
   public init(
     connectionFactory: any HexGatewayXPCConnectionFactory,
@@ -64,7 +53,7 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
     let previousConnection = connected?.connection
     let previousPendingConnection = pendingHandshake?.connection
     connected = nil
-    pendingHandshake = HandshakeState(
+    pendingHandshake = XPCGatewayTransportHandshakeState(
       attemptID: attemptID,
       lease: lease,
       connection: connection
@@ -94,7 +83,7 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
       )
       try requireCurrentHandshake(attemptID: attemptID, lease: lease)
       pendingHandshake = nil
-      connected = ConnectionState(
+      connected = XPCGatewayTransportConnectionState(
         generation: UUID(),
         lease: lease,
         sessionID: response.sessionID,
@@ -143,6 +132,33 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
   ) async throws -> GatewayRunRecoveryResponse {
     try await recoveryRequest(
       request, operation: .recoverRun, lease: lease, response: GatewayRunRecoveryResponse.self)
+  }
+
+  public func taskOperation(_ request: GatewayTaskRequest, lease: GatewayTransportConnectionLease)
+    async throws -> GatewayTaskResponse
+  {
+    try await recoveryRequest(
+      request, operation: .taskOperation, lease: lease,
+      response: GatewayTaskResponse.self)
+  }
+
+  public func processSession(
+    _ request: GatewayProcessSessionRequest, lease: GatewayTransportConnectionLease
+  )
+    async throws -> GatewayProcessSessionResponse
+  {
+    try await recoveryRequest(
+      request, operation: .processSession, lease: lease,
+      response: GatewayProcessSessionResponse.self)
+  }
+
+  public func conversationStorage(
+    _ request: ConversationStorageRequest,
+    lease: GatewayTransportConnectionLease
+  ) async throws -> ConversationStorageResponse {
+    try await recoveryRequest(
+      request, operation: .conversationStorage, lease: lease,
+      response: ConversationStorageResponse.self)
   }
 
   public func readRunHistory(
@@ -767,7 +783,7 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
 
   private func requireConnected(
     lease: GatewayTransportConnectionLease
-  ) throws -> ConnectionState {
+  ) throws -> XPCGatewayTransportConnectionState {
     guard let connected, connected.lease == lease else {
       throw GatewayFailure(
         code: .notConnected,
@@ -793,7 +809,7 @@ public actor XPCGatewayTransport: HexGatewayTransport, HexGatewayAuthorizationDe
     }
   }
 
-  private func requireCurrentConnection(_ state: ConnectionState) throws {
+  private func requireCurrentConnection(_ state: XPCGatewayTransportConnectionState) throws {
     guard connected?.generation == state.generation,
       connected?.lease == state.lease
     else {

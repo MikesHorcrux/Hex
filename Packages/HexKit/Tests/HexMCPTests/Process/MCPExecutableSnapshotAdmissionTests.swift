@@ -601,7 +601,7 @@ struct MCPExecutableSnapshotAdmissionTests {
       maximumPathMetadataBytesPerSlot: 4_096,
       maximumCopiedBytesPerSlot: 8
     )
-    var entryState = MCPExecutableSnapshot.CopyState(policy: entryPolicy)
+    var entryState = MCPExecutableSnapshotCopyState(policy: entryPolicy)
     try entryState.admitEntry(relativePath: "a", copiedBytes: 0)
     #expect(throws: MCPClientSessionError.limitExceeded) {
       try entryState.admitEntry(relativePath: "b", copiedBytes: 0)
@@ -609,7 +609,7 @@ struct MCPExecutableSnapshotAdmissionTests {
     #expect(entryState.admittedEntryCount == 1)
 
     let metadataPolicy = try makePolicy(maximumRetainedSlots: 1)
-    var metadataState = MCPExecutableSnapshot.CopyState(policy: metadataPolicy)
+    var metadataState = MCPExecutableSnapshotCopyState(policy: metadataPolicy)
     try metadataState.admitEntry(
       relativePath: "a",
       additionalPathMetadataBytes: 4_094,
@@ -626,7 +626,7 @@ struct MCPExecutableSnapshotAdmissionTests {
       maximumPathMetadataBytesPerSlot: 4_096,
       maximumCopiedBytesPerSlot: 8
     )
-    var copiedState = MCPExecutableSnapshot.CopyState(policy: copiedPolicy)
+    var copiedState = MCPExecutableSnapshotCopyState(policy: copiedPolicy)
     try copiedState.admitEntry(relativePath: "a", copiedBytes: 8)
     #expect(throws: MCPClientSessionError.limitExceeded) {
       try copiedState.admitEntry(relativePath: "b", copiedBytes: 1)
@@ -663,7 +663,7 @@ struct MCPExecutableSnapshotAdmissionTests {
     )
   }
 
-  private func close(_ directory: MCPExecutableSnapshot.PrivateDirectory) {
+  private func close(_ directory: MCPExecutableSnapshotPrivateDirectory) {
     Darwin.close(directory.descriptor)
     Darwin.close(directory.parentDescriptor)
     Darwin.close(directory.namespaceParentDescriptor)

@@ -4,5 +4,6 @@ import HexCore
 /// escape this quoted-data envelope into trusted inference instructions.
 struct AgentContextSummaryPayload: Encodable, Sendable {
   let previousSummary: String?
+  let currentTask: Message?
   let exchanges: [[Message]]
 }

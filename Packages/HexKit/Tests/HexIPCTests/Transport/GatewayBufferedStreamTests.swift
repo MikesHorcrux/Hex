@@ -167,7 +167,7 @@ struct GatewayBufferedStreamTests {
     #expect(try await iterator.next() == nil)
   }
 
-  private func enqueue(_ value: Data, into continuation: GatewayBufferedStream<Data>.Continuation)
+  private func enqueue(_ value: Data, into continuation: GatewayBufferedStreamContinuation<Data>)
     -> Bool
   {
     switch continuation.yield(value, wireBytes: value.count) {
@@ -188,8 +188,7 @@ struct GatewayBufferedStreamTests {
     }
   }
 
-  private func makeAbandonedStream(probe: CleanupProbe) -> GatewayBufferedStream<Data>.Continuation
-  {
+  private func makeAbandonedStream(probe: CleanupProbe) -> GatewayBufferedStreamContinuation<Data> {
     let pair = GatewayBufferedStream<Data>.makeStream(
       bufferCapacity: 8, maximumBufferedBytes: 1_024)
     pair.continuation.onTermination = { probe.record($0) }

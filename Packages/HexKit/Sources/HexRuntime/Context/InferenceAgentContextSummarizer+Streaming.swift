@@ -52,7 +52,8 @@ extension InferenceAgentContextSummarizer {
           }
           summaryText.append(text)
           guard
-            try estimatedInputTokens([Message(role: .user, content: [.text(summaryText)])])
+            try estimatedInputTokens(
+              [Message(role: .user, content: [.text(summaryText)])], model: request.model)
               <= request.maximumSummaryTokens
           else { throw AgentContextSummarizationError.invalidSummary }
         }
@@ -93,7 +94,7 @@ extension InferenceAgentContextSummarizer {
     try Task.checkCancellation()
     let text = summary.text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty, !text.contains("\0"),
-      try estimatedInputTokens([Message(role: .user, content: [.text(text)])])
+      try estimatedInputTokens([Message(role: .user, content: [.text(text)])], model: request.model)
         <= request.maximumSummaryTokens
     else { throw AgentContextSummarizationError.invalidSummary }
     return AgentContextSummaryResult(

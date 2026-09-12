@@ -7,7 +7,7 @@ public actor MacAccessibilityObservationLedger {
   private let now: @Sendable () -> UInt64
   private let lifetimeNanoseconds: UInt64
   private let maximumEntries: Int
-  private var entries: [String: Entry] = [:]
+  private var entries: [String: MacAccessibilityObservationLedgerEntry] = [:]
 
   public init(
     lifetimeNanoseconds: UInt64 = 60_000_000_000, maximumEntries: Int = 64,
@@ -32,7 +32,7 @@ public actor MacAccessibilityObservationLedger {
     guard entries.count < maximumEntries else { throw MacToolError.authorizationStateUnavailable }
     let current = now()
     let (expiry, overflow) = current.addingReportingOverflow(lifetimeNanoseconds)
-    entries[snapshot.observationID] = Entry(
+    entries[snapshot.observationID] = MacAccessibilityObservationLedgerEntry(
       runID: runID, snapshot: snapshot, capturedAt: current,
       expiresAt: overflow ? UInt64.max : expiry)
   }
@@ -79,10 +79,4 @@ public actor MacAccessibilityObservationLedger {
     entries = entries.filter { $0.value.capturedAt <= current && $0.value.expiresAt > current }
   }
 
-  private struct Entry: Sendable {
-    let runID: AgentRunID
-    let snapshot: MacAccessibilitySnapshot
-    let capturedAt: UInt64
-    let expiresAt: UInt64
-  }
 }

@@ -6,14 +6,6 @@ import Foundation
 /// The support boundary deliberately has no JSON or policy knowledge. Callers provide the
 /// bounded payload and remain responsible for decoding and validating their own records.
 enum JSONPersonalityStoreFileSupport {
-  enum Failure: Error, Equatable, Sendable {
-    case invalidFileURL
-    case unsafeFile
-    case lockFailure
-    case ioFailure
-    case tooLarge
-  }
-
   private static let lockRetryLimit = 40
   private static let lockRetryDelayMicroseconds: useconds_t = 25_000
 
@@ -47,7 +39,9 @@ enum JSONPersonalityStoreFileSupport {
     }
     guard descriptor >= 0 else {
       let openError = errno
-      throw openError == ELOOP ? Failure.unsafeFile : Failure.lockFailure
+      throw openError == ELOOP
+        ? JSONPersonalityStoreFileSupportFailure.unsafeFile
+        : JSONPersonalityStoreFileSupportFailure.lockFailure
     }
 
     defer {
@@ -56,7 +50,7 @@ enum JSONPersonalityStoreFileSupport {
 
     var lockStatus = stat()
     guard fstat(descriptor, &lockStatus) == 0 else {
-      throw Failure.lockFailure
+      throw JSONPersonalityStoreFileSupportFailure.lockFailure
     }
     try validateRegularFile(lockStatus, permissions: 0o600)
 
@@ -71,7 +65,7 @@ enum JSONPersonalityStoreFileSupport {
         continue
       }
       guard lockError == EWOULDBLOCK || lockError == EAGAIN else {
-        throw Failure.lockFailure
+        throw JSONPersonalityStoreFileSupportFailure.lockFailure
       }
       guard attempt + 1 < lockRetryLimit else {
         break
@@ -79,7 +73,7 @@ enum JSONPersonalityStoreFileSupport {
       usleep(lockRetryDelayMicroseconds)
     }
     guard didAcquire else {
-      throw Failure.lockFailure
+      throw JSONPersonalityStoreFileSupportFailure.lockFailure
     }
     defer {
       _ = flock(descriptor, LOCK_UN)
@@ -99,7 +93,9 @@ enum JSONPersonalityStoreFileSupport {
       if openError == ENOENT {
         return nil
       }
-      throw openError == ELOOP ? Failure.unsafeFile : Failure.ioFailure
+      throw openError == ELOOP
+        ? JSONPersonalityStoreFileSupportFailure.unsafeFile
+        : JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     defer {
       _ = Darwin.close(descriptor)
@@ -107,7 +103,7 @@ enum JSONPersonalityStoreFileSupport {
 
     var initialStatus = stat()
     guard fstat(descriptor, &initialStatus) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     try validateRegularFile(initialStatus, permissions: 0o600)
     guard
@@ -115,7 +111,7 @@ enum JSONPersonalityStoreFileSupport {
       initialStatus.st_size <= off_t(maximumBytes),
       let expectedSize = Int(exactly: initialStatus.st_size)
     else {
-      throw Failure.tooLarge
+      throw JSONPersonalityStoreFileSupportFailure.tooLarge
     }
 
     var data = Data()
@@ -134,19 +130,19 @@ enum JSONPersonalityStoreFileSupport {
       } else if count < 0, errno == EINTR {
         continue
       } else {
-        throw Failure.ioFailure
+        throw JSONPersonalityStoreFileSupportFailure.ioFailure
       }
     }
 
     var finalStatus = stat()
     guard fstat(descriptor, &finalStatus) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     guard
       sameIdentity(initialStatus, finalStatus),
       finalStatus.st_size == initialStatus.st_size
     else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
     return data
   }
@@ -157,7 +153,7 @@ enum JSONPersonalityStoreFileSupport {
     maximumBytes: Int
   ) throws {
     guard data.count <= maximumBytes else {
-      throw Failure.tooLarge
+      throw JSONPersonalityStoreFileSupportFailure.tooLarge
     }
     try validateExistingDestination(fileURL: fileURL)
 
@@ -174,7 +170,7 @@ enum JSONPersonalityStoreFileSupport {
       )
     }
     guard descriptor >= 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
 
     var didRename = false
@@ -191,16 +187,16 @@ enum JSONPersonalityStoreFileSupport {
 
     var temporaryStatus = stat()
     guard fstat(descriptor, &temporaryStatus) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     try validateRegularFile(temporaryStatus, permissions: 0o600)
     try write(data, to: descriptor)
     guard Darwin.fsync(descriptor) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     guard Darwin.close(descriptor) == 0 else {
       descriptor = -1
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     descriptor = -1
 
@@ -210,7 +206,7 @@ enum JSONPersonalityStoreFileSupport {
       }
     }
     guard renameResult == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     didRename = true
 
@@ -218,36 +214,36 @@ enum JSONPersonalityStoreFileSupport {
       Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     }
     guard finalDescriptor >= 0 else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
     defer {
       _ = Darwin.close(finalDescriptor)
     }
     var finalStatus = stat()
     guard fstat(finalDescriptor, &finalStatus) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     try validateRegularFile(finalStatus, permissions: 0o600)
     guard sameIdentity(temporaryStatus, finalStatus) else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
 
     let directoryDescriptor = directoryURL.path.withCString { path in
       Darwin.open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     }
     guard directoryDescriptor >= 0 else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
     defer {
       _ = Darwin.close(directoryDescriptor)
     }
     var directoryStatus = stat()
     guard fstat(directoryDescriptor, &directoryStatus) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     try validatePrivateDirectory(directoryStatus)
     guard Darwin.fsync(directoryDescriptor) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
   }
 
@@ -255,7 +251,7 @@ enum JSONPersonalityStoreFileSupport {
     let directoryURL = fileURL.deletingLastPathComponent()
     let components = directoryURL.path.split(separator: "/", omittingEmptySubsequences: true)
     guard !components.isEmpty else {
-      throw Failure.invalidFileURL
+      throw JSONPersonalityStoreFileSupportFailure.invalidFileURL
     }
 
     var currentURL = URL(fileURLWithPath: "/", isDirectory: true)
@@ -265,22 +261,22 @@ enum JSONPersonalityStoreFileSupport {
       var pathStatus = stat()
       if lstat(currentURL.path, &pathStatus) != 0 {
         guard errno == ENOENT else {
-          throw Failure.unsafeFile
+          throw JSONPersonalityStoreFileSupportFailure.unsafeFile
         }
         if Darwin.mkdir(currentURL.path, S_IRWXU) != 0, errno != EEXIST {
-          throw Failure.ioFailure
+          throw JSONPersonalityStoreFileSupportFailure.ioFailure
         }
         guard lstat(currentURL.path, &pathStatus) == 0 else {
-          throw Failure.ioFailure
+          throw JSONPersonalityStoreFileSupportFailure.ioFailure
         }
       }
       if pathStatus.st_mode & S_IFMT == S_IFLNK {
         guard isTrustedVarAlias(currentURL, status: pathStatus) else {
-          throw Failure.unsafeFile
+          throw JSONPersonalityStoreFileSupportFailure.unsafeFile
         }
       } else {
         guard pathStatus.st_mode & S_IFMT == S_IFDIR else {
-          throw Failure.unsafeFile
+          throw JSONPersonalityStoreFileSupportFailure.unsafeFile
         }
       }
       if index == components.count - 1 {
@@ -292,7 +288,7 @@ enum JSONPersonalityStoreFileSupport {
       Darwin.open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     }
     guard descriptor >= 0 else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
     defer {
       _ = Darwin.close(descriptor)
@@ -300,17 +296,17 @@ enum JSONPersonalityStoreFileSupport {
 
     var descriptorStatus = stat()
     guard fstat(descriptor, &descriptorStatus) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
     guard
       let expectedDirectoryStatus,
       sameIdentity(expectedDirectoryStatus, descriptorStatus)
     else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
     try validatePrivateDirectory(descriptorStatus)
     guard fchmod(descriptor, S_IRWXU) == 0 else {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
   }
 
@@ -318,7 +314,7 @@ enum JSONPersonalityStoreFileSupport {
     var status = stat()
     guard lstat(fileURL.path, &status) == 0 else {
       guard errno == ENOENT else {
-        throw Failure.unsafeFile
+        throw JSONPersonalityStoreFileSupportFailure.unsafeFile
       }
       return
     }
@@ -329,12 +325,12 @@ enum JSONPersonalityStoreFileSupport {
     do {
       try data.withUnsafeBytes { rawBuffer in
         guard data.isEmpty || rawBuffer.baseAddress != nil else {
-          throw Failure.ioFailure
+          throw JSONPersonalityStoreFileSupportFailure.ioFailure
         }
         var offset = 0
         while offset < data.count {
           guard let baseAddress = rawBuffer.baseAddress else {
-            throw Failure.ioFailure
+            throw JSONPersonalityStoreFileSupportFailure.ioFailure
           }
           let written = Darwin.write(
             descriptor,
@@ -346,14 +342,14 @@ enum JSONPersonalityStoreFileSupport {
           } else if written < 0, errno == EINTR {
             continue
           } else {
-            throw Failure.ioFailure
+            throw JSONPersonalityStoreFileSupportFailure.ioFailure
           }
         }
       }
-    } catch let error as Failure {
+    } catch let error as JSONPersonalityStoreFileSupportFailure {
       throw error
     } catch {
-      throw Failure.ioFailure
+      throw JSONPersonalityStoreFileSupportFailure.ioFailure
     }
   }
 
@@ -364,7 +360,7 @@ enum JSONPersonalityStoreFileSupport {
       status.st_nlink == 1,
       status.st_mode & 0o777 == permissions
     else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
   }
 
@@ -374,7 +370,7 @@ enum JSONPersonalityStoreFileSupport {
       status.st_uid == geteuid(),
       status.st_mode & 0o777 == 0o700
     else {
-      throw Failure.unsafeFile
+      throw JSONPersonalityStoreFileSupportFailure.unsafeFile
     }
   }
 

@@ -186,27 +186,34 @@ extension SQLiteJournalMigrator {
     }
   }
 
-  private static func validateSchemaObjects(
+  static func validateSchemaObjects(
     runsSQL: String,
     eventRecordsSQL: String,
     checkpointsSQL: String,
     connection: SQLiteConnection,
     maximumTextBytes: Int
   ) throws {
+    let version = try schemaVersion(connection: connection)
+    let additions =
+      (version >= 4 ? conversationSchemaObjects : [])
+      + (version >= 5 ? taskSchemaObjects : [])
+      + (version >= 6 ? conversationTaskSchemaObjects : [])
+      + (version >= 7 ? processSchemaObjects : [])
+    let count = 8 + additions.count
     let statement = try connection.prepare(
-      "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master LIMIT 9"
+      "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master LIMIT \(count + 1)"
     )
     var actual: [String] = []
     var rootPages: Set<Int64> = []
     while try statement.step() == .row {
-      guard actual.count < 8 else {
+      guard actual.count < count else {
         throw SQLiteAgentEventJournalError.corruptSchema(
           "sqlite_schema contains unexpected or behaviorally modified objects."
         )
       }
       let type = try statement.columnText(at: 0, maximumBytes: maximumTextBytes)
-      let name = try statement.columnText(at: 1, maximumBytes: maximumTextBytes)
-      let table = try statement.columnText(at: 2, maximumBytes: maximumTextBytes)
+      let name = try statement.columnText(at: 1, maximumBytes: max(128, maximumTextBytes))
+      let table = try statement.columnText(at: 2, maximumBytes: max(128, maximumTextBytes))
       let rootPage = try statement.columnInt64(at: 3)
       guard rootPage > 0, rootPages.insert(rootPage).inserted else {
         throw SQLiteAgentEventJournalError.corruptSchema(
@@ -221,56 +228,57 @@ extension SQLiteJournalMigrator {
     }
     actual.sort()
 
-    let expected = [
-      schemaObjectKey(
-        type: "index",
-        name: "event_records_run_kind_tool_call_idx",
-        table: "event_records",
-        sql: metadataIndexSQL
-      ),
-      schemaObjectKey(
-        type: "index",
-        name: "sqlite_autoindex_event_records_1",
-        table: "event_records",
-        sql: nil
-      ),
-      schemaObjectKey(
-        type: "index",
-        name: "sqlite_autoindex_event_records_2",
-        table: "event_records",
-        sql: nil
-      ),
-      schemaObjectKey(
-        type: "index",
-        name: "sqlite_autoindex_journal_checkpoints_1",
-        table: "journal_checkpoints",
-        sql: nil
-      ),
-      schemaObjectKey(
-        type: "index",
-        name: "sqlite_autoindex_runs_1",
-        table: "runs",
-        sql: nil
-      ),
-      schemaObjectKey(
-        type: "table",
-        name: "event_records",
-        table: "event_records",
-        sql: eventRecordsSQL
-      ),
-      schemaObjectKey(
-        type: "table",
-        name: "journal_checkpoints",
-        table: "journal_checkpoints",
-        sql: checkpointsSQL
-      ),
-      schemaObjectKey(
-        type: "table",
-        name: "runs",
-        table: "runs",
-        sql: runsSQL
-      ),
-    ].sorted()
+    let expected =
+      ([
+        schemaObjectKey(
+          type: "index",
+          name: "event_records_run_kind_tool_call_idx",
+          table: "event_records",
+          sql: metadataIndexSQL
+        ),
+        schemaObjectKey(
+          type: "index",
+          name: "sqlite_autoindex_event_records_1",
+          table: "event_records",
+          sql: nil
+        ),
+        schemaObjectKey(
+          type: "index",
+          name: "sqlite_autoindex_event_records_2",
+          table: "event_records",
+          sql: nil
+        ),
+        schemaObjectKey(
+          type: "index",
+          name: "sqlite_autoindex_journal_checkpoints_1",
+          table: "journal_checkpoints",
+          sql: nil
+        ),
+        schemaObjectKey(
+          type: "index",
+          name: "sqlite_autoindex_runs_1",
+          table: "runs",
+          sql: nil
+        ),
+        schemaObjectKey(
+          type: "table",
+          name: "event_records",
+          table: "event_records",
+          sql: eventRecordsSQL
+        ),
+        schemaObjectKey(
+          type: "table",
+          name: "journal_checkpoints",
+          table: "journal_checkpoints",
+          sql: checkpointsSQL
+        ),
+        schemaObjectKey(
+          type: "table",
+          name: "runs",
+          table: "runs",
+          sql: runsSQL
+        ),
+      ] + additions).sorted()
 
     guard actual == expected else {
       throw SQLiteAgentEventJournalError.corruptSchema(
@@ -314,6 +322,18 @@ extension SQLiteJournalMigrator {
       "runs": 5,
       "event_records": 8,
       "journal_checkpoints": 5,
+      "conversation_documents": 11,
+      "conversation_entries": 6,
+      "conversation_settings": 2,
+      "run_validation": 4,
+      "agent_task_effects": 4,
+      "agent_tasks": 4,
+      "agent_task_attempts": 3,
+      "conversation_tasks": 3,
+      "conversation_timeline": 4,
+      "process_sessions": 4,
+      "process_operations": 3,
+      "process_segments": 4, "coding_baselines": 2, "coding_patches": 5,
     ]
     let statement = try connection.prepare("PRAGMA table_list")
     var validatedNames: Set<String> = []
@@ -346,7 +366,7 @@ extension SQLiteJournalMigrator {
     }
   }
 
-  private static func schemaObjectKey(
+  static func schemaObjectKey(
     type: String,
     name: String,
     table: String,

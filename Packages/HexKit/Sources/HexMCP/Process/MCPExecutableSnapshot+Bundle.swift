@@ -3,13 +3,13 @@ import Foundation
 
 extension MCPExecutableSnapshot {
   static func createBundleSnapshot(
-    layout: BundleLayout,
+    layout: MCPExecutableSnapshotBundleLayout,
     sourceDescriptor: Int32,
     initialStatus: stat,
-    destination: PrivateDirectory,
-    copyState: inout CopyState,
+    destination: MCPExecutableSnapshotPrivateDirectory,
+    copyState: inout MCPExecutableSnapshotCopyState,
     afterSourceValidation: (@Sendable (_ snapshotPath: String) -> Void)?,
-    trustedXcodeBundle: TrustedXcodeBundle? = nil
+    trustedXcodeBundle: MCPExecutableSnapshotTrustedXcodeBundle? = nil
   ) throws -> (descriptor: Int32, status: stat) {
     let sourceRootDescriptor: Int32
     if let trustedXcodeBundle {
@@ -79,7 +79,7 @@ extension MCPExecutableSnapshot {
         beneath: destination.descriptor
       ) {
         try copyDependencyClosure(
-          initialImage: ImageRecord(
+          initialImage: MCPExecutableSnapshotImageRecord(
             sourceRelativePath: layout.executableRelativePath,
             snapshotRelativePath: layout.executableRelativePath,
             image: image,
@@ -111,11 +111,11 @@ extension MCPExecutableSnapshot {
   }
 
   private static func copyDependencyClosure(
-    initialImage: ImageRecord,
-    layout: BundleLayout,
+    initialImage: MCPExecutableSnapshotImageRecord,
+    layout: MCPExecutableSnapshotBundleLayout,
     sourceRootDescriptor: Int32,
     destinationRootDescriptor: Int32,
-    copyState: inout CopyState
+    copyState: inout MCPExecutableSnapshotCopyState
   ) throws {
     var images = [initialImage]
     var scannedImages: Set<String> = [initialImage.snapshotRelativePath]
@@ -224,7 +224,7 @@ extension MCPExecutableSnapshot {
             throw MCPClientSessionError.connectionClosed
           }
           images.append(
-            ImageRecord(
+            MCPExecutableSnapshotImageRecord(
               sourceRelativePath: sourcePath,
               snapshotRelativePath: snapshotPath,
               image: dependencyImage,
@@ -238,16 +238,16 @@ extension MCPExecutableSnapshot {
   }
 
   private static func resolveDependency(
-    _ dependency: MCPMachOImage.Dependency,
+    _ dependency: MCPMachOImageDependency,
     sourceImagePath: String,
     snapshotImagePath: String,
-    sourceSearchRunpaths: [ExpandedRunpath],
-    snapshotSearchRunpaths: [ExpandedRunpath],
+    sourceSearchRunpaths: [MCPExecutableSnapshotExpandedRunpath],
+    snapshotSearchRunpaths: [MCPExecutableSnapshotExpandedRunpath],
     sourceExecutablePath: String,
     snapshotExecutablePath: String,
     sourceRootDescriptor: Int32,
     allowsTrustedHardLinks: Bool
-  ) throws -> ResolvedDependency? {
+  ) throws -> MCPExecutableSnapshotResolvedDependency? {
     if dependency.path.hasPrefix("/") {
       if isTrustedSystemPath(dependency.path) { return nil }
       throw MCPClientSessionError.connectionClosed
@@ -314,7 +314,7 @@ extension MCPExecutableSnapshot {
             sourceCandidate: sourcePath,
             snapshotCandidate: snapshotPath
           )
-          return ResolvedDependency(
+          return MCPExecutableSnapshotResolvedDependency(
             sourceRelativePath: source.relativePath,
             snapshotRelativePath: resolvedSnapshotPath,
             descriptor: source.file.descriptor,
@@ -366,7 +366,7 @@ extension MCPExecutableSnapshot {
         sourceCandidate: sourcePath,
         snapshotCandidate: snapshotPath
       )
-      return ResolvedDependency(
+      return MCPExecutableSnapshotResolvedDependency(
         sourceRelativePath: source.relativePath,
         snapshotRelativePath: resolvedSnapshotPath,
         descriptor: source.file.descriptor,
@@ -517,7 +517,7 @@ extension MCPExecutableSnapshot {
     }
     var directoryDescriptors = [packageDescriptor]
     var directoryPaths = [packageRoot]
-    var symlinkBindings: [FrameworkSymlinkBinding] = []
+    var symlinkBindings: [MCPExecutableSnapshotFrameworkSymlinkBinding] = []
     var visitedSymlinks = Set<String>()
     var pendingComponents = parentSuffix + targetComponents
     var componentIndex = 0
@@ -685,7 +685,7 @@ extension MCPExecutableSnapshot {
           throw MCPClientSessionError.connectionClosed
         }
         symlinkBindings.append(
-          FrameworkSymlinkBinding(
+          MCPExecutableSnapshotFrameworkSymlinkBinding(
             parentDescriptor: parentDuplicate,
             name: component,
             status: componentStatus,
@@ -837,7 +837,7 @@ extension MCPExecutableSnapshot {
   }
 
   private static func revalidateFrameworkSymlinkBindings(
-    _ bindings: [FrameworkSymlinkBinding],
+    _ bindings: [MCPExecutableSnapshotFrameworkSymlinkBinding],
     requiresRootOwnership: Bool = false
   ) throws {
     for binding in bindings {
@@ -871,14 +871,14 @@ extension MCPExecutableSnapshot {
 
   private static func expandedRunpaths(
     _ runpaths: [String],
-    inherited: [ExpandedRunpath],
+    inherited: [MCPExecutableSnapshotExpandedRunpath],
     imageDirectory: String,
     executableDirectory: String,
-    layout: BundleLayout,
+    layout: MCPExecutableSnapshotBundleLayout,
     allowAbsoluteBundlePath: Bool
-  ) throws -> [ExpandedRunpath] {
-    var result: [ExpandedRunpath] = []
-    var seen = Set<ExpandedRunpath>()
+  ) throws -> [MCPExecutableSnapshotExpandedRunpath] {
+    var result: [MCPExecutableSnapshotExpandedRunpath] = []
+    var seen = Set<MCPExecutableSnapshotExpandedRunpath>()
     var byteCount = Int64(0)
     for runpath in runpaths {
       if let expanded = expandRunpath(
@@ -898,8 +898,8 @@ extension MCPExecutableSnapshot {
   }
 
   private static func appendRunpath(
-    _ runpath: ExpandedRunpath,
-    to result: inout [ExpandedRunpath],
+    _ runpath: MCPExecutableSnapshotExpandedRunpath,
+    to result: inout [MCPExecutableSnapshotExpandedRunpath],
     byteCount: inout Int64
   ) throws {
     let (nextByteCount, overflowed) = byteCount.addingReportingOverflow(
@@ -920,12 +920,12 @@ extension MCPExecutableSnapshot {
     _ runpath: String,
     imageDirectory: String,
     executableDirectory: String,
-    layout: BundleLayout,
+    layout: MCPExecutableSnapshotBundleLayout,
     allowAbsoluteBundlePath: Bool
-  ) -> ExpandedRunpath? {
+  ) -> MCPExecutableSnapshotExpandedRunpath? {
     if runpath.hasPrefix("/") {
       if isTrustedSystemPath(runpath) {
-        return ExpandedRunpath(
+        return MCPExecutableSnapshotExpandedRunpath(
           relativePath: runpath,
           isTrustedSystemPath: true,
           isExternalPath: false
@@ -933,7 +933,7 @@ extension MCPExecutableSnapshot {
       }
       let rootPrefix = layout.rootPath + "/"
       guard allowAbsoluteBundlePath, runpath.hasPrefix(rootPrefix) else {
-        return ExpandedRunpath(
+        return MCPExecutableSnapshotExpandedRunpath(
           relativePath: runpath,
           isTrustedSystemPath: false,
           isExternalPath: true
@@ -941,13 +941,13 @@ extension MCPExecutableSnapshot {
       }
       let relativePath = String(runpath.dropFirst(rootPrefix.count))
       guard let normalized = normalizeRelativePath(relativePath, relativeTo: "") else {
-        return ExpandedRunpath(
+        return MCPExecutableSnapshotExpandedRunpath(
           relativePath: runpath,
           isTrustedSystemPath: false,
           isExternalPath: true
         )
       }
-      return ExpandedRunpath(
+      return MCPExecutableSnapshotExpandedRunpath(
         relativePath: normalized,
         isTrustedSystemPath: false,
         isExternalPath: false
@@ -957,13 +957,13 @@ extension MCPExecutableSnapshot {
       let suffix = String(runpath.dropFirst("@loader_path".count))
         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
       guard let normalized = normalizeRelativePath(suffix, relativeTo: imageDirectory) else {
-        return ExpandedRunpath(
+        return MCPExecutableSnapshotExpandedRunpath(
           relativePath: runpath,
           isTrustedSystemPath: false,
           isExternalPath: true
         )
       }
-      return ExpandedRunpath(
+      return MCPExecutableSnapshotExpandedRunpath(
         relativePath: normalized,
         isTrustedSystemPath: false,
         isExternalPath: false
@@ -973,26 +973,26 @@ extension MCPExecutableSnapshot {
       let suffix = String(runpath.dropFirst("@executable_path".count))
         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
       guard let normalized = normalizeRelativePath(suffix, relativeTo: executableDirectory) else {
-        return ExpandedRunpath(
+        return MCPExecutableSnapshotExpandedRunpath(
           relativePath: runpath,
           isTrustedSystemPath: false,
           isExternalPath: true
         )
       }
-      return ExpandedRunpath(
+      return MCPExecutableSnapshotExpandedRunpath(
         relativePath: normalized,
         isTrustedSystemPath: false,
         isExternalPath: false
       )
     }
-    return ExpandedRunpath(
+    return MCPExecutableSnapshotExpandedRunpath(
       relativePath: runpath,
       isTrustedSystemPath: false,
       isExternalPath: true
     )
   }
 
-  static func bundleLayout(for sourcePath: String) -> BundleLayout? {
+  static func bundleLayout(for sourcePath: String) -> MCPExecutableSnapshotBundleLayout? {
     guard sourcePath.hasPrefix("/"), !sourcePath.contains("\0") else { return nil }
     let standardizedPath = (sourcePath as NSString).standardizingPath
     let components = (standardizedPath as NSString).pathComponents
@@ -1008,7 +1008,8 @@ extension MCPExecutableSnapshot {
     else {
       return nil
     }
-    return BundleLayout(rootPath: rootPath, executableRelativePath: executableRelativePath)
+    return MCPExecutableSnapshotBundleLayout(
+      rootPath: rootPath, executableRelativePath: executableRelativePath)
   }
 
   private static func frameworkPackagePath(containing relativePath: String) -> String? {

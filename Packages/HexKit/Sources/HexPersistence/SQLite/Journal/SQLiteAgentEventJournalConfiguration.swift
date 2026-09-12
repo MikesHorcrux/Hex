@@ -2,6 +2,13 @@ import Foundation
 
 /// Durable-journal limits and deterministic dependencies.
 public struct SQLiteAgentEventJournalConfiguration: Sendable {
+  public let integrityPolicy: SQLiteJournalIntegrityPolicy
+  var auditRunLimit: Int { integrityPolicy == .incremental ? Int.max - 1 : maximumRecoveryRunCount }
+  var auditRecordLimit: Int {
+    integrityPolicy == .incremental ? Int.max - 1 : maximumRecoveryRecordCount
+  }
+  var auditByteLimit: Int { integrityPolicy == .incremental ? Int.max - 1 : maximumRecoveryBytes }
+
   static let hardMaximumBusyTimeoutMilliseconds = 60_000
   static let hardMaximumReadLimit = 10_000
   static let hardMaximumPayloadBytes = 16 * 1_024 * 1_024
@@ -29,6 +36,7 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
 
   public init(
     databaseURL: URL,
+    integrityPolicy: SQLiteJournalIntegrityPolicy = .boundedArchive,
     busyTimeoutMilliseconds: Int = 5_000,
     maximumReadLimit: Int = 1_000,
     maximumPayloadBytes: Int = 8 * 1_024 * 1_024,
@@ -42,6 +50,7 @@ public struct SQLiteAgentEventJournalConfiguration: Sendable {
     uuidGenerator: @escaping @Sendable () -> UUID = { UUID() }
   ) {
     self.databaseURL = databaseURL
+    self.integrityPolicy = integrityPolicy
     self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
     self.maximumReadLimit = maximumReadLimit
     self.maximumPayloadBytes = maximumPayloadBytes

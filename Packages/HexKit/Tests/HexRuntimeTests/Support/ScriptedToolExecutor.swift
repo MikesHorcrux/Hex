@@ -2,6 +2,7 @@ import HexCore
 
 actor ScriptedToolExecutor: ToolExecutor {
   private let tools: [ToolDefinition]
+  private var discoverySnapshots: [[ToolDefinition]]
   private let discoveryFails: Bool
   private var behaviors: [ToolExecutorBehavior]
   private var authorizationBehaviors: [ToolAuthorizationBehavior]
@@ -15,12 +16,14 @@ actor ScriptedToolExecutor: ToolExecutor {
     tools: [ToolDefinition],
     behaviors: [ToolExecutorBehavior] = [],
     authorizationBehaviors: [ToolAuthorizationBehavior] = [],
-    discoveryFails: Bool = false
+    discoveryFails: Bool = false,
+    discoverySnapshots: [[ToolDefinition]] = []
   ) {
     self.tools = tools
     self.behaviors = behaviors
     self.authorizationBehaviors = authorizationBehaviors
     self.discoveryFails = discoveryFails
+    self.discoverySnapshots = discoverySnapshots
   }
 
   func availableTools() async throws -> [ToolDefinition] {
@@ -28,7 +31,7 @@ actor ScriptedToolExecutor: ToolExecutor {
     if discoveryFails {
       throw ScriptedToolExecutorError.discovery
     }
-    return tools
+    return discoverySnapshots.isEmpty ? tools : discoverySnapshots.removeFirst()
   }
 
   func authorizationRequest(

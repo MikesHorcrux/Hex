@@ -1,4 +1,4 @@
-enum SQLiteAuthorizationCorrelatedToolState: Equatable {
+enum SQLiteAuthorizationCorrelatedToolState: Codable, Equatable {
   case requested
   case allowedAwaitingStart
   case allowedStarted

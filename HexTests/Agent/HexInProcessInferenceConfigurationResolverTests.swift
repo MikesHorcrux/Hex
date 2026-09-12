@@ -78,7 +78,7 @@ struct HexInProcessInferenceConfigurationResolverTests {
     do {
       _ = try await resolver.resolve()
       Issue.record("Expected \(backend.rawValue) to fail closed without an adapter.")
-    } catch let error as HexInProcessInferenceConfigurationResolver.ResolutionError {
+    } catch let error as HexInProcessInferenceResolutionError {
       #expect(error == .unsupportedBackend(backend))
       #expect(!error.localizedDescription.contains("fallback"))
     }

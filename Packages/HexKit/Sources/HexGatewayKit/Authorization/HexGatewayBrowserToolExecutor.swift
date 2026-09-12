@@ -107,8 +107,25 @@ public actor HexGatewayBrowserToolExecutor: ToolExecutor {
   public func authorizationRequest(for call: ToolCall, in context: ToolExecutionContext)
     async throws -> AuthorizationRequest
   {
-    // Keep the exact original call and its correlation at the authorization boundary.
-    try await base.authorizationRequest(for: call, in: context)
+    let request = try await base.authorizationRequest(for: call, in: context)
+    // Only this host-owned adapter can identify these exact, non-writing observation shapes.
+    // MCP descriptions and read-only hints never grant this capability. Approval is still
+    // required by the same policy; the capability only distinguishes repeatable observation.
+    let name = Self.remoteName(call.name)
+    let inlineSnapshot =
+      name == "browser_snapshot"
+      && Set(call.arguments.keys).isSubset(of: ["boxes"])
+      && (call.arguments["boxes"] == nil || call.arguments["boxes"] == .boolean(true)
+        || call.arguments["boxes"] == .boolean(false))
+    let tabList =
+      name == "browser_tabs" && call.arguments["action"] == .string("list")
+      && Set(call.arguments.keys).isSubset(of: ["action", Self.observationKey])
+    guard inlineSnapshot || tabList else { return request }
+    return AuthorizationRequest(
+      id: request.id, runID: request.runID, toolCallID: request.toolCallID,
+      capability: CapabilityID(rawValue: "browser.session.observe"),
+      operation: request.operation, resource: request.resource, details: request.details,
+      explanation: request.explanation)
   }
 
   public func execute(_ call: ToolCall, in context: ToolExecutionContext) async throws -> ToolResult
@@ -198,7 +215,7 @@ public actor HexGatewayBrowserToolExecutor: ToolExecutor {
               "Playwright rejected an obsolete element reference before input dispatch. "
                 + "Take a full browser_snapshot and reconsider the action from current state. "
                 + "The original action was not automatically repeated."),
-          ])
+          ], executionOutcome: .completed)
       }
       return annotated(
         result,
@@ -247,17 +264,20 @@ public actor HexGatewayBrowserToolExecutor: ToolExecutor {
     return result
   }
 
+  // These refusals are produced before calling the adapter. Persist their known outcome so
+  // a later budget stop does not turn a rejected browser action into an uncertain mutation.
   private func blocked(_ call: ToolCall, code: String, message: String) -> ToolResult {
     ToolResult(
       toolCallID: call.id, status: .failure,
       output: .object([
         "error": .string(code), "browser_action_dispatched": .boolean(false),
         "recovery": .string(message),
-      ]), content: [.text(message)])
+      ]), content: [.text(message)], executionOutcome: .completed)
   }
 
   private func annotated(
-    _ result: ToolResult, metadata: [String: JSONValue], requiresUserAttention: Bool = false
+    _ result: ToolResult, metadata: [String: JSONValue], requiresUserAttention: Bool = false,
+    executionOutcome: ToolExecutionOutcome? = nil
   ) -> ToolResult {
     var output: [String: JSONValue]
     if case .object(let existing) = result.output {
@@ -275,7 +295,8 @@ public actor HexGatewayBrowserToolExecutor: ToolExecutor {
       content: result.content + (instructions.isEmpty ? [] : [.text(instructions)]),
       artifacts: result.artifacts,
       requiresUserAttention: requiresUserAttention || result.requiresUserAttention,
-      notExecutedReason: result.notExecutedReason)
+      notExecutedReason: result.notExecutedReason,
+      executionOutcome: executionOutcome ?? result.executionOutcome)
   }
 
   private static func remoteName(_ name: String) -> String? {
