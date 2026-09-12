@@ -29,6 +29,12 @@ if [[ "${HEX_SKIP_GATEWAY_STAGING_FOR_TESTS:-NO}" == "YES" ]]; then
     exit 0
 fi
 
+case "${CONFIGURATION:-Debug}" in
+    Debug) readonly GATEWAY_CONFIGURATION="debug" ;;
+    Release) readonly GATEWAY_CONFIGURATION="release" ;;
+    *) echo "Unsupported Hex build configuration." >&2; exit 1 ;;
+esac
+
 temporary_directory=""
 helper_entitlements=""
 helper_signed_entitlements=""
@@ -152,7 +158,7 @@ build_gateway() {
         --package-path "$ROOT_DIR/Packages/HexKit" \
         --scratch-path "$GATEWAY_BUILD_PATH" \
         --product HexGateway \
-        --configuration debug \
+        --configuration "$GATEWAY_CONFIGURATION" \
         -j 1
 }
 
@@ -223,7 +229,7 @@ gateway_bin_path="$({
         --package-path "$ROOT_DIR/Packages/HexKit" \
         --scratch-path "$GATEWAY_BUILD_PATH" \
         --product HexGateway \
-        --configuration debug \
+        --configuration "$GATEWAY_CONFIGURATION" \
         --show-bin-path
 })"
 [[ -x "$gateway_bin_path/HexGateway" ]] \

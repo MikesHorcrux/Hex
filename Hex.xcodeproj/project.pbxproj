@@ -288,7 +288,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "if [[ \"$CONFIGURATION\" != \"Debug\" ]]; then\n    echo \"HexGateway staging is currently supported only for Debug builds.\" >&2\n    exit 1\nfi\nif [[ \"$CODE_SIGNING_ALLOWED\" != \"YES\" ]]; then\n    echo \"A usable Hex Debug app requires signing so its resident gateway can share protected credentials.\" >&2\n    exit 1\nfi\n\"$PROJECT_DIR/script/stage_gateway.sh\" \\\n    \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" \\\n    \"$MARKETING_VERSION\" \\\n    \"$CURRENT_PROJECT_VERSION\" \\\n    \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n    \"$PRODUCT_BUNDLE_IDENTIFIER\" \\\n    \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\n";
+			shellScript = "if [[ \"$CODE_SIGNING_ALLOWED\" != \"YES\" ]]; then\n    echo \"A usable Hex app requires signing so its resident gateway can share protected credentials.\" >&2\n    exit 1\nfi\n\"$PROJECT_DIR/script/stage_gateway.sh\" \\\n    \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" \\\n    \"$MARKETING_VERSION\" \\\n    \"$CURRENT_PROJECT_VERSION\" \\\n    \"$EXPANDED_CODE_SIGN_IDENTITY\" \\\n    \"$PRODUCT_BUNDLE_IDENTIFIER\" \\\n    \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -493,13 +493,16 @@
 		7FCF296E3044FB770069F58B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_ENTITLEMENTS = Config/Hex.Release.entitlements;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 5V5PZUN2HG;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
