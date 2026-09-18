@@ -4,6 +4,7 @@ public enum HexInferenceBackendKind:
 {
   case openAIResponses = "openai-responses"
   case mlxLocal = "mlx-local"
+  case llamaCppLocal = "llama-cpp-local"
 
   public var id: String { rawValue }
 
@@ -13,6 +14,8 @@ public enum HexInferenceBackendKind:
       "OpenAI"
     case .mlxLocal:
       "Local MLX"
+    case .llamaCppLocal:
+      "Local GGUF (Prism)"
     }
   }
 
@@ -22,6 +25,8 @@ public enum HexInferenceBackendKind:
       "ChatGPT/Codex subscription or OpenAI API key"
     case .mlxLocal:
       "Run an existing model directory on this Mac"
+    case .llamaCppLocal:
+      "Connect Hex to a local Prism llama.cpp server"
     }
   }
 }

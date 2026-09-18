@@ -9,6 +9,11 @@ public enum HexInferenceBackendSettingsError: Error, Equatable, LocalizedError, 
   case invalidMLXDirectory
   case invalidMLXOutputTokens
   case invalidMLXContextWindow
+  case invalidLlamaModelID
+  case invalidLlamaDisplayName
+  case invalidLlamaEndpoint
+  case invalidLlamaOutputTokens
+  case invalidLlamaContextWindow
 
   public var errorDescription: String? {
     switch self {
@@ -26,6 +31,16 @@ public enum HexInferenceBackendSettingsError: Error, Equatable, LocalizedError, 
       "The MLX output-token limit is invalid."
     case .invalidMLXContextWindow:
       "The MLX context window is invalid."
+    case .invalidLlamaModelID:
+      "The llama.cpp model identifier is invalid."
+    case .invalidLlamaDisplayName:
+      "The llama.cpp model display name is invalid."
+    case .invalidLlamaEndpoint:
+      "The llama.cpp server endpoint is invalid."
+    case .invalidLlamaOutputTokens:
+      "The llama.cpp output-token limit is invalid."
+    case .invalidLlamaContextWindow:
+      "The llama.cpp context window is invalid."
     }
   }
 }

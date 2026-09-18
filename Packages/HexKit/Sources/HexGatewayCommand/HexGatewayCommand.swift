@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import HexGatewayKit
 import HexMLXProvider
+import HexProviders
 
 @main
 enum HexGatewayCommand {
@@ -16,6 +17,9 @@ enum HexGatewayCommand {
         let inferenceProviderFactory = HexGatewayInferenceProviderFactory(
           makeMLXProvider: { settings in
             try MLXLocalInferenceProviderBuilder().makeInferenceProvider(for: settings)
+          },
+          makeLlamaCppProvider: { settings in
+            try LlamaCppLocalInferenceProviderBuilder().makeInferenceProvider(for: settings)
           }
         )
         configuration = try await HexGatewayResidentConfiguration.loadPersisted(

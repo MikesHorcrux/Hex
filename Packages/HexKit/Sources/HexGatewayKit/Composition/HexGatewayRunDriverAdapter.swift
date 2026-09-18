@@ -77,7 +77,12 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
         workingDirectory: workingDirectory,
         options: request.options
       )
-      let coreMessages = [operatingContractMessage, selfMessage]
+      // The operating contract is stable Hex identity. The detailed self snapshot remains
+      // available through hex_inspect_self and is injected only for requests that are actually
+      // about Hex's runtime/provider/settings. This keeps normal conversation model-light while
+      // preserving an explicit self-diagnosis path.
+      let coreMessages = [operatingContractMessage]
+        + (Self.shouldInlineSelfKnowledge(in: request.initialMessages) ? [selfMessage] : [])
       let contextMessages: [Message]
       if let personalityContextService {
         guard let personalityMemoryQuery else {
@@ -124,5 +129,28 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       await journal.removeEmitter(for: request.runID)
       throw error
     }
+  }
+
+  private static func shouldInlineSelfKnowledge(in messages: [Message]) -> Bool {
+    let text = messages
+      .filter { $0.role == .user }
+      .flatMap { message in
+        message.content.compactMap { content in
+          if case .text(let value) = content { return value }
+          return nil
+        }
+      }
+      .joined(separator: " ")
+      .lowercased()
+    let terms = Set(
+      text.split { character in
+        !(character.isLetter || character.isNumber || character == "_")
+      }.map(String.init)
+    )
+    let selfTerms: Set<String> = [
+      "backend", "gateway", "hex", "inference", "model", "provider", "runtime", "settings",
+      "start", "stop", "broken", "crash", "debug", "install", "download"
+    ]
+    return !terms.isDisjoint(with: selfTerms)
   }
 }
