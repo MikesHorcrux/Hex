@@ -8,6 +8,7 @@ import HexMCP
 import HexPersistence
 import HexPersonality
 import HexProviders
+import HexRuntime
 
 /// Owns the headless gateway process lifetime. It composes the real provider/tool/runtime graph,
 /// advertises one user-session Mach service, and remains alive until launchd or an operator asks it
@@ -134,7 +135,10 @@ public final class HexGatewayResidentHost {
     )
     let personalityMemoryQuery = try PersonalMemoryQuery(
       scope: configuration.personalMemoryScope,
-      limit: 64
+      // Keep the persistent personality layer small. The runtime can still retrieve more memory
+      // explicitly through personal-memory tools; ordinary turns should not pay for the entire
+      // profile before the model has identified a need for it.
+      limit: 12
     )
     let compositionConfiguration = HexGatewayCompositionConfiguration(
       journalConfiguration: SQLiteAgentEventJournalConfiguration(
@@ -143,6 +147,7 @@ public final class HexGatewayResidentHost {
       inferenceProvider: inferenceProvider,
       toolExecutor: routedToolExecutor,
       authorizationProvider: authorizationProvider,
+      runtimeConfiguration: AgentRuntimeConfiguration(toolRouting: .standard),
       personalityContextService: personalityContextService,
       personalityMemoryQuery: personalityMemoryQuery,
       enforcedWorkingDirectory: configuration.workspaceRoot,

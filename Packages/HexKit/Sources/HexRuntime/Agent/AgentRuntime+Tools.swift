@@ -18,6 +18,27 @@ extension AgentRuntime {
     }
   }
 
+  func discoverTools(
+    for request: AgentRunRequest,
+    model: ModelDescriptor
+  ) async throws -> [ToolDefinition] {
+    if request.toolChoice == .automatic,
+      !toolRouter.shouldDiscoverTools(messages: request.initialMessages)
+    {
+      return []
+    }
+    let discovered = try await discoverTools()
+    try validateToolDefinitions(discovered)
+    let selected = toolRouter.select(
+      definitions: discovered,
+      messages: request.initialMessages,
+      model: model,
+      toolChoice: request.toolChoice
+    )
+    try validateToolSnapshot(selected, request: request, model: model)
+    return selected
+  }
+
   func processToolBatch(
     _ calls: [ToolCall],
     runID: AgentRunID,

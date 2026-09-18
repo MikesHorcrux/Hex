@@ -16,12 +16,18 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
     @Sendable (
       HexMLXBackendSettings
     ) throws -> any InferenceProvider
+  public typealias LlamaCppProviderBuilder =
+    @Sendable (
+      HexLlamaCppBackendSettings
+    ) throws -> any InferenceProvider
   private let makeOpenAIProvider: OpenAIProviderBuilder
   private let makeMLXProvider: MLXProviderBuilder?
+  private let makeLlamaCppProvider: LlamaCppProviderBuilder?
 
   public init(
     makeOpenAIProvider: OpenAIProviderBuilder? = nil,
     makeMLXProvider: MLXProviderBuilder? = nil,
+    makeLlamaCppProvider: LlamaCppProviderBuilder? = nil,
     makeChatGPTModelCatalog:
       @escaping @Sendable (any OpenAIResponsesAuthorizationProvider) ->
       any OpenAIModelCatalogLoading = {
@@ -37,6 +43,7 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
         )
       }
     self.makeMLXProvider = makeMLXProvider
+    self.makeLlamaCppProvider = makeLlamaCppProvider
   }
 
   /// Creates the provider for exactly the persisted selection.
@@ -68,6 +75,19 @@ public struct HexGatewayInferenceProviderFactory: Sendable {
         return try makeMLXProvider(settings.mlx)
       } catch {
         throw HexGatewayInferenceProviderFactoryError.providerInitializationFailed(.mlxLocal)
+      }
+
+    case .llamaCppLocal:
+      guard settings.llamaCpp.isConfigured else {
+        throw HexGatewayInferenceProviderFactoryError.backendNotConfigured(.llamaCppLocal)
+      }
+      guard let makeLlamaCppProvider else {
+        throw HexGatewayInferenceProviderFactoryError.providerUnavailable(.llamaCppLocal)
+      }
+      do {
+        return try makeLlamaCppProvider(settings.llamaCpp)
+      } catch {
+        throw HexGatewayInferenceProviderFactoryError.providerInitializationFailed(.llamaCppLocal)
       }
 
     }

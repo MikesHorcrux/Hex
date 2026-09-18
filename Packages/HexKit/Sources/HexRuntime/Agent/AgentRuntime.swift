@@ -9,6 +9,7 @@ public actor AgentRuntime {
   let contextEstimator: any AgentContextTokenEstimating
   let contextSummarizer: any AgentContextSummarizing
   let artifactWriter: (any ArtifactWriting)?
+  let toolRouter: AdaptiveAgentToolRouter
   var boundaryAuthorizations: [AgentRunID: Task<AuthorizationDecision, any Error>] = [:]
   var boundaryInferences: [AgentRunID: @Sendable () -> Void] = [:]
   var boundaryStops: Set<AgentRunID> = []
@@ -38,6 +39,7 @@ public actor AgentRuntime {
     self.configuration = configuration
     self.contextEstimator = contextEstimator
     self.artifactWriter = artifactWriter
+    self.toolRouter = AdaptiveAgentToolRouter(configuration: configuration.toolRouting)
     self.contextSummarizer =
       contextSummarizer
       ?? InferenceAgentContextSummarizer(
