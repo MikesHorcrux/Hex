@@ -68,6 +68,53 @@ struct HexStartAtLoginTests {
   }
 
   @Test @MainActor
+  func configuredButUnregisteredServiceIsRepairedAtStartup() async {
+    let controller = SpyController(status: .notFound)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .ready)
+    )
+
+    await model.ensureRegisteredForConfiguredAgent()
+
+    #expect(await controller.registerCallCount == 1)
+    #expect(model.status == .enabled)
+    #expect(model.message == nil)
+  }
+
+  @Test @MainActor
+  func enabledButUnreachableServiceIsRepairedAtStartup() async {
+    let events = LifecycleEvents()
+    let controller = SpyController(status: .enabled, events: events)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .ready),
+      connectionResetter: SpyConnectionResetter(events: events)
+    )
+
+    await model.ensureRegisteredForConfiguredAgent()
+
+    #expect(await events.values == ["reset-connection", "unregister", "register"])
+    #expect(model.status == .enabled)
+    #expect(model.message == nil)
+  }
+
+  @Test @MainActor
+  func startupRepairDoesNotRegisterWithoutConfiguredResidentSettings() async {
+    let controller = SpyController(status: .notRegistered)
+    let model = HexStartAtLoginModel(
+      controller: controller,
+      readinessChecker: FixedReadinessChecker(value: .blocked)
+    )
+
+    await model.ensureRegisteredForConfiguredAgent()
+
+    #expect(await controller.registerCallCount == 0)
+    #expect(model.status == .notRegistered)
+    #expect(model.message == HexGatewayActivationReadiness.blocked.message)
+  }
+
+  @Test @MainActor
   func approvalStatusShowsGuidanceWithoutRegistering() async throws {
     let controller = SpyController(status: .requiresApproval)
     let opener = SpySettingsOpener()
