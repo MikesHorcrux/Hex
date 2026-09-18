@@ -40,12 +40,14 @@ struct HexRootView: View {
       await inference.load()
       workspace.modelID = inference.savedModelID ?? residentSetup.modelID
       guard suppressOnboarding || hasCompletedOnboarding else { return }
+      await startAtLogin.ensureRegisteredForConfiguredAgent()
       await connectIfNeeded()
     }
     .onChange(of: hasCompletedOnboarding) { _, isComplete in
       guard isComplete else { return }
       workspace.modelID = inference.savedModelID ?? residentSetup.modelID
       Task {
+        await startAtLogin.ensureRegisteredForConfiguredAgent()
         await connectIfNeeded()
       }
     }

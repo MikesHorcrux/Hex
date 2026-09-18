@@ -89,6 +89,54 @@ final class HexStartAtLoginModel: HexResidentConfigurationReloading {
     await reportReadyTransition()
   }
 
+  /// Repairs a missing resident service after the app bundle or its registration was replaced.
+  /// Fresh setup remains fail-closed because the readiness checker requires saved resident
+  /// settings, authorization, and a valid bundled helper before registration is attempted.
+  func ensureRegisteredForConfiguredAgent() async {
+    guard !isUpdating else { return }
+    let requestID = UUID()
+    refreshID = requestID
+    isUpdating = true
+    message = nil
+    defer { isUpdating = false }
+
+    let lifecycleStatus = await controller.status()
+    guard refreshID == requestID else { return }
+    status = lifecycleStatus
+
+    let observedReadiness = await readinessChecker.check()
+    guard refreshID == requestID else { return }
+    readiness = observedReadiness
+    guard observedReadiness.isReady else {
+      message = observedReadiness.message
+      return
+    }
+
+    do {
+      switch lifecycleStatus {
+      case .enabled:
+        await connectionResetter?.resetResidentGatewayConnection()
+        try await controller.unregister()
+        try await controller.register()
+      case .notRegistered, .notFound:
+        try await controller.register()
+      case .requiresApproval, .unknown, .unavailable:
+        return
+      }
+      status = await controller.status()
+      guard status == .enabled else {
+        message = "Hex Agent did not become enabled after activation."
+        return
+      }
+      await reportReadyTransition()
+    } catch is CancellationError {
+      return
+    } catch {
+      status = await controller.status()
+      message = error.localizedDescription
+    }
+  }
+
   func toggle() {
     guard !isUpdating else { return }
     refreshID = UUID()
