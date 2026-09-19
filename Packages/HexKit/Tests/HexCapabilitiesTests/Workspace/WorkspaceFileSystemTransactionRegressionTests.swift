@@ -787,7 +787,7 @@ struct WorkspaceFileSystemTransactionRegressionTests {
     maximumSlotCount: Int
   ) throws -> Process {
     let testExecutablePath = try #require(
-      CommandLine.arguments.first { $0.contains(".xctest/Contents/MacOS/HexKitPackageTests") }
+      CommandLine.arguments.drop(while: { $0 != "--test-bundle-path" }).dropFirst().first
     )
     let testExecutable = URL(filePath: testExecutablePath)
     let testingHelper = try #require(CommandLine.arguments.first)

@@ -48,6 +48,7 @@ Packages/HexKit/Sources/
 │   ├── Tools/                   # host-tool contracts and dispatch
 │   └── Workspace/               # workspace-scoped coding operations
 ├── HexProviders/
+│   ├── LlamaCpp/                # OpenAI-compatible local GGUF stream adapter
 │   ├── MLX/                     # provider-neutral local-model adapter
 │   └── OpenAI/                  # Platform/ChatGPT auth and Responses transport
 ├── HexMLXProvider/

@@ -582,9 +582,11 @@ final class HexInferenceBackendSettingsModel {
     if selectedBackend == .llamaCppLocal {
       let maximumOutputTokens = try Self.parsePositiveInteger(llamaMaximumOutputTokens)
       let contextWindow = try Self.parseOptionalPositiveInteger(llamaContextWindow)
-      guard let endpoint = URL(
-        string: llamaEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-      ) else {
+      guard
+        let endpoint = URL(
+          string: llamaEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+      else {
         throw HexInferenceBackendSettingsError.invalidLlamaEndpoint
       }
       let llama = try HexLlamaCppBackendSettings(

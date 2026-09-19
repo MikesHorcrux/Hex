@@ -79,8 +79,10 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let decodedSchemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
-    guard decodedSchemaVersion == 1 || decodedSchemaVersion == 2
-      || decodedSchemaVersion == Self.currentSchemaVersion else {
+    guard
+      decodedSchemaVersion == 1 || decodedSchemaVersion == 2
+        || decodedSchemaVersion == Self.currentSchemaVersion
+    else {
       throw HexInferenceBackendSettingsError.unsupportedSchemaVersion(decodedSchemaVersion)
     }
     let rawSelectedBackend = try container.decode(String.self, forKey: .selectedBackend)

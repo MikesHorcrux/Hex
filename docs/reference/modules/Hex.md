@@ -4,7 +4,7 @@
 
 macOS app composition, observable models, services and SwiftUI views.
 
-**273 Swift files.** Generated; do not edit by hand.
+**274 Swift files.** Generated; do not edit by hand.
 
 ## Hex/App
 
@@ -408,6 +408,7 @@ macOS app composition, observable models, services and SwiftUI views.
 | [HexInferenceBackendFormView.swift](../../../Hex/Views/Settings/HexInferenceBackendFormView.swift) | — |
 | [HexInferenceBackendSettingsView.swift](../../../Hex/Views/Settings/HexInferenceBackendSettingsView.swift) | — |
 | [HexInlineNoticeView.swift](../../../Hex/Views/Settings/HexInlineNoticeView.swift) | — |
+| [HexLlamaCppBackendSettingsView.swift](../../../Hex/Views/Settings/HexLlamaCppBackendSettingsView.swift) | — |
 | [HexMCPIntegrationsView.swift](../../../Hex/Views/Settings/HexMCPIntegrationsView.swift) | — |
 | [HexMLXBackendSettingsView.swift](../../../Hex/Views/Settings/HexMLXBackendSettingsView.swift) | — |
 | [HexOpenAIBackendSettingsView.swift](../../../Hex/Views/Settings/HexOpenAIBackendSettingsView.swift) | — |

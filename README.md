@@ -6,11 +6,17 @@
 
 Hex is an experimental, local-first personal Mac agent built with Swift and SwiftUI. It owns its
 agent loop, conversations, tools, memory, and recovery. A separate resident helper can keep work
-running while the window is closed. Inference comes from OpenAI or compatible local MLX models.
+running while the window is closed. Inference comes from OpenAI, local MLX models, or a compatible
+local GGUF server.
 
 This is an **early source alpha**. Expect bugs, setup friction, and workflows that need supervision.
 Computer control and long-running recovery remain experimental. See [current status](docs/status.md)
 for the limits of the release; a passing test suite does not establish unattended reliability.
+
+Hex is maintained, not abandoned: this repository is the public source alpha for a project that is
+still being put into shape. The code, tests, handbook, and qualification notes are part of the
+product. If you are evaluating Hex, start with [the status and acceptance gates](docs/status.md)
+and treat the current build as supervised software.
 
 ## What is here
 
@@ -18,6 +24,7 @@ for the limits of the release; a passing test suite does not establish unattende
 - Workspace file tools, revision-checked patches, reviewable changes, and retained process sessions.
 - Optional browser and screen control through managed Playwright and Peekaboo tools.
 - Permission controls, MCP connections, durable tasks, and scheduled background work.
+- OpenAI, on-device MLX, and local GGUF inference through an OpenAI-compatible llama.cpp server.
 - A native macOS interface with a separate signed resident helper and local storage.
 
 Local-first describes ownership and storage. With a cloud provider selected, prompts, tool results,
@@ -54,10 +61,22 @@ You can run the package tests without configuring an account or entering provide
 
 ## Models and tools
 
-Choose an OpenAI API key, explicit ChatGPT subscription sign-in, or a compatible MLX model in Settings.
+Choose one of three inference paths in Settings:
+
+| Backend | Where inference runs | What Hex expects |
+| --- | --- | --- |
+| OpenAI | OpenAI infrastructure | API key or explicit ChatGPT subscription sign-in |
+| Local MLX | In the Hex process on this Mac | A compatible local model directory |
+| Local GGUF | A local llama.cpp-compatible server | A GGUF model and an OpenAI-compatible `/v1/chat/completions` endpoint |
+
 API usage is billed separately by the provider. Subscription sign-in is a compatibility integration;
 it is not an OpenAI partnership, endorsement, or stable third-party API guarantee. Hex does not use
-Codex CLI/Desktop credentials or run the Codex agent runtime. See [authentication](docs/architecture/openai-authentication.md).
+Codex CLI/Desktop credentials or run the Codex agent runtime. See [models and authentication](docs/guides/models.md)
+and [OpenAI authentication](docs/architecture/openai-authentication.md).
+
+The local GGUF path is intentionally an adapter, not a bundled model runtime: start and supervise
+the compatible server separately, then point Hex at its loopback endpoint. Hex keeps the agent loop,
+tool authorization, and execution boundary; the server owns GGUF loading and token generation.
 
 Peekaboo is downloaded from `openclaw/Peekaboo` for optional screen control. This is a tool dependency,
 not adoption of the OpenClaw agent runtime. See [third-party notices](THIRD_PARTY_NOTICES.md).

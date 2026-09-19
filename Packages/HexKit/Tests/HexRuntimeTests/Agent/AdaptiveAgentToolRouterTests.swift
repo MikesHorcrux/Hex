@@ -43,7 +43,9 @@ struct AdaptiveAgentToolRouterTests {
     let router = AdaptiveAgentToolRouter(
       configuration: AgentToolRoutingConfiguration(maximumToolsForCompactContext: 2))
     #expect(!router.shouldDiscoverTools(messages: user("Hey")))
-    #expect(router.select(definitions: tools, messages: user("Hey"), model: model, toolChoice: .automatic).isEmpty)
+    #expect(
+      router.select(definitions: tools, messages: user("Hey"), model: model, toolChoice: .automatic)
+        .isEmpty)
   }
 
   @Test
@@ -70,8 +72,15 @@ struct AdaptiveAgentToolRouterTests {
   @Test
   func explicitToolChoicesPreserveTheAdvertisedSnapshot() {
     let router = AdaptiveAgentToolRouter()
-    #expect(router.select(definitions: tools, messages: user("Hey"), model: model, toolChoice: .none).isEmpty)
-    #expect(router.select(definitions: tools, messages: user("Hey"), model: model, toolChoice: .required) == tools)
-    #expect(router.select(definitions: tools, messages: user("Hey"), model: model, toolChoice: .named("web_search")) == tools)
+    #expect(
+      router.select(definitions: tools, messages: user("Hey"), model: model, toolChoice: .none)
+        .isEmpty)
+    #expect(
+      router.select(definitions: tools, messages: user("Hey"), model: model, toolChoice: .required)
+        == tools)
+    #expect(
+      router.select(
+        definitions: tools, messages: user("Hey"), model: model, toolChoice: .named("web_search"))
+        == tools)
   }
 }

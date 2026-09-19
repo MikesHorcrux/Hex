@@ -81,7 +81,8 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
       // available through hex_inspect_self and is injected only for requests that are actually
       // about Hex's runtime/provider/settings. This keeps normal conversation model-light while
       // preserving an explicit self-diagnosis path.
-      let coreMessages = [operatingContractMessage]
+      let coreMessages =
+        [operatingContractMessage]
         + (Self.shouldInlineSelfKnowledge(in: request.initialMessages) ? [selfMessage] : [])
       let contextMessages: [Message]
       if let personalityContextService {
@@ -132,7 +133,8 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
   }
 
   private static func shouldInlineSelfKnowledge(in messages: [Message]) -> Bool {
-    let text = messages
+    let text =
+      messages
       .filter { $0.role == .user }
       .flatMap { message in
         message.content.compactMap { content in
@@ -149,7 +151,7 @@ public struct HexGatewayRunDriverAdapter: HexGatewayRunDriver, Sendable {
     )
     let selfTerms: Set<String> = [
       "backend", "gateway", "hex", "inference", "model", "provider", "runtime", "settings",
-      "start", "stop", "broken", "crash", "debug", "install", "download"
+      "start", "stop", "broken", "crash", "debug", "install", "download",
     ]
     return !terms.isDisjoint(with: selfTerms)
   }

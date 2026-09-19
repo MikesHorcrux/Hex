@@ -57,7 +57,8 @@ public struct AdaptiveAgentToolRouter: Sendable {
     guard highestScore > 0 else { return definitions }
 
     let contextWindow = model.contextWindow ?? 32_768
-    let maximumTools = contextWindow >= configuration.largeContextThreshold
+    let maximumTools =
+      contextWindow >= configuration.largeContextThreshold
       ? configuration.maximumToolsForLargeContext
       : configuration.maximumToolsForCompactContext
     guard definitions.count > maximumTools else { return definitions }
@@ -71,7 +72,9 @@ public struct AdaptiveAgentToolRouter: Sendable {
         .prefix(maximumTools)
         .map(\.index)
     )
-    return definitions.enumerated().compactMap { selectedIndices.contains($0.offset) ? $0.element : nil }
+    return definitions.enumerated().compactMap {
+      selectedIndices.contains($0.offset) ? $0.element : nil
+    }
   }
 
   private func searchableText(from messages: [Message]) -> String {
@@ -103,7 +106,7 @@ public struct AdaptiveAgentToolRouter: Sendable {
       "control", "create", "delete", "download", "edit", "execute", "fetch", "find",
       "fix", "focus", "inspect", "install", "launch", "list", "look", "open", "patch",
       "read", "refactor", "replace", "research", "run", "search", "send", "show", "start",
-      "stop", "test", "type", "update", "use", "write"
+      "stop", "test", "type", "update", "use", "write",
     ]
     let domainTerms = Set(domains(for: queryTerms).flatMap(\.value))
     return !queryTerms.isDisjoint(with: actionTerms) || !queryTerms.isDisjoint(with: domainTerms)
@@ -114,13 +117,13 @@ public struct AdaptiveAgentToolRouter: Sendable {
       "app", "application", "bug", "build", "code", "coding", "compile", "command", "error",
       "file", "files", "fix", "gateway", "implement", "implementation", "project", "process",
       "refactor", "repo", "repository", "run", "server", "shell", "source", "swift", "test",
-      "terminal", "xcode"
+      "terminal", "xcode",
     ]
     let browser: Set<String> = [
-      "browser", "chrome", "fetch", "page", "safari", "tab", "url", "web", "website"
+      "browser", "chrome", "fetch", "page", "safari", "tab", "url", "web", "website",
     ]
     let screen: Set<String> = [
-      "accessibility", "click", "focus", "mac", "screen", "screenshot", "window"
+      "accessibility", "click", "focus", "mac", "screen", "screenshot", "window",
     ]
     let memory: Set<String> = ["forget", "memory", "remember", "recall", "preference"]
     let hex: Set<String> = ["hex", "self", "runtime", "provider", "model", "settings"]
@@ -128,7 +131,7 @@ public struct AdaptiveAgentToolRouter: Sendable {
     var result: [(prefix: String, value: Set<String>)] = []
     if !queryTerms.isDisjoint(with: coding) {
       result += [
-        ("workspace_", coding), ("process_", coding), ("artifact_", coding), ("hex_", coding)
+        ("workspace_", coding), ("process_", coding), ("artifact_", coding), ("hex_", coding),
       ]
     }
     if !queryTerms.isDisjoint(with: browser) {

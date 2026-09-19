@@ -2,7 +2,7 @@
 
 [Documentation home](README.md)
 
-Release preparation baseline: **2026-09-12**. Hex is an experimental source alpha. There is no
+Release preparation baseline: **2026-09-19**. Hex is an experimental source alpha. There is no
 qualified notarized download in this release. See [release checks](releasing.md) for verification
 of the exact prepared source revision.
 
@@ -12,7 +12,10 @@ of the exact prepared source revision.
 - Resident-owned SQLite conversation/task storage and durable event history.
 - Explicit personal memory and identity, active context compaction, and retained artifacts.
 - Workspace coding tools, revision-checked patches, reviewable changes, and retained process sessions.
-- OpenAI and MLX inference, configurable MCP tools, permission controls, and interval heartbeats.
+- OpenAI, MLX, and local GGUF inference, configurable MCP tools, permission controls, and interval
+  heartbeats.
+- Conservative adaptive tool routing that reduces model-facing tool schemas without changing the
+  host's complete authorization or execution catalog.
 - Signed app/helper separation and explicit activation of the background agent.
 
 These are implemented capabilities, not a promise that every combination is dependable.
@@ -31,6 +34,8 @@ These are implemented capabilities, not a promise that every combination is depe
 - File/image attachments and broader UI polish remain incomplete. Some backend types are large and
   require further responsibility-focused refactoring.
 - Local-first does not mean offline when a cloud provider, browser, or remote tool is selected.
+- The local GGUF adapter does not manage the external llama.cpp server or prove compatibility for a
+  selected model; image input and server-managed provider continuation remain unsupported there.
 
 ## Supervised first-run check
 

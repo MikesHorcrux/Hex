@@ -7,7 +7,8 @@ extension AgentRuntime {
   ) async throws -> AgentRunResult {
     // A caller that explicitly disables tools must not acquire optional dependencies. Keep the
     // snapshot for tool-enabled runs intact, including a named call's no-more-tools continuation.
-    var tools = request.toolChoice == .none
+    var tools =
+      request.toolChoice == .none
       ? []
       : try await discoverTools(for: request, model: model)
 

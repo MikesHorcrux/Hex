@@ -8,7 +8,7 @@ import Testing
 @Suite("Gateway self knowledge")
 struct HexGatewaySelfKnowledgeTests {
   @Test
-  func everyRunReceivesItsOwnModelAndWorkspaceAndReadOnlySelfTool() async throws {
+  func selfRelatedRunReceivesItsOwnModelAndWorkspaceAndReadOnlySelfTool() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "hex-self-knowledge-\(UUID().uuidString)", isDirectory: true
     )
@@ -35,7 +35,12 @@ struct HexGatewaySelfKnowledgeTests {
         GatewayStartRunRequest(
           runID: runID,
           modelID: provider.modelID,
-          initialMessages: [Message(role: .user, content: [.text("Where are your files?")])],
+          initialMessages: [
+            Message(
+              role: .user,
+              content: [.text("Where are your files, and which model powers this Hex runtime?")]
+            )
+          ],
           workingDirectory: workspace
         ),
         emit: { _ in }
