@@ -4,7 +4,7 @@
 
 Shared Sendable values and small inference, tool, event and authority contracts.
 
-**124 Swift files.** Generated; do not edit by hand.
+**125 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexCore/Artifacts
 
@@ -102,6 +102,7 @@ Shared Sendable values and small inference, tool, event and authority contracts.
 | [HexInferenceBackendSettings.swift](../../../Packages/HexKit/Sources/HexCore/Inference/HexInferenceBackendSettings.swift) | Persisted, non-secret inference-backend selection and setup.  This value is safe to encode as JSON. In particular, it has no OpenAI API-key field and no ChatGPT OAuth token field. |
 | [HexInferenceBackendSettingsError.swift](../../../Packages/HexKit/Sources/HexCore/Inference/HexInferenceBackendSettingsError.swift) | Secret-free validation failures for persisted inference-backend settings. |
 | [HexInferenceBackendSettingsStore.swift](../../../Packages/HexKit/Sources/HexCore/Inference/HexInferenceBackendSettingsStore.swift) | Asynchronous persistence boundary for non-secret inference-backend settings. |
+| [HexLlamaCppBackendSettings.swift](../../../Packages/HexKit/Sources/HexCore/Inference/HexLlamaCppBackendSettings.swift) | Non-secret settings for a local GGUF model served by Prism's llama.cpp server. |
 | [HexMLXBackendSettings.swift](../../../Packages/HexKit/Sources/HexCore/Inference/HexMLXBackendSettings.swift) | Non-secret settings for a local MLX model already present on disk.  An empty value is allowed for an unconfigured backend so the settings document can be created before the user chooses a model. A configured value still requires all of `mod… |
 | [HexOpenAIAuthenticationMethod.swift](../../../Packages/HexKit/Sources/HexCore/Inference/HexOpenAIAuthenticationMethod.swift) | How Hex authenticates requests made through its OpenAI inference provider.  Both choices keep Hex's agent loop, tools, approvals, and conversation state in Hex. They only change which OpenAI service authorizes the model request. |
 | [HexOpenAIBackendSettings.swift](../../../Packages/HexKit/Sources/HexCore/Inference/HexOpenAIBackendSettings.swift) | Non-secret settings for OpenAI inference.  API keys and ChatGPT OAuth tokens are intentionally absent. They belong to `HexSecretStore` and are requested only at the provider boundary immediately before a request is made. |

@@ -479,6 +479,8 @@ public struct HexGatewayResidentConfiguration: Sendable {
       settings.openAI.modelID
     case .mlxLocal:
       settings.mlx.modelID.isEmpty ? fallback : settings.mlx.modelID
+    case .llamaCppLocal:
+      settings.llamaCpp.modelID.isEmpty ? fallback : settings.llamaCpp.modelID
     }
   }
 

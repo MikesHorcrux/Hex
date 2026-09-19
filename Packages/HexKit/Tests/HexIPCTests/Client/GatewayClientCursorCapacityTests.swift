@@ -1,5 +1,6 @@
 import HexCore
 import Testing
+
 @testable import HexIPC
 
 @Suite("Gateway client cursor capacity")

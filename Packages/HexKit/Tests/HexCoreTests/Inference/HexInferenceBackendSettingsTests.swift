@@ -33,9 +33,10 @@ struct HexInferenceBackendSettingsTests {
 
   @Test
   func exposesOpenAIWithTwoAuthChoicesAndLocalMLX() {
-    #expect(HexInferenceBackendKind.allCases == [.openAIResponses, .mlxLocal])
+    #expect(HexInferenceBackendKind.allCases == [.openAIResponses, .mlxLocal, .llamaCppLocal])
     #expect(HexInferenceBackendKind.openAIResponses.detail.contains("subscription"))
     #expect(HexInferenceBackendKind.mlxLocal.displayName == "Local MLX")
+    #expect(HexInferenceBackendKind.llamaCppLocal.displayName.contains("GGUF"))
     #expect(HexOpenAIAuthenticationMethod.allCases == [.chatGPT, .apiKey])
     #expect(HexOpenAIAuthenticationMethod.chatGPT.displayName.contains("Codex"))
     #expect(HexOpenAIAuthenticationMethod.apiKey.detail.contains("API billing"))

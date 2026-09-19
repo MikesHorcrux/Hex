@@ -158,6 +158,29 @@ extension AgentRuntime {
     request: AgentRunRequest,
     model: ModelDescriptor
   ) throws {
+    try validateToolDefinitions(tools)
+
+    switch request.toolChoice {
+    case .none:
+      break
+    case .automatic:
+      if !tools.isEmpty {
+        try requireCapability(.toolCalling, from: model)
+      }
+    case .required:
+      guard !tools.isEmpty else {
+        throw AgentRuntimeError.invalidRequest("Required tool choice needs at least one tool.")
+      }
+      try requireCapability(.toolCalling, from: model)
+    case .named(let name):
+      guard tools.contains(where: { $0.name == name }) else {
+        throw AgentRuntimeError.invalidRequest("The named tool is unavailable.")
+      }
+      try requireCapability(.toolCalling, from: model)
+    }
+  }
+
+  func validateToolDefinitions(_ tools: [ToolDefinition]) throws {
     guard tools.count <= configuration.budget.maxDiscoveredTools else {
       throw AgentRuntimeError.budgetExceeded("Discovered tool count budget exceeded.")
     }
@@ -183,25 +206,6 @@ extension AgentRuntime {
       throw AgentRuntimeError.budgetExceeded(
         "Serialized tool definition byte budget exceeded."
       )
-    }
-
-    switch request.toolChoice {
-    case .none:
-      break
-    case .automatic:
-      if !tools.isEmpty {
-        try requireCapability(.toolCalling, from: model)
-      }
-    case .required:
-      guard !tools.isEmpty else {
-        throw AgentRuntimeError.invalidRequest("Required tool choice needs at least one tool.")
-      }
-      try requireCapability(.toolCalling, from: model)
-    case .named(let name):
-      guard names.contains(name) else {
-        throw AgentRuntimeError.invalidRequest("The named tool is unavailable.")
-      }
-      try requireCapability(.toolCalling, from: model)
     }
   }
 

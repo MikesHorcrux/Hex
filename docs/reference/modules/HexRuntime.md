@@ -4,12 +4,13 @@
 
 Provider-independent agent loop, context planning and execution budgets.
 
-**43 Swift files.** Generated; do not edit by hand.
+**45 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexRuntime/Agent
 
 | Source file | Leading source documentation |
 | --- | --- |
+| [AdaptiveAgentToolRouter.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AdaptiveAgentToolRouter.swift) | Chooses a model-facing tool schema set without changing Hex's executable tool surface.  This is intentionally deterministic and conservative. Conversational turns receive no tools; clear action turns receive the highest-signal domains; ambi… |
 | [AgentArtifactContext.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AgentArtifactContext.swift) | Runtime-owned discovery instructions, not reconstructed user history or model-derived authority. |
 | [AgentRunBudget.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AgentRunBudget.swift) | — |
 | [AgentRunRequest.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AgentRunRequest.swift) | — |
@@ -29,6 +30,7 @@ Provider-independent agent loop, context planning and execution budgets.
 | [AgentRuntimeError.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AgentRuntimeError.swift) | — |
 | [AgentToolDispatchLedger.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AgentToolDispatchLedger.swift) | Run-owned evidence, not a retry queue. Only calls that have never reached a durable-start attempt may receive a host-authored nonexecution receipt when the run stops. |
 | [AgentToolDispatchLedgerState.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AgentToolDispatchLedgerState.swift) | — |
+| [AgentToolRoutingConfiguration.swift](../../../Packages/HexKit/Sources/HexRuntime/Agent/AgentToolRoutingConfiguration.swift) | Controls how the runtime exposes Hex's tool catalog to automatic model turns.  The host still owns the complete tool executor and authorization boundary. This configuration only controls which schemas are sent to the model for a particular … |
 
 ## Packages/HexKit/Sources/HexRuntime/Context
 

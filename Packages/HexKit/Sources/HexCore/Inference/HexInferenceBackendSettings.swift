@@ -3,18 +3,20 @@
 /// This value is safe to encode as JSON. In particular, it has no OpenAI API-key field and no
 /// ChatGPT OAuth token field.
 public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
-  public static let currentSchemaVersion = 2
+  public static let currentSchemaVersion = 3
   public static let defaultOpenAIModelID = "gpt-5.6-luna"
 
   public let schemaVersion: Int
   public let selectedBackend: HexInferenceBackendKind
   public let openAI: HexOpenAIBackendSettings
   public let mlx: HexMLXBackendSettings
+  public let llamaCpp: HexLlamaCppBackendSettings
 
   public init(
     selectedBackend: HexInferenceBackendKind,
     openAI: HexOpenAIBackendSettings,
     mlx: HexMLXBackendSettings,
+    llamaCpp: HexLlamaCppBackendSettings,
     schemaVersion: Int = Self.currentSchemaVersion
   ) throws {
     guard schemaVersion == Self.currentSchemaVersion else {
@@ -24,13 +26,15 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
     self.selectedBackend = selectedBackend
     self.openAI = openAI
     self.mlx = mlx
+    self.llamaCpp = llamaCpp
   }
 
   public init(
     selectedBackend: HexInferenceBackendKind = .openAIResponses,
     openAIModelID: String = Self.defaultOpenAIModelID,
     openAIAuthenticationMethod: HexOpenAIAuthenticationMethod = .apiKey,
-    mlx: HexMLXBackendSettings? = nil
+    mlx: HexMLXBackendSettings? = nil,
+    llamaCpp: HexLlamaCppBackendSettings? = nil
   ) throws {
     try self.init(
       selectedBackend: selectedBackend,
@@ -38,7 +42,8 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
         modelID: openAIModelID,
         authenticationMethod: openAIAuthenticationMethod
       ),
-      mlx: mlx ?? HexMLXBackendSettings()
+      mlx: mlx ?? HexMLXBackendSettings(),
+      llamaCpp: llamaCpp ?? HexLlamaCppBackendSettings()
     )
   }
 
@@ -58,6 +63,8 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
       true
     case .mlxLocal:
       mlx.isConfigured
+    case .llamaCppLocal:
+      llamaCpp.isConfigured
     }
   }
 
@@ -66,12 +73,16 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
     case selectedBackend
     case openAI
     case mlx
+    case llamaCpp
   }
 
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     let decodedSchemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
-    guard decodedSchemaVersion == 1 || decodedSchemaVersion == Self.currentSchemaVersion else {
+    guard
+      decodedSchemaVersion == 1 || decodedSchemaVersion == 2
+        || decodedSchemaVersion == Self.currentSchemaVersion
+    else {
       throw HexInferenceBackendSettingsError.unsupportedSchemaVersion(decodedSchemaVersion)
     }
     let rawSelectedBackend = try container.decode(String.self, forKey: .selectedBackend)
@@ -98,6 +109,10 @@ public struct HexInferenceBackendSettings: Codable, Equatable, Sendable {
       selectedBackend: selectedBackend,
       openAI: openAI,
       mlx: container.decode(HexMLXBackendSettings.self, forKey: .mlx),
+      llamaCpp: container.decodeIfPresent(
+        HexLlamaCppBackendSettings.self,
+        forKey: .llamaCpp
+      ) ?? HexLlamaCppBackendSettings(),
       schemaVersion: Self.currentSchemaVersion
     )
   }

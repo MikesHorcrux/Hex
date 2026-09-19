@@ -34,6 +34,14 @@ final class HexInferenceBackendSettingsModel {
   var mlxSupportsToolCalling = false
   var mlxSupportsParallelToolCalling = false
 
+  var llamaModelID: String
+  var llamaDisplayName: String
+  var llamaEndpoint: String
+  var llamaContextWindow = ""
+  var llamaMaximumOutputTokens = "2048"
+  var llamaSupportsToolCalling = false
+  var llamaSupportsParallelToolCalling = false
+
   private(set) var isLoading = false
   private(set) var isSaving = false
   private(set) var hasStoredOpenAIAPIKey = false
@@ -72,6 +80,9 @@ final class HexInferenceBackendSettingsModel {
     openAIModelID = HexInferenceBackendSettings.defaultOpenAIModelID
     mlxModelID = ""
     mlxDisplayName = ""
+    llamaModelID = ""
+    llamaDisplayName = ""
+    llamaEndpoint = ""
     self.settingsStore = settingsStore
     self.secretStore = secretStore
     self.chatGPTAuthorizationManager = chatGPTAuthorizationManager
@@ -83,6 +94,7 @@ final class HexInferenceBackendSettingsModel {
     hasLoaded && !isLoading && !isSaving && !isInstallingLocalModel
       && settingsStore != nil && secretStore != nil
       && (selectedBackend != .mlxLocal || mlxDirectory != nil || localModelInstaller != nil)
+      && (selectedBackend != .llamaCppLocal || !llamaEndpoint.isEmpty)
   }
 
   var setupChoice: HexInferenceSetupChoice {
@@ -92,6 +104,8 @@ final class HexInferenceBackendSettingsModel {
         .onThisMac
       case .openAIResponses:
         openAIAuthenticationMethod == .chatGPT ? .chatGPT : .openAIAPI
+      case .llamaCppLocal:
+        .localGGUF
       }
     }
     set {
@@ -111,6 +125,18 @@ final class HexInferenceBackendSettingsModel {
           mlxDisplayName = Self.recommendedLocalModelName
         }
         mlxSupportsToolCalling = true
+      case .localGGUF:
+        selectedBackend = .llamaCppLocal
+        if llamaModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          llamaModelID = "Bonsai-27b-1bit-CRACK-Q1_0"
+        }
+        if llamaDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          llamaDisplayName = "Bonsai 2 27B (GGUF)"
+        }
+        if llamaEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          llamaEndpoint = "http://127.0.0.1:8080"
+        }
+        llamaSupportsToolCalling = true
       }
       errorMessage = nil
       updateCredentialStatusMessage()
@@ -127,6 +153,8 @@ final class HexInferenceBackendSettingsModel {
       openAIModelID.trimmingCharacters(in: .whitespacesAndNewlines)
     case .mlxLocal:
       mlxModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    case .llamaCppLocal:
+      llamaModelID.trimmingCharacters(in: .whitespacesAndNewlines)
     }
   }
 
@@ -136,6 +164,7 @@ final class HexInferenceBackendSettingsModel {
     switch persistedSettings.selectedBackend {
     case .openAIResponses: return persistedSettings.openAI.modelID
     case .mlxLocal: return persistedSettings.mlx.modelID
+    case .llamaCppLocal: return persistedSettings.llamaCpp.modelID
     }
   }
 
@@ -505,7 +534,8 @@ final class HexInferenceBackendSettingsModel {
         modelID: local.modelID, displayName: local.displayName, directory: directory,
         contextWindow: local.contextWindow, maximumOutputTokens: local.maximumOutputTokens,
         supportsToolCalling: local.supportsToolCalling,
-        supportsParallelToolCalling: local.supportsParallelToolCalling))
+        supportsParallelToolCalling: local.supportsParallelToolCalling),
+      llamaCpp: settings.llamaCpp)
   }
 
   private func apply(_ settings: HexInferenceBackendSettings) {
@@ -519,6 +549,13 @@ final class HexInferenceBackendSettingsModel {
     mlxMaximumOutputTokens = String(settings.mlx.maximumOutputTokens)
     mlxSupportsToolCalling = settings.mlx.supportsToolCalling
     mlxSupportsParallelToolCalling = settings.mlx.supportsParallelToolCalling
+    llamaModelID = settings.llamaCpp.modelID
+    llamaDisplayName = settings.llamaCpp.displayName
+    llamaEndpoint = settings.llamaCpp.endpoint?.absoluteString ?? ""
+    llamaContextWindow = settings.llamaCpp.contextWindow.map(String.init) ?? ""
+    llamaMaximumOutputTokens = String(settings.llamaCpp.maximumOutputTokens)
+    llamaSupportsToolCalling = settings.llamaCpp.supportsToolCalling
+    llamaSupportsParallelToolCalling = settings.llamaCpp.supportsParallelToolCalling
   }
 
   private func makeSettings(requiresLocalDirectory: Bool = true) throws
@@ -539,7 +576,37 @@ final class HexInferenceBackendSettingsModel {
     if selectedBackend == .openAIResponses {
       return try HexInferenceBackendSettings(
         selectedBackend: selectedBackend, openAI: openAI,
-        mlx: persistedSettings?.mlx ?? HexMLXBackendSettings())
+        mlx: persistedSettings?.mlx ?? HexMLXBackendSettings(),
+        llamaCpp: persistedSettings?.llamaCpp ?? HexLlamaCppBackendSettings())
+    }
+    if selectedBackend == .llamaCppLocal {
+      let maximumOutputTokens = try Self.parsePositiveInteger(llamaMaximumOutputTokens)
+      let contextWindow = try Self.parseOptionalPositiveInteger(llamaContextWindow)
+      guard
+        let endpoint = URL(
+          string: llamaEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+      else {
+        throw HexInferenceBackendSettingsError.invalidLlamaEndpoint
+      }
+      let llama = try HexLlamaCppBackendSettings(
+        modelID: llamaModelID.trimmingCharacters(in: .whitespacesAndNewlines),
+        displayName: llamaDisplayName.trimmingCharacters(in: .whitespacesAndNewlines),
+        endpoint: endpoint,
+        contextWindow: contextWindow,
+        maximumOutputTokens: maximumOutputTokens,
+        supportsToolCalling: llamaSupportsToolCalling,
+        supportsParallelToolCalling: llamaSupportsParallelToolCalling
+      )
+      guard llama.isConfigured else {
+        throw HexInferenceBackendSettingsError.invalidLlamaEndpoint
+      }
+      return try HexInferenceBackendSettings(
+        selectedBackend: selectedBackend,
+        openAI: openAI,
+        mlx: persistedSettings?.mlx ?? HexMLXBackendSettings(),
+        llamaCpp: llama
+      )
     }
     let maximumOutputTokens = try Self.parsePositiveInteger(mlxMaximumOutputTokens)
     let contextWindow = try Self.parseOptionalPositiveInteger(mlxContextWindow)
@@ -581,7 +648,8 @@ final class HexInferenceBackendSettingsModel {
     return try HexInferenceBackendSettings(
       selectedBackend: selectedBackend,
       openAI: openAI,
-      mlx: mlx
+      mlx: mlx,
+      llamaCpp: persistedSettings?.llamaCpp ?? HexLlamaCppBackendSettings()
     )
   }
 
@@ -638,6 +706,16 @@ final class HexInferenceBackendSettingsModel {
       "Enter a positive output limit for the local model."
     case .invalidMLXContextWindow:
       "Enter a positive context limit at least as large as the output limit."
+    case .invalidLlamaModelID:
+      "Enter a local GGUF model identifier."
+    case .invalidLlamaDisplayName:
+      "Enter a name for the local GGUF model."
+    case .invalidLlamaEndpoint:
+      "Enter the local llama.cpp server URL, such as http://127.0.0.1:8080."
+    case .invalidLlamaOutputTokens:
+      "Enter a positive output limit for the local GGUF model."
+    case .invalidLlamaContextWindow:
+      "Enter a positive GGUF context limit at least as large as the output limit."
     case .unsupportedSchemaVersion:
       "The saved inference-backend settings use an unsupported version."
     }

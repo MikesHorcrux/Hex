@@ -4,13 +4,26 @@
 
 OpenAI provider/authentication and shared provider support.
 
-**92 Swift files.** Generated; do not edit by hand.
+**100 Swift files.** Generated; do not edit by hand.
 
 ## Packages/HexKit/Sources/HexProviders
 
 | Source file | Leading source documentation |
 | --- | --- |
 | [HexProvidersModule.swift](../../../Packages/HexKit/Sources/HexProviders/HexProvidersModule.swift) | — |
+
+## Packages/HexKit/Sources/HexProviders/LlamaCpp
+
+| Source file | Leading source documentation |
+| --- | --- |
+| [LlamaCppChatCompletionChunk.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/LlamaCppChatCompletionChunk.swift) | — |
+| [LlamaCppChatCompletionRequest.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/LlamaCppChatCompletionRequest.swift) | — |
+| [LlamaCppLocalInferenceProvider.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/LlamaCppLocalInferenceProvider.swift) | Provider for the OpenAI-compatible chat-completions stream exposed by Prism llama-server. The server is intentionally an external local process: Hex owns the agent loop and tools, while Prism owns GGUF loading and Metal execution. |
+| [LlamaCppLocalInferenceProviderBuilder.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/LlamaCppLocalInferenceProviderBuilder.swift) | — |
+| [LlamaCppLocalInferenceProviderError.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/LlamaCppLocalInferenceProviderError.swift) | — |
+| [LlamaCppLocalModelConfiguration.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/LlamaCppLocalModelConfiguration.swift) | — |
+| [LlamaCppLocalProviderConfiguration.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/LlamaCppLocalProviderConfiguration.swift) | — |
+| [PendingToolCall.swift](../../../Packages/HexKit/Sources/HexProviders/LlamaCpp/PendingToolCall.swift) | — |
 
 ## Packages/HexKit/Sources/HexProviders/MLX
 

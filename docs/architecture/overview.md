@@ -10,7 +10,7 @@ Hex.app: conversations, setup, approvals, settings, menu bar
     ▼
 HexGateway: resident composition, run ownership, scheduling
     ├── HexRuntime: inference → validation → authorization → execution → repeat
-    ├── providers: OpenAI Responses or local MLX
+    ├── providers: OpenAI Responses, local MLX, or local GGUF via llama.cpp
     ├── capabilities: files, processes, web, native Mac, artifacts, memory
     ├── MCP: managed subprocesses and HTTP servers
     └── persistence: event journal, heartbeat receipts, explicit settings/memory
@@ -26,7 +26,7 @@ Neither a provider nor an MCP server owns Hex's loop. See [resident operations](
 | HexCore | Sendable values, IDs, events, inference/tool/authorization contracts | None |
 | HexRuntime | Agent loop, budgets, context planning, execution orchestration | HexCore |
 | HexPersistence | SQLite journal, settings and artifact storage | HexCore |
-| HexProviders | OpenAI transport/auth and provider-facing support | HexCore |
+| HexProviders | OpenAI transport/auth and local llama.cpp/GGUF adapter | HexCore |
 | HexMLXProvider | Concrete MLX loading, mapping and generation | HexCore, HexProviders |
 | HexCapabilities | Native workspace/process/web/Mac/artifact execution | HexCore |
 | HexMCP | Protocol, transports, discovery, managed adapters | HexCore |

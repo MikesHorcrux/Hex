@@ -169,7 +169,8 @@ struct HexGatewayCompactionCompositionTests {
       ]
     } + [
       Message(
-        role: .user, content: [.text("Continue the current task without changing its scope.")])
+        role: .user,
+        content: [.text("Continue the current Hex runtime task without changing its scope.")])
     ]
   }
 

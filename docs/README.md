@@ -2,11 +2,11 @@
 
 One personal agent. Your whole Mac.
 
-Hex owns its agent loop, tools, permissions, persistence and personality. Cloud models and
-MLX supply inference; they do not replace Hex's runtime. “Personal” describes the product's
+Hex owns its agent loop, tools, permissions, persistence and personality. Cloud models and local
+backends supply inference; they do not replace Hex's runtime. “Personal” describes the product's
 focus, not a ceiling on technical capability.
 
-This handbook describes the source checkout for the **2026-09-12 source-alpha preparation**. Hex is an alpha:
+This handbook describes the source checkout for the **2026-09-19 source-alpha preparation**. Hex is an alpha:
 implemented source is not the same as a qualified, installed daily driver. Start with
 [current status](status.md) before replacing another agent.
 

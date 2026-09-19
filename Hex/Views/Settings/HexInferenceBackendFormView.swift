@@ -34,6 +34,11 @@ struct HexInferenceBackendFormView: View {
         model: model,
         showsAdvancedConfiguration: showsAdvancedConfiguration
       )
+    case .localGGUF:
+      HexLlamaCppBackendSettingsView(
+        model: model,
+        showsAdvancedConfiguration: showsAdvancedConfiguration
+      )
     }
 
     if let statusMessage = model.statusMessage {
